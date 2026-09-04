@@ -12,8 +12,8 @@
 | 工具集 | opencode 16+、codex tools/ | read/glob/grep/write/edit/bash/todo/task/webfetch/qa-check + git_status/diff/log/commit + terminal_start/read/write/kill/list + **websearch + apply_patch（2026-08-27 全部落地，工具面 16 个）** | ✅ |
 | 上下文压缩 | opencode、codex context-fragments | compaction.ts | ✅ |
 | 文件监视 | codex file-watcher、opencode filesystem | 无 | ❌ |
-| Hooks 生命周期 | codex hooks/、gemini hooks/、opencode event.ts | 无（只有被动事件流） | ❌ |
-| Git 集成 | opencode git.ts、codex git-utils | ✅ 2026-08-27 结构化 status/diff/log/commit 落框架 builtins，commit 真实写仓库（非沙箱快照副本）；变更可视化（diff 渲染视图）待 UI 增强 | ✅(基础) |
+| Hooks 生命周期 | codex hooks/、gemini hooks/、opencode event.ts | ✅ 2026-08-27 落地（framework `core/runtime/lifecycle.ts` 四钩子 onRunStart/onBeforeToolCall/onAfterToolCall/onRunEnd；before 可拦截并反馈模型，钩子抛错只告警不中断） | ✅ |
+| Git 集成 | opencode git.ts、codex git-utils | ✅ 2026-08-27 结构化 status/diff/log/commit 落框架 builtins，commit 真实写仓库（非沙箱快照副本）；diff 渲染视图已落地（ReviewPane/DiffView/ChatView） | ✅ |
 
 ## 二、模型层（差距最大的一档）
 
@@ -33,10 +33,10 @@
 
 | 能力 | 参考实现 | 现状 |
 |---|---|---|
-| 插件架构 | deepseek「一切皆插件」（Cordis）、opencode plugin/ | ⚠️ 有 parseAgentPlugin（plugin.json+skills+mcp.json）+ 信任安装，**无运行时热加载** |
-| MCP 客户端 | gemini mcp/、opencode integration/、codex mcp-server | ⚠️ → **2026-08-27 起 stdio 已可用**（见下文进度）；SSE / streamable-http 未实现 |
+| 插件架构 | deepseek「一切皆插件」（Cordis）、opencode plugin/ | ✅(基础) parseAgentPlugin（plugin.json+skills+mcp.json）+ 信任安装 + 运行时热加载（mcp.json/plugins 目录 watcher 去抖 800ms 自动 rescan）；无 per-plugin 生命周期沙箱 |
+| MCP 客户端 | gemini mcp/、opencode integration/、codex mcp-server | ✅ 2026-08-27 三传输全落地：stdio（NDJSON JSON-RPC）+ streamable-http（单端点 POST、SSE/json 双应答、mcp-session-id）+ sse 遗留传输；插件面板状态 UI + 配置热加载 |
 | 插件市场/目录 | opencode catalog.ts+installation/ | ❌ |
-| Skill 体系 | opencode skill/、gemini skills/ | ⚠️ 有插件级 skills 解析，无独立发现/安装 |
+| Skill 体系 | opencode skill/、gemini skills/ | ✅ 独立发现/选择/注入已落地：listSkills 三源发现（工作区 .zmzai/skills、~/.codex/skills、~/.agents/skills）+ Composer Skill 选择器 + 选中后按条注入 + 设置页技能面板；安装仍走插件目录 |
 
 ## 四、前端形态
 
@@ -56,7 +56,7 @@
 | 会话快照/分享 | opencode snapshot.ts+share/、pi 会话发布 HF | ❌ |
 | 遥测 | pi telemetry/（vendor-neutral）、codex otel/+analytics/ | ❌ |
 | Agent 评估 | pi evals/、gemini evals/、codex rollout-trace | ❌ 仅 vitest + smoke，无真实任务评估集 |
-| 会话存储后端 | pi session-backends/、opencode SQLite（drizzle） | ⚠️ 仅 JSONL，500+ 会话后查询变慢 |
+| 会话存储后端 | pi session-backends/、opencode SQLite（drizzle） | ✅ 2026-09 升级 SQLite（N4）：单文件 zmzai.db（会话+事件同库 WAL），首次自动导入旧 JSONL；租约恢复/跨重启 SSE 续传均基于此 |
 | 远程协作 | codex collaboration-mode-templates、opencode slack/ | ❌ |
 
 ## 优先级路线图

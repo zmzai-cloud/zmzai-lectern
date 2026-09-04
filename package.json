@@ -36,7 +36,7 @@
     "@codemirror/view": "^6.43.10",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "@zmzai/agent-framework": "link:../zmzai-framework",
+    "@zmzai/agent-framework": "^0.4.1",
     "@zmzai/theme": "^0.9.10",
     "lucide-react": "^1.39.0",
     "next": "15.5.21",

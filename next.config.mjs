@@ -34,11 +34,20 @@ const nextConfig = {
     config.resolve.extensionAlias = {
       ".js": [".ts", ".tsx", ".js"],
     };
-    // Next 的 serverExternalPackages 对 pnpm symlink 包不生效，手动补：
-    // framework 与 web-tree-sitter（emscripten 胶水内调 createRequire）
-    // 一旦被 bundle，wasm 资源定位必炸（R1 repo_map）。
     if (isServer) {
-      config.externals.push("web-tree-sitter");
+      // Next 服务端的 externals 数组只含 module.builtinModules（如 "fs"/"path"，
+      // 无 "node:" 前缀），不含 node:fs/node:sqlite 这类 "node:" scheme 内建
+      // 模块。代码一旦顶层 `import "node:sqlite"`（registry 版 @zmzai/agent-framework
+      // 0.4.1 的 sqlite-store/sqlite-event-log 就是这么写的），webpack 会把
+      // "node:..." 当成待打包资源 → UnhandledSchemeError（Reading from "node:fs"
+      // is not handled by plugins）→ 所有 import runtime 链的路由（/api/models 等）
+      // 编译期 500。这里用正则把所有 "node:" scheme 内建模块一并 external 掉，
+      // 与 Next 内建 externals 行为对齐（serverExternalPackages 对 pnpm symlink
+      // 包不生效，故走 externals 而非依赖它）。
+      config.externals.push(/^node:/);
+      // framework 与 web-tree-sitter（emscripten 胶水内调 createRequire）一旦被
+      // bundle，wasm 资源定位必炸（R1 repo_map），一并 external。
+      config.externals.push("@zmzai/agent-framework", "web-tree-sitter");
     }
     return config;
   },

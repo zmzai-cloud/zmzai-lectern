@@ -134,16 +134,64 @@ function SubtaskCard({ part, activity }: { part: Extract<Part, { type: "subtask"
   );
 }
 
+/** per-block 悬停工具条（Codex 基准 ①）：每种内容块（markdown 正文/纯文本）
+ *  悬停浮出「复制」胶囊，复制全文带 ✓ 反馈。参考 demos/lectern-ui-codex-baseline.html。 */
+function TextBlock({ text, children }: { text: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => undefined);
+  };
+  return (
+    <div className="group relative">
+      {children}
+      <div className="absolute -top-2.5 right-1 z-10 hidden items-center gap-0.5 rounded-md border border-line bg-bg py-0.5 pl-0.5 pr-1 shadow-sm group-hover:flex">
+        <button
+          type="button"
+          onClick={copy}
+          title="复制全文"
+          className={cn(
+            "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[0.625rem] transition-colors",
+            copied ? "text-success" : "text-ink-3 hover:bg-surface-2 hover:text-ink",
+          )}
+        >
+          {copied ? (
+            "✓ 已复制"
+          ) : (
+            <>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1" />
+                <path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" strokeLinecap="round" />
+              </svg>
+              复制
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity }) {
   switch (part.type) {
     case "text":
-      // assistant 正文用 Markdown（流式稳定、代码高亮）；用户消息保持纯文本
+      // assistant 正文用 Markdown（流式稳定、代码高亮）；用户消息保持纯文本。
+      // 两种形态都包 per-block 悬停工具条（复制全文）。
       return markdown ? (
-        <div className="text-[0.875rem] leading-[1.65] text-ink">
-          <Markdown text={part.text} />
-        </div>
+        <TextBlock text={part.text}>
+          <div className="text-[0.875rem] leading-[1.65] text-ink">
+            <Markdown text={part.text} />
+          </div>
+        </TextBlock>
       ) : (
-        <div className="whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink">{part.text}</div>
+        <TextBlock text={part.text}>
+          <div className="whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink">{part.text}</div>
+        </TextBlock>
       );
     case "reasoning":
       return <Reasoning text={part.text} />;
@@ -486,6 +534,39 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     const t = setInterval(() => setDownSeconds(Math.round((Date.now() - downSince) / 1000)), 1000);
     return () => clearInterval(t);
   }, [downSince]);
+  // Whisper 状态行（Codex 基准 ②）：系统事件在 Composer 上方一行灰字呈现，
+  // 两侧细线夹注，4.2s 自动消退——不打断阅读流，替代 toast 式提示。
+  const [whisper, setWhisper] = useState<string | null>(null);
+  const whisperTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showWhisper = (text: string) => {
+    setWhisper(text);
+    if (whisperTimer.current) clearTimeout(whisperTimer.current);
+    whisperTimer.current = setTimeout(() => setWhisper(null), 4200);
+  };
+  // run 状态迁移 → whisper：开始装配 / 收尾小结（完成带统计）
+  const prevRunning = useRef(false);
+  useEffect(() => {
+    if (!prevRunning.current && running) showWhisper("已发送 · 正在装配上下文");
+    if (prevRunning.current && !running && summary) {
+      const parts: string[] = [];
+      if (summary.meta && summary.meta.toolCalls > 0) parts.push(`${summary.meta.toolCalls} 次工具调用`);
+      if (summary.meta && summary.meta.durationMs > 0) parts.push(`${(summary.meta.durationMs / 1000).toFixed(1)}s`);
+      showWhisper(parts.length > 0 ? `任务完成 · ${parts.join(" · ")}` : "任务完成");
+    }
+    prevRunning.current = running;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, summary]);
+  // compaction 到达 → whisper（压缩卡本身仍在消息流里留痕）
+  const compactionCount = useMemo(
+    () => messages.reduce((n, m) => n + m.parts.filter((p) => p.part.type === "compaction").length, 0),
+    [messages],
+  );
+  const prevCompaction = useRef(compactionCount);
+  useEffect(() => {
+    if (compactionCount > prevCompaction.current) showWhisper("上下文已压缩 · 历史摘要已注入");
+    prevCompaction.current = compactionCount;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compactionCount]);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   // 用户消息「编辑重发」原位编辑态：气泡变 textarea，保存即截断重跑
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
@@ -878,6 +959,16 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           />
         )}
       </div>
+      </div>
+      {/* Whisper 状态行：无事件时保留占位高度，避免 Composer 跳动 */}
+      <div className="flex h-7 shrink-0 items-center justify-center">
+        {whisper && (
+          <div className="flex items-center text-[0.6875rem] tracking-wide text-ink-3">
+            <span className="h-px w-11 bg-line" />
+            <span className="px-3">{whisper}</span>
+            <span className="h-px w-11 bg-line" />
+          </div>
+        )}
       </div>
       <Composer
         sessionId={sessionId}

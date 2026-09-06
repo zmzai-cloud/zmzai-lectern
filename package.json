@@ -76,10 +76,33 @@
       ".env",
       "electron/**",
       ".next/standalone/**",
-      "!.next/standalone/.next/cache/**"
+      "!.next/standalone/.next/cache/**",
+      "!node_modules/**",
+      "!**/*.map",
+      "!**/*.d.ts",
+      "!**/*.d.mts",
+      "!**/*.d.cts",
+      "!**/*.ts",
+      "!**/*.mts",
+      "!**/*.cts",
+      "!**/*.md",
+      "!**/LICENSE*",
+      "!**/*.scss",
+      "!**/*.h",
+      "!**/*.c",
+      "!**/__tests__/**",
+      "!**/*.test.js",
+      "!**/*.spec.js"
     ],
-    "asar": false,
-    "npmRebuild": false,
+  "asar": true,
+  "asarUnpack": [
+    "electron/assets/**",
+    "**/node-pty/prebuilds/**",
+    "**/*.node",
+    "**/*.dll"
+  ],
+  "afterPack": "scripts/after-pack.mjs",
+  "npmRebuild": false,
     "mac": {
       "target": [
         {

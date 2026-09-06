@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Markdown, PermissionCard, Reasoning, ToolCard, ToolGroup, cn } from "@zmzai/theme";
 
 import type { ConnectionState } from "@/lib/client";
+import type { PermissionMode } from "@/lib/permission-mode";
 import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
 import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer from "./Composer";
@@ -274,6 +275,9 @@ type Props = {
   wtNotice?: { kind: "ok" | "error"; text: string } | null;
   /** 回溯重发：编辑某条用户消息并从此重跑（page.tsx 调 API，截断 + 重跑由服务端完成）。 */
   onRewind: (messageId: string, text: string) => void;
+  /** 会话级权限模式（Codex 基准 ④）：Composer 常驻胶囊，点击循环。 */
+  permissionMode?: PermissionMode;
+  onCyclePermissionMode?: () => void;
 };
 
 /** 任务计划卡：todo.updated 投影（Agent 拆解步骤的实时进度）。 */
@@ -457,7 +461,7 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, hasMore, onLoadMore, echo, wtNotice, onRewind }: Props) {
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, hasMore, onLoadMore, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -977,6 +981,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         onSelectModel={onSelectModel}
         onSend={onSend}
         onAbort={onAbort}
+        permissionMode={permissionMode}
+        onCyclePermissionMode={onCyclePermissionMode}
       />
     </div>
   );

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Textarea, cn } from "@zmzai/theme";
 
 import { client } from "@/lib/client";
+import type { PermissionMode } from "@/lib/permission-mode";
 import type { ModelRef, ModelsState, SkillOption, ThinkingEffort, TreeNode, UsageInfo } from "@/lib/types";
 
 /** token 数缩写：1234 → 1.2k */
@@ -45,6 +46,17 @@ type Props = {
   onSelectModel: (m: ModelRef | null) => void;
   onSend: (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[]) => void;
   onAbort: () => void;
+  /** 会话级权限模式（Codex 基准 ④）：胶囊常驻展示，点击循环切换。 */
+  permissionMode?: PermissionMode;
+  onCyclePermissionMode?: () => void;
+};
+
+/** 权限胶囊三态表达（demo 基准）：完全访问 amber / 每次确认 蓝 / 只读与默认 灰。 */
+const PERM_PILL: Record<PermissionMode, { label: string; cls: string }> = {
+  default: { label: "默认", cls: "bg-surface-2 text-ink-3 border-line" },
+  full: { label: "完全访问", cls: "bg-warning-tint text-warning border-warning/30" },
+  ask: { label: "每次确认", cls: "bg-live-tint text-live border-live/30" },
+  readonly: { label: "只读", cls: "bg-surface-2 text-ink-2 border-line" },
 };
 
 /**
@@ -53,7 +65,7 @@ type Props = {
  * SKILL.md 的 markdown 随本次 prompt 注入（与 framework PluginSkill 同源约定）；
  * 推理力度随本次 prompt 下发（relay reasoning_effort，framework thinkingLevel）。
  */
-export default function Composer({ sessionId, running, selectedModel, onSelectModel, onSend, onAbort }: Props) {
+export default function Composer({ sessionId, running, selectedModel, onSelectModel, onSend, onAbort, permissionMode, onCyclePermissionMode }: Props) {
   const [text, setText] = useState("");
   const [models, setModels] = useState<ModelsState | null>(null);
   const [skills, setSkills] = useState<SkillOption[]>([]);
@@ -761,6 +773,24 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             </svg>
             {effort !== "off" && <span className="font-mono text-[0.625rem]">{effort}</span>}
           </button>
+
+          {/* 权限胶囊（Codex 基准 ④）：会话级权限模式常驻展示，点击循环切换。 */}
+          {permissionMode && onCyclePermissionMode && (
+            <button
+              type="button"
+              onClick={onCyclePermissionMode}
+              title={`权限模式：${PERM_PILL[permissionMode].label} · 点击切换（下一条消息生效）`}
+              className={cn(
+                "ml-1 inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 text-[0.6875rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
+                PERM_PILL[permissionMode].cls,
+              )}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M8 1.8l4.5 2v3.4c0 3-1.9 5.7-4.5 6.9-2.6-1.2-4.5-3.9-4.5-6.9V3.8l4.5-2z" strokeLinejoin="round" />
+              </svg>
+              {PERM_PILL[permissionMode].label}
+            </button>
+          )}
 
           <span className="flex-1" />
 

@@ -1,8 +1,10 @@
 import { rm, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import type { Ruleset } from "@zmzai/agent-framework";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { dataDirForId } from "@/lib/projects";
+import { applyModeRules, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { sessionStoreFor } from "@/lib/runtime";
 import { removeWorktree } from "@/lib/worktree";
 
@@ -12,21 +14,35 @@ export const runtime = "nodejs";
 /** 会话 id 白名单字符（jsonl 文件名即 id，防路径逃逸）。 */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
-/** PATCH /api/sessions/[id] — 重命名 / 置顶 / 归档（store.updateSession 落库）。
- *  title / pinned / archived 三者可独立或组合更新。 */
+/** PATCH /api/sessions/[id] — 重命名 / 置顶 / 归档 / 权限模式（store.updateSession 落库）。
+ *  title / pinned / archived / permissionMode 四者可独立或组合更新。 */
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
-  const body = (await request.json().catch(() => null)) as { title?: string; pinned?: boolean; archived?: boolean } | null;
+  const body = (await request.json().catch(() => null)) as
+    | { title?: string; pinned?: boolean; archived?: boolean; permissionMode?: string }
+    | null;
   const title = body?.title?.trim();
-  const patch: { title?: string; pinned?: boolean; archived?: boolean } = {};
+  const patch: { title?: string; pinned?: boolean; archived?: boolean; permission?: Ruleset } = {};
   if (title) patch.title = title.slice(0, 80);
   if (typeof body?.pinned === "boolean") patch.pinned = body.pinned;
   if (typeof body?.archived === "boolean") patch.archived = body.archived;
-  if (Object.keys(patch).length === 0) return NextResponse.json({ error: "没有可更新的字段" }, { status: 400 });
+  // 权限模式（Codex 基准 ④）：读会话 → 剥旧模式规则 → 追加新模式 → 落库。
+  // 当前 run 不受影响（引擎在 run 开始时装配），下一次 prompt 生效。
+  if (typeof body?.permissionMode === "string") {
+    const mode = body.permissionMode as PermissionMode;
+    if (!PERMISSION_MODES.includes(mode)) return NextResponse.json({ error: "非法权限模式" }, { status: 400 });
+    patch.permission = [];
+  }
 
   const found = await sessionStoreFor(id);
   if (!found) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+  if (patch.permission) {
+    const session = await found.store.getSession(id);
+    if (!session) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+    patch.permission = applyModeRules(session.permission, body!.permissionMode as PermissionMode);
+  }
+  if (Object.keys(patch).length === 0) return NextResponse.json({ error: "没有可更新的字段" }, { status: 400 });
   await found.store.updateSession(id, patch);
   return NextResponse.json({ ok: true });
 }

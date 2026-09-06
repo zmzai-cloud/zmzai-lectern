@@ -29,6 +29,7 @@ import type {
   TreeNode,
   UsageInfo,
 } from "./types";
+import type { PermissionMode } from "./permission-mode";
 
 /**
  * 浏览器端 API 客户端：Web 与 Electron 共用同一套页面、同一套 HTTP 接口。
@@ -105,6 +106,10 @@ export const client = {
   /** 归档/取消归档（N6）：归档会话从默认列表隐藏。 */
   setSessionArchived: (sessionId: string, archived: boolean) =>
     send("PATCH", `/api/sessions/${sessionId}`, { archived }).then((r) => j<{ ok?: boolean; error?: string }>(r)),
+
+  /** 会话级权限模式（Codex 基准 ④）：default/full/ask/readonly，落 session.permission 规则。 */
+  setPermissionMode: (sessionId: string, mode: PermissionMode) =>
+    send("PATCH", `/api/sessions/${sessionId}`, { permissionMode: mode }).then((r) => j<{ ok?: boolean; error?: string }>(r)),
 
   deleteSession: (sessionId: string) =>
     send("DELETE", `/api/sessions/${sessionId}`).then((r) => j<{ ok?: boolean; error?: string }>(r)),

@@ -49,8 +49,17 @@ echo "==> [3/5] 组装实体 node_modules（pnpm symlink / file: 依赖实体化
 guard_mv .package-build
 node scripts/prepare-prod-package.mjs
 (cd .package-build && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+# 替换前保存 trace 命中的最小依赖清单（npm 全量里大量纯 JS 包已被 webpack
+# bundle 进 .next/server，运行时不再 require，按 trace 白名单删掉才瘦得下来）
+node scripts/save-trace-pkgs.mjs .next/trace-pkgs.txt
 guard_mv .next/standalone/node_modules
 mv .package-build/node_modules .next/standalone/node_modules
+# 瘦身两刀：① prune 按 trace 白名单删冗余纯 JS 包 ② shrink 裁剪 native 平台/语言
+node scripts/prune-standalone.mjs .next/trace-pkgs.txt .next/standalone/node_modules
+node scripts/shrink-native.mjs .next/standalone/node_modules --platform=darwin --arch=arm64
+# asar 化前提：server.js 开头的 process.chdir(__dirname) 在 asar 内会 ENOTDIR
+# 直接崩（asar 是文件不是目录，chdir 不吃 Electron 的 fs 补丁），必须摘掉
+node scripts/patch-standalone-for-asar.mjs .next/standalone --strict
 guard_mv .package-build
 
 echo "==> [4/5] electron-builder 打包 macOS（dmg + zip，arm64）"
@@ -74,6 +83,12 @@ echo "==> [5/6] ad-hoc 深度签名（无开发者证书，封印 Bundle 资源�
 # 校验通过。注意：无 Developer ID + 公证，下载场景仍需 xattr 清隔离（见 README）。
 APP_PATH=$(find dist -maxdepth 2 -name "*.app" -type d | head -1)
 if [ -n "$APP_PATH" ]; then
+  # asar 断言：app 必须是单个 app.asar 而不是散开的 app/ 目录（散开就是八千量级
+  # 文件，安装与首次启动都会明显变慢）。
+  [ -f "$APP_PATH/Contents/Resources/app.asar" ] || { echo "❌ 未生成 app.asar（asar 未生效）" >&2; exit 1; }
+  UNPACKED=$(find "$APP_PATH/Contents/Resources/app.asar.unpacked" -type f 2>/dev/null | wc -l | tr -d " ")
+  echo "解包原生文件：$UNPACKED 个（期望 ≥5：node-pty/sharp/swc 的 .node 与 dylib）"
+  [ "$UNPACKED" -ge 5 ] || { echo "❌ asarUnpack 未生效，原生二进制留在 asar 内会加载失败" >&2; exit 1; }
   codesign --force --deep --sign - "$APP_PATH"
   codesign --verify --deep --strict "$APP_PATH"
   echo "ad-hoc 签名通过：$APP_PATH"

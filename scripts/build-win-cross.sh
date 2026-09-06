@@ -59,11 +59,28 @@ echo "==> [3/5] 组装实体 node_modules（pnpm symlink / file: 依赖实体化
 # pnpm 下 next standalone 的 trace 产出的 node_modules 只含指向 .pnpm 的断链
 # symlink；electron-builder 复制 pnpm node_modules 也不完整（file: 依赖丢失）。
 # 这里用 npm 从 tarball 安装一份完全实体的生产依赖整体替换。
+# 【关键】--os/--cpu 强制按 Windows x64 解析 optionalDependencies：
+# 不指定会装成宿主机的 @next/swc-darwin-arm64 / @img/sharp-darwin-arm64
+# （各 ~125MB），打进 Windows 包既臃肿又加载失败。
 guard_mv .package-build
 node scripts/prepare-prod-package.mjs
-(cd .package-build && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+(cd .package-build && npm install --omit=dev --os=win32 --cpu=x64 --no-audit --no-fund --loglevel=error)
+# fail-fast：原生二进制平台不对，装完必崩，且崩在用户机器上最难查
+[ -d .package-build/node_modules/@next/swc-win32-x64-msvc ] || {
+  echo "❌ 缺少 @next/swc-win32-x64-msvc（Windows 原生编译/运行时必需），中止打包" >&2
+  exit 1
+}
+# 替换前保存 trace 命中的最小依赖清单（npm 全量里大量纯 JS 包已被 webpack
+# bundle 进 .next/server，运行时不再 require，按 trace 白名单删掉才瘦得下来）
+node scripts/save-trace-pkgs.mjs .next/trace-pkgs.txt
 guard_mv .next/standalone/node_modules
 mv .package-build/node_modules .next/standalone/node_modules
+# 瘦身两刀：① prune 按 trace 白名单删冗余纯 JS 包 ② shrink 裁剪 native 平台/语言
+node scripts/prune-standalone.mjs .next/trace-pkgs.txt .next/standalone/node_modules
+node scripts/shrink-native.mjs .next/standalone/node_modules --platform=win32 --arch=x64
+# asar 化前提：server.js 开头的 process.chdir(__dirname) 在 asar 内会 ENOTDIR
+# 直接崩（asar 是文件不是目录，chdir 不吃 Electron 的 fs 补丁），必须摘掉
+node scripts/patch-standalone-for-asar.mjs .next/standalone --strict
 guard_mv .package-build
 
 echo "==> [4/5] electron-builder 打包 Windows（nsis 安装器 + zip，x64）"
@@ -75,7 +92,25 @@ ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://np
 CSC_IDENTITY_AUTO_DISCOVERY=false \
 pnpm exec electron-builder --win --x64 --publish never
 
-echo "==> [5/5] 产物"
+echo "==> [5/5] 产物体检"
+# fail-fast 补刀：① 不得混入 darwin 原生依赖（--os/--cpu 没生效的典型症状，
+# 打出来能装但起不来）② 文件数回归——asar:false 下文件数直接决定 NSIS 安装
+# 时长（Windows Defender 逐文件扫描），超阈值就是又胖回去了。
+DARWIN_NATIVE=$(find dist/win-unpacked -type d \( -name "swc-darwin-*" -o -name "sharp-darwin-*" -o -name "sharp-libvips-darwin-*" \) 2>/dev/null | head -5)
+[ -z "$DARWIN_NATIVE" ] || { echo "❌ 产物混入 darwin 原生依赖：" >&2; echo "$DARWIN_NATIVE" >&2; exit 1; }
+[ -d dist/win-unpacked/resources/app/node_modules ] && { echo "❌ 产物混入多余的 app/node_modules（standalone 已自带依赖）" >&2; exit 1; }
+# asar 断言（本轮优化的核心，必须卡住）：app 必须是单个 app.asar，而不是散开的
+# app/ 目录——散开就是八千量级文件，NSIS 安装时长会退回二十分钟。
+[ -f dist/win-unpacked/resources/app.asar ] || { echo "❌ 未生成 app.asar（asar 未生效），安装时长会退化" >&2; exit 1; }
+[ -d dist/win-unpacked/resources/app ] && { echo "❌ app/ 目录与 app.asar 同时存在，asar 配置异常" >&2; exit 1; }
+# 原生二进制必须解包：asar 内 dlopen 会把 .node 拷到临时目录，同级的 .dll /
+# spawn-helper 不会跟着走，node-pty(conpty) 与 sharp 会加载失败。
+UNPACKED=$(find dist/win-unpacked/resources/app.asar.unpacked -type f 2>/dev/null | wc -l | tr -d " ")
+echo "解包原生文件：$UNPACKED 个（期望 ≥9）"
+[ "$UNPACKED" -ge 9 ] || { echo "❌ asarUnpack 未生效，原生二进制留在 asar 内会加载失败" >&2; exit 1; }
+FILE_COUNT=$(find dist/win-unpacked -type f | wc -l | tr -d " ")
+echo "文件数：$FILE_COUNT（阈值 300）"
+[ "$FILE_COUNT" -le 300 ] || { echo "❌ 文件数超标：asar 未生效或 files 排除规则失效" >&2; exit 1; }
 ls -lh dist/*.exe dist/*.zip
 echo "完成。Windows 安装：双击 dist/*Setup*.exe（NSIS 安装器）；或解压 zip 直接运行 Lectern.exe"
 

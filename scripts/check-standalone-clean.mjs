@@ -29,6 +29,21 @@ const FORBIDDEN_NAMES = new Set([".secret", "settings.json", "projects.json", "z
 const FORBIDDEN_SUFFIX = [".db", ".db-shm", ".db-wal", ".jsonl"];
 const FORBIDDEN_DIRS = new Set(["data", "sessions", "messages", "parts"]);
 
+// standalone 根目录白名单：只认产���该有的东西，其余一律中止。
+// 白名单而非黑名单——运行时残留（在 standalone 目录下起过服务就会留下 .workspace、
+// logs/、.secret 等）不该靠"猜特征"拦截，靠"只放行已知项"更稳。
+const ROOT_ALLOWLIST = new Set([
+  ".env",
+  ".env.local",
+  ".env.production",
+  ".next",
+  "node_modules",
+  "package.json",
+  "public",
+  "server.js",
+]);
+const rootStrays = [];
+
 const hits = [];
 
 function walk(dir, depth, relBase) {
@@ -40,7 +55,13 @@ function walk(dir, depth, relBase) {
     return;
   }
   for (const name of entries) {
-    if (depth === 0 && (name === "node_modules" || name === ".next")) continue;
+    if (depth === 0) {
+      if (name === "node_modules" || name === ".next") continue;
+      if (!ROOT_ALLOWLIST.has(name)) {
+        rootStrays.push(name);
+        continue;
+      }
+    }
     const full = join(dir, name);
     const rel = relBase ? `${relBase}/${name}` : name;
     let st;
@@ -63,6 +84,18 @@ function walk(dir, depth, relBase) {
 }
 
 walk(standalone, 0, "");
+
+if (rootStrays.length > 0) {
+  console.error("❌ standalone 根目录出现非预期条目，禁止打包：\n");
+  for (const s of rootStrays) console.error(`   · ${s}`);
+  console.error(
+    "\n常见原因：曾在 .next/standalone 目录下直接起过服务做验证，" +
+      "留下了 .workspace / logs / data 等运行时残留。\n" +
+      "      next build 不会清理它们，而 files 规则 `.next/standalone/**` 会把它们一起打进包。\n" +
+      "      处理：mv 走再重新 pnpm build。",
+  );
+  process.exit(1);
+}
 
 if (hits.length > 0) {
   console.error("❌ standalone 产物中检测到疑似本机数据，禁止打包：\n");

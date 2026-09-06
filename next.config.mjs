@@ -20,8 +20,18 @@ const nextConfig = {
   // 老数据目录（已 gitignore），里面是**开发者的真实会话库与 .secret**，
   // 一旦混入就会随安装包公开发布——v0.2.0 至 v0.4.3 全部中招。
   // 显式排除，并在 scripts/check-standalone-clean.mjs 做构建后断言兜底。
+  // `.workspace/**` 同属运行时残留：在仓库根起过服务就会生成（交付件/沙箱 demo /
+  // .git 工作副本），已被 Next 追踪复制进过产物，随安装包发出去。与 data/ 同级对待。
   outputFileTracingExcludes: {
-    "**": ["data/**", "**/data/**", "**/.secret", "**/*.db", "**/*.db-shm", "**/*.db-wal"],
+    "**": [
+      "data/**",
+      "**/data/**",
+      "**/.secret",
+      "**/*.db",
+      "**/*.db-shm",
+      "**/*.db-wal",
+      "**/.workspace/**",
+    ],
   },
   // 私有 TS 包，需显式转译
   transpilePackages: ["@zmzai/theme"],

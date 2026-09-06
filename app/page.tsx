@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { PanelBottom, PanelLeft, PanelRight } from "lucide-react";
-import { Navbar, navItemClass } from "@zmzai/theme";
+import { BrandLockup, cn, Navbar, navItemClass } from "@zmzai/theme";
 
 import CommandPalette, { type Command } from "@/components/CommandPalette";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
@@ -15,6 +15,7 @@ import WorkbenchPanel from "@/components/WorkbenchPanel";
 import DebugArea from "@/components/DebugArea";
 import AccountBlock from "@/components/AccountBlock";
 import { client, type ConnectionState } from "@/lib/client";
+import { detectPermissionMode, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData } from "@/lib/chat-projector";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
 import { deriveTaskPresentation, previewableOf, type SessionStatus } from "@/lib/task-presentation";
@@ -340,6 +341,29 @@ export default function App() {
   const toggleBottomPanel = useCallback(() => {
     setBottomPanelOpen((value) => !value);
   }, []);
+  // 桌面壳检测（Codex 基准 ③）：Electron 下标题栏红绿灯融入顶栏，左上常驻侧栏开关。
+  const [inElectron, setInElectron] = useState(false);
+  useEffect(() => {
+    setInElectron(Boolean(window.lecternNative));
+  }, []);
+  // 会话级权限模式（Codex 基准 ④）：跟随所选会话的 permission 规则回显，点击循环。
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
+  useEffect(() => {
+    if (!activeId) {
+      setPermissionMode("default");
+      return;
+    }
+    const active = sessions.find((s) => s.id === activeId);
+    if (active) setPermissionMode(detectPermissionMode(active.permission));
+    // 仅在切换会话时同步（sessions 刷新会迟到，避免覆盖本地乐观值）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+  const cyclePermissionMode = useCallback(() => {
+    if (!activeId) return;
+    const next = PERMISSION_MODES[(PERMISSION_MODES.indexOf(permissionMode) + 1) % PERMISSION_MODES.length];
+    setPermissionMode(next);
+    void client.setPermissionMode(activeId, next).catch(() => undefined);
+  }, [activeId, permissionMode]);
   // 任务完成前台 toast（N5）：前台盯着的用户也要有明确完成感知，而非只有状态点变色。
   const [doneToast, setDoneToast] = useState<string | null>(null);
   // N6 卡住检测：运行中最后事件时间（subscribe 回调每次事件到达时刷新），
@@ -807,18 +831,54 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
-      {/* 品牌顶栏：全域统一 Navbar + 侧栏开关（主题 / 设置入口在左下角账户块菜单） */}
+      {/* 品牌顶栏：全域统一 Navbar + 侧栏开关（主题 / 设置入口在左下角账户块菜单）。
+          Electron（Codex 基准 ③）：红绿灯落在品牌区安全带内，侧栏开关常驻其右、
+          右侧操作区加底部面板开关——窗口 chrome 与功能按钮融为一排。 */}
       <Navbar
         sublabel="lectern"
         className="h-12"
+        brand={
+          inElectron ? (
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                title={sidebarOpen ? "收起会话栏" : "展开会话栏"}
+                aria-label={sidebarOpen ? "收起会话栏" : "展开会话栏"}
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
+                  sidebarOpen ? "bg-surface-2 text-ink" : "text-ink-3",
+                )}
+              >
+                <PanelLeft size={16} strokeWidth={1.55} aria-hidden="true" />
+              </button>
+              <BrandLockup sublabel="lectern" />
+            </div>
+          ) : undefined
+        }
         actions={
           <>
+            <button
+              type="button"
+              onClick={toggleBottomPanel}
+              title={bottomPanelOpen ? "收起底部面板" : "展开底部面板"}
+              aria-label={bottomPanelOpen ? "收起底部面板" : "展开底部面板"}
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
+                bottomPanelOpen ? "bg-surface-2 text-ink" : "text-ink-3",
+              )}
+            >
+              <PanelBottom size={16} strokeWidth={1.55} aria-hidden="true" />
+            </button>
             <button
               type="button"
               onClick={() => setWorkbenchOpen((value) => !value)}
               title={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
               aria-label={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
-              className="hidden h-7 w-7 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong min-[1180px]:inline-flex"
+              className={cn(
+                "hidden h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong min-[1180px]:inline-flex",
+                workbenchOpen ? "bg-surface-2 text-ink" : "text-ink-3",
+              )}
             >
               <PanelRight size={16} strokeWidth={1.55} aria-hidden="true" />
             </button>
@@ -910,6 +970,8 @@ export default function App() {
               echo={echo}
               wtNotice={wtNotice}
               onRewind={handleRewind}
+              permissionMode={permissionMode}
+              onCyclePermissionMode={activeId ? cyclePermissionMode : undefined}
             />
             {workbenchOpen && (
               <div className="hidden min-[1180px]:contents">

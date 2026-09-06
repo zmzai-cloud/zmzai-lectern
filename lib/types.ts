@@ -29,6 +29,8 @@ export type SessionInfo = {
   pinned?: boolean;
   /** 归档（N6）：归档后从默认列表隐藏。 */
   archived?: boolean;
+  /** 会话级权限规则（framework session.permission 原样透出，含权限模式哨兵）。 */
+  permission?: unknown[];
   /** 会话级 worktree 隔离状态（POST /api/sessions 创建时附带；切换会话经 worktree status 查询）。 */
   isolation?: SessionIsolation;
 }

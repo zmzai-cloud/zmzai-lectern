@@ -248,9 +248,15 @@ function ensureWebServer() {
   const userData = app.getPath("userData");
   const logPath = openWebLog(userData);
   const dataDir = resolveDataDir(userData);
+  // asar 化后 serverEntry 落在 app.asar 内（虚拟目录），不能当进程工作目录：
+  // libuv 的 chdir 不吃 Electron 的 fs 补丁，会直接 ENOTDIR 崩掉（server.js 里
+  // 原有的 process.chdir 已由 scripts/patch-standalone-for-asar.mjs 摘掉）。
+  // cwd 必须指向真实可写目录 —— 用 userData：与数据/日志同根，且在安装目录之外
+  // （Windows 装进 Program Files 后往安装目录写会被 UAC 挡掉）。
+  fs.mkdirSync(userData, { recursive: true });
   // standalone server.js 不解析 -p 参数，端口走 PORT 环境变量
   webProcess = utilityProcess.fork(serverEntry, [], {
-    cwd: path.dirname(serverEntry),
+    cwd: userData,
     env: {
       ...process.env,
       NODE_ENV: "production",

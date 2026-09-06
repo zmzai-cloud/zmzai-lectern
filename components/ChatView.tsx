@@ -44,7 +44,7 @@ function EditDiffCard({ path, diff, onOpenFile }: { path: string; diff: string; 
   const [open, setOpen] = useState(false);
   const { additions, deletions } = diffStat(diff);
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+    <div className="overflow-hidden rounded-lg bg-surface-2/60 transition-colors hover:bg-surface-2">
       <div className="flex w-full items-center gap-2 px-3 py-2">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-ink">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0 text-ink-3">
@@ -84,7 +84,7 @@ function SubtaskCard({ part, activity }: { part: Extract<Part, { type: "subtask"
   const running = !activity?.finished;
   const failed = activity?.finished?.state === "error";
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+    <div className="overflow-hidden rounded-lg bg-surface-2/60">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -293,7 +293,7 @@ function TodoCard({ todos }: { todos: TodoItem[] }) {
     return <span className="h-3.5 w-3.5 rounded-full border border-ink-3" />;
   };
   return (
-    <div className="rounded-lg border border-line bg-surface p-3">
+    <div className="rounded-lg bg-surface-2/50 p-3">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-3">任务计划</span>
         <span className="font-mono text-[0.625rem] text-ink-3">{done}/{todos.length}</span>
@@ -332,7 +332,7 @@ function LiveProgressBar({ todos, currentTool }: { todos: TodoItem[]; currentToo
   const pct = total ? Math.round((done / total) * 100) : 0;
   const current = todos.find((t) => t.status === "in_progress")?.content;
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-live/30 bg-live/5 px-3 py-2">
+    <div className="flex items-center gap-2 rounded-lg bg-live/5 px-3 py-2">
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
         <span className="h-2 w-2 animate-pulse rounded-full bg-live" />
       </span>
@@ -378,8 +378,8 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
   }
   const [showTimeline, setShowTimeline] = useState(false);
   return (
-    <div className="rounded-lg border border-line bg-surface">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+    <div className="rounded-lg bg-surface-2/50">
+      <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-2">{label}</span>
         <span className="flex-1" />
@@ -387,13 +387,13 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
       </div>
       <div className="px-3 py-2.5 text-[0.8125rem] leading-[1.6] text-ink">{summary.text}</div>
       {(kind === "completed" && onFollowUp) || (timeline && timeline.length > 0) ? (
-        <div className="flex items-center gap-1 border-t border-line px-3 py-1.5">
+        <div className="flex items-center gap-1 px-3 pb-2 pt-1">
           {kind === "completed" && onFollowUp && (
             <button
               type="button"
               onClick={onFollowUp}
               title="基于这条总结，继续完成建议的下一步"
-              className="rounded-pill border border-line bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              className="rounded-pill bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink"
             >
               继续下一步 →
             </button>
@@ -448,7 +448,7 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
     <button
       type="button"
       onClick={open}
-      className="flex w-full items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-accent/40 hover:bg-surface-2"
+      className="flex w-full items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-2 text-left transition-colors hover:bg-surface-2"
       title={`${path} · 点击打开`}
     >
       <span className="text-[0.9375rem] leading-none">{icon}</span>
@@ -617,7 +617,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {connState !== "connected" && (
         <div
           className={cn(
-            "flex h-7 shrink-0 items-center gap-2 border-b px-4 text-[0.6875rem]",
+            "flex h-7 shrink-0 items-center gap-2 px-4 text-[0.6875rem]",
             connState === "offline" ? "border-danger/30 bg-danger-tint text-danger" : "border-line bg-warning-tint text-warning",
           )}
         >
@@ -641,7 +641,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {wtNotice && (
         <div
           className={cn(
-            "flex h-7 shrink-0 items-center gap-2 border-b px-4 text-[0.6875rem]",
+            "flex h-7 shrink-0 items-center gap-2 px-4 text-[0.6875rem]",
             wtNotice.kind === "ok" ? "border-line bg-success-tint text-success" : "border-danger/30 bg-danger-tint text-danger",
           )}
         >
@@ -650,7 +650,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (
-        <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line px-4 py-1.5">
+        <div className="flex shrink-0 flex-wrap items-center gap-1 px-4 py-1.5">
           <span className="text-[0.625rem] text-ink-3">读过</span>
           {reads.map((path) => (
             <button
@@ -899,7 +899,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                       }
                     }}
                     title="带断点上下文在同一会话继续（进度、已改文件、最后一步）"
-                    className="rounded-pill border border-line bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                    className="rounded-pill bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink"
                   >
                     继续
                   </button>

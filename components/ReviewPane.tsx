@@ -213,7 +213,7 @@ export default function ReviewPane({
 
       {/* 检查点下拉列表 */}
       {cpsOpen && (
-        <div className="shrink-0 border-b border-line bg-surface-2/50 p-2">
+        <div className="shrink-0 bg-surface-2/50 p-2">
           {checkpoints.length === 0 && (
             <div className="px-2 py-1.5 text-[0.6875rem] leading-5 text-ink-3">
               还没有检查点。发送任务时会自动打快照（git 仓库且有变更时）。
@@ -254,7 +254,7 @@ export default function ReviewPane({
 
       {/* §V3-1：任务内变更摘要（有终态小结时）。失败/中断也保留，作为可追溯的次级信息（§7.5）。 */}
       {!selected && summary && (
-        <div className="shrink-0 border-b border-line bg-surface-2/40 px-3 py-2">
+        <div className="shrink-0 bg-surface-2/40 px-3 py-2">
           <div className="flex items-center gap-2">
             <span
               className={cn(

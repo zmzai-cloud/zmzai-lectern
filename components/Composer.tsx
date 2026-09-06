@@ -715,7 +715,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             e.target.value = "";
           }}
         />
-        <div className="flex h-8 items-center gap-0.5 border-t border-line px-2">
+        <div className="flex h-8 items-center gap-0.5 px-2">
           <button
             type="button"
             onClick={() => setPopup((p) => (p === "model" ? null : "model"))}

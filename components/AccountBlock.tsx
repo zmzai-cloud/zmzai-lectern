@@ -136,14 +136,14 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
         type="button"
         onClick={() => setMenu((v) => !v)}
         title="账户与更多"
-        className="flex w-full items-center gap-2 rounded-sm border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:bg-surface-2"
+        className="flex w-full items-center gap-2 rounded-sm px-2.5 py-2 text-left transition-colors hover:bg-surface-2"
       >
         {auth?.loggedIn && auth.user ? (
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-bg">
             {auth.user.name.charAt(0).toUpperCase()}
           </span>
         ) : (
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-xs text-ink-3">?</span>
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs text-ink-3">?</span>
         )}
         <span className="min-w-0 flex-1 leading-tight">
           <span className="block truncate text-[0.6875rem] font-medium text-ink">{auth?.user?.name ?? "未登录"}</span>

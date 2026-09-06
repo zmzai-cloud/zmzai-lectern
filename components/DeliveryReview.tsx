@@ -182,7 +182,7 @@ export default function DeliveryReview({ sessionId }: { sessionId: string | null
           ) : (
             <ul className="mt-1 space-y-1">
               {runs.map((r) => (
-                <li key={r.id} className="rounded-sm border border-line px-2 py-1.5">
+                <li key={r.id} className="rounded-sm bg-surface-2/60 px-2 py-1.5">
                   <div className="flex items-center gap-2">
                     <span
                       className={cn(

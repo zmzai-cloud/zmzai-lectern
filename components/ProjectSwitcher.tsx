@@ -101,7 +101,7 @@ export default function ProjectSwitcher({
   const hasBridge = typeof window !== "undefined" && Boolean(window.lecternNative?.pickFolder);
 
   return (
-    <div ref={rootRef} className="relative shrink-0 border-b border-line px-3 py-2.5">
+    <div ref={rootRef} className="relative shrink-0 px-3 pb-1 pt-3">
       <div className="flex items-center gap-1">
       <button
         type="button"

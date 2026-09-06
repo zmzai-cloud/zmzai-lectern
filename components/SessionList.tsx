@@ -184,7 +184,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               disabled={!canCreate}
               onClick={onNewSession}
               title={canCreate ? "新建会话（⌘N）" : "登录 relay 后可新建会话"}
-              className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-sm border border-line bg-bg px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-sm px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
                 <path d="M8 2.5v11M2.5 8h11" strokeLinecap="round" />
@@ -204,10 +204,10 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               }
               aria-pressed={isolateNew}
               className={cn(
-                "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm border transition-colors",
+                "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm transition-colors",
                 isolateNew
-                  ? "border-transparent bg-accent text-accent-ink"
-                  : "border-line bg-bg text-ink-3 hover:bg-surface-2 hover:text-ink",
+                  ? "bg-accent text-accent-ink"
+                  : "text-ink-3 hover:bg-surface-2 hover:text-ink",
               )}
             >
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
@@ -226,10 +226,10 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               if (searchOpen) setQuery("");
             }}
             className={cn(
-              "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm border transition-colors",
+              "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm transition-colors",
               searchOpen
-                ? "border-transparent bg-surface-2 text-ink"
-                : "border-line bg-bg text-ink-3 hover:bg-surface-2 hover:text-ink",
+                ? "bg-surface-2 text-ink"
+                : "text-ink-3 hover:bg-surface-2 hover:text-ink",
             )}
           >
             {searchOpen ? (
@@ -294,7 +294,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               })}
         </div>
       </div>
-      {bottom && <div className="shrink-0 border-t border-line p-3">{bottom}</div>}
+      {bottom && <div className="shrink-0 p-3">{bottom}</div>}
     </aside>
   );
 }

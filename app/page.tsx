@@ -882,7 +882,9 @@ export default function App() {
             >
               <PanelRight size={16} strokeWidth={1.55} aria-hidden="true" />
             </button>
-            {!sidebarOpen && <button
+            {/* 侧栏收起的重开入口只留给浏览器形态（Electron 的常驻开关在左侧品牌区，
+                右侧操作区不再混入侧栏图标——面板开关区只放右栏/底部面板）。 */}
+            {!sidebarOpen && !inElectron && <button
               type="button"
               onClick={toggleSidebar}
               title="展开会话栏"

@@ -159,23 +159,41 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
       {/* 项目切换器（关联本地文件夹） */}
       {top}
 
-      {/* 主行动按钮（Qoder 式）：+ 新建会话 / ⌘N */}
+      {/* 主行动行：新建会话 + 隔离副本 + 搜索合为一行。
+          旧版「按钮→开关→『会话』标题→分组头」四层纵向堆叠，第一屏全是 chrome；
+          拍平后 chrome 只占一行，搜索时本行原地变为输入框（Slack 式）。 */}
       {onNewSession && (
-        <div className="shrink-0 px-3 pb-1 pt-3">
-          <button
-            type="button"
-            disabled={!canCreate}
-            onClick={onNewSession}
-            title={canCreate ? "新建会话（⌘N）" : "登录 relay 后可新建会话"}
-            className="flex h-9 w-full items-center gap-2 rounded-sm border border-line bg-bg px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
-              <path d="M8 2.5v11M2.5 8h11" strokeLinecap="round" />
-            </svg>
-            <span>新建会话</span>
-            <span className="ml-auto font-mono text-[0.625rem] text-ink-3">⌘N</span>
-          </button>
-          {onToggleIsolateNew && (
+        <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1 pt-3">
+          {searchOpen ? (
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setQuery("");
+                  setSearchOpen(false);
+                }
+              }}
+              placeholder="搜索会话…"
+              className="h-9 min-w-0 flex-1 rounded-sm border border-line bg-bg px-3 text-[0.8125rem] text-ink outline-none placeholder:text-ink-3 focus:border-ink"
+            />
+          ) : (
+            <button
+              type="button"
+              disabled={!canCreate}
+              onClick={onNewSession}
+              title={canCreate ? "新建会话（⌘N）" : "登录 relay 后可新建会话"}
+              className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-sm border border-line bg-bg px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+                <path d="M8 2.5v11M2.5 8h11" strokeLinecap="round" />
+              </svg>
+              <span className="truncate">新建会话</span>
+              <span className="ml-auto shrink-0 font-mono text-[0.625rem] text-ink-3">⌘N</span>
+            </button>
+          )}
+          {onToggleIsolateNew && !searchOpen && (
             <button
               type="button"
               onClick={onToggleIsolateNew}
@@ -184,63 +202,52 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
                   ? "新会话将使用隔离副本（git worktree）：改动只进副本，合并前主工作区零污染"
                   : "开启后新会话使用隔离副本（git worktree）：改动只进副本，合并前主工作区零污染"
               }
+              aria-pressed={isolateNew}
               className={cn(
-                "mt-1.5 flex h-7 w-full items-center gap-1.5 rounded-sm px-2 text-[0.6875rem] transition-colors",
-                isolateNew ? "bg-accent text-accent-ink" : "text-ink-3 hover:bg-surface-2 hover:text-ink",
+                "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm border transition-colors",
+                isolateNew
+                  ? "border-transparent bg-accent text-accent-ink"
+                  : "border-line bg-bg text-ink-3 hover:bg-surface-2 hover:text-ink",
               )}
             >
-              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
                 <circle cx="4.5" cy="3.5" r="1.7" />
                 <circle cx="4.5" cy="12.5" r="1.7" />
                 <circle cx="11.5" cy="6.5" r="1.7" />
                 <path d="M4.5 5.2v5.6M11.5 8.2c0 2-2 2.6-5.2 2.8" strokeLinecap="round" />
               </svg>
-              <span>新会话隔离副本</span>
-              <span className="ml-auto font-mono text-[0.625rem]">{isolateNew ? "ON" : "OFF"}</span>
             </button>
           )}
-        </div>
-      )}
-
-      {/* 会话列表：节头（标题 + 搜索切换） + 列表 */}
-      <div className="flex min-h-0 flex-1 flex-col pt-3">
-        <div className="flex shrink-0 items-center justify-between gap-2 pl-4 pr-2.5 pb-1">
-          <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-3">会话</span>
-          <div className="flex items-center gap-1">
-            {searchOpen && (
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setQuery("");
-                    setSearchOpen(false);
-                  }
-                }}
-                placeholder="搜索会话…"
-                className="h-6 w-32 rounded-sm bg-surface-2 px-2 text-xs text-ink outline-none placeholder:text-ink-3"
-              />
+          <button
+            type="button"
+            title={searchOpen ? "关闭搜索" : "搜索会话"}
+            onClick={() => {
+              setSearchOpen((v) => !v);
+              if (searchOpen) setQuery("");
+            }}
+            className={cn(
+              "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm border transition-colors",
+              searchOpen
+                ? "border-transparent bg-surface-2 text-ink"
+                : "border-line bg-bg text-ink-3 hover:bg-surface-2 hover:text-ink",
             )}
-            <button
-              type="button"
-              title="搜索会话"
-              onClick={() => {
-                setSearchOpen((v) => !v);
-                if (searchOpen) setQuery("");
-              }}
-              className={cn(
-                "flex h-6 w-6 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink",
-                searchOpen ? "text-ink" : "text-ink-3",
-              )}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+          >
+            {searchOpen ? (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
                 <circle cx="7" cy="7" r="4.5" />
                 <path d="M10.5 10.5L14 14" strokeLinecap="round" />
               </svg>
-            </button>
-          </div>
+            )}
+          </button>
         </div>
+      )}
+
+      {/* 会话列表：分组节头（最近/进行中/…）自带标签，「会话」总标题层已并入上行 chrome */}
+      <div className="flex min-h-0 flex-1 flex-col pt-2.5">
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {filtered.length === 0 && (
             <div className="px-3 py-4 text-xs text-ink-3">

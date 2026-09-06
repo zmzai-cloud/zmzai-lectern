@@ -913,7 +913,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
         <SessionList
-          top={<ProjectSwitcher onCollapseSidebar={toggleSidebar} onActiveChange={setProjectName} />}
+          top={<ProjectSwitcher onCollapseSidebar={inElectron ? undefined : toggleSidebar} onActiveChange={setProjectName} />}
           bottom={<AccountBlock />}
           sessions={sessions}
           activeId={activeId}

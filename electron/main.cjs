@@ -316,8 +316,8 @@ function createWindow() {
     backgroundColor: "#ffffff",
     title: "zmzai agent harness",
     icon: path.join(__dirname, "..", "build", "icon.png"),
-    // 集成标题栏（Qoder/VSCode 同款）：隐藏系统标题栏，保留红绿灯（macOS），
-    // 页面顶栏变拖拽区（见 globals.css html.electron 规则）。非 macOS 自动忽略。
+    // macOS 集成红绿灯；Windows/Linux 保留原生边框、窗口按钮与系统缩放行为。
+    // 渲染层只为 darwin 预留红绿灯空间，Windows 的控件不与页面操作区重叠。
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 14, y: 17 } }
       : {}),

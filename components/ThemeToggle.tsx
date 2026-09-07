@@ -47,14 +47,18 @@ export default function ThemeToggle() {
   const [pref, setPref] = useState<ThemePref>("system");
 
   useEffect(() => {
-    const stored = (localStorage.getItem("zmzai-theme") as ThemePref | null) ?? "system";
-    setPref(stored);
+    const sync = () => { const stored = localStorage.getItem("zmzai-theme"); setPref(stored === "dark" || stored === "light" ? stored : "system"); };
+    sync();
+    window.addEventListener("lectern:theme-change", sync);
+    window.addEventListener("storage", sync);
+    return () => { window.removeEventListener("lectern:theme-change", sync); window.removeEventListener("storage", sync); };
   }, []);
 
   const select = (next: ThemePref) => {
     setPref(next);
     localStorage.setItem("zmzai-theme", next);
     applyPref(next);
+    window.dispatchEvent(new Event("lectern:theme-change"));
   };
 
   return (
@@ -72,11 +76,12 @@ export default function ThemeToggle() {
           title={o.label}
           onClick={() => select(o.key)}
           className={cn(
-            "inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors",
+            "inline-flex h-8 items-center gap-1.5 justify-center rounded-full px-2.5 text-xs transition-colors",
             pref === o.key ? "bg-ink text-paper" : "text-ink-3 hover:text-ink",
           )}
         >
           {o.icon}
+          <span>{o.label}</span>
         </button>
       ))}
     </div>

@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "@zmzai/theme";
+import { usePlatform } from "@/lib/use-platform";
 import type { SessionListItem } from "@/lib/types";
 
 function timeLabel(iso?: string): string {
@@ -95,6 +96,7 @@ type Props = {
 
 export default function SessionList({ sessions, activeId, top, bottom, onNewSession, canCreate, isolateNew, onToggleIsolateNew, onSelectSession, onRenameSession, onDeleteSession, onTogglePinned, onToggleArchived, activity, width }: Props) {
   const [query, setQuery] = useState("");
+  const { modifier } = usePlatform();
   const [searchOpen, setSearchOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -155,7 +157,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
   );
 
   return (
-    <aside className="flex shrink-0 flex-col border-r border-line bg-surface" style={width ? { width } : undefined}>
+    <aside className="task-sidebar flex shrink-0 flex-col bg-surface" style={width ? { width } : undefined}>
       {/* 项目切换器（关联本地文件夹） */}
       {top}
 
@@ -183,14 +185,14 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               type="button"
               disabled={!canCreate}
               onClick={onNewSession}
-              title={canCreate ? "新建会话（⌘N）" : "登录 relay 后可新建会话"}
-              className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-sm px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+              title={canCreate ? `新建会话（${modifier}N）` : "登录 relay 后可新建会话"}
+              className="flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
                 <path d="M8 2.5v11M2.5 8h11" strokeLinecap="round" />
               </svg>
-              <span className="truncate">新建会话</span>
-              <span className="ml-auto shrink-0 font-mono text-[0.625rem] text-ink-3">⌘N</span>
+              <span className="truncate">新建任务</span>
+              <span className="task-new-shortcut ml-auto shrink-0 font-mono text-[0.625rem] text-ink-3">{modifier}N</span>
             </button>
           )}
           {onToggleIsolateNew && !searchOpen && (
@@ -294,7 +296,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               })}
         </div>
       </div>
-      {bottom && <div className="shrink-0 p-3">{bottom}</div>}
+      {bottom && <div className="shrink-0 border-t border-line p-3">{bottom}</div>}
     </aside>
   );
 }
@@ -338,20 +340,19 @@ function SessionRow({
   return (
     <div
       role="button"
+      aria-current={active ? "page" : undefined}
+      title={`${s.title || "未命名任务"} · ${style.label}${s.model ? ` · ${s.model.modelId}` : ""}`}
       tabIndex={0}
       onClick={() => !renaming && onSelect(s.id)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !renaming) onSelect(s.id);
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && !renaming) { e.preventDefault(); onSelect(s.id); }
       }}
       className={cn(
-        "group relative mb-0.5 block w-full cursor-pointer rounded-sm py-2 pl-3 pr-2 text-left transition-colors",
-        active ? "bg-selected" : "hover:bg-surface-2",
+        "task-row group relative mb-1 block w-full cursor-pointer rounded-lg py-2.5 pl-3 pr-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ink-3",
+        active ? "bg-surface-3" : "hover:bg-surface-2",
       )}
     >
       {/* 活跃行标记：一条左侧竖线 + selected 背景。不再叠加 shadow/ring（§4.3）。 */}
-      {active && (
-        <span aria-hidden className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-accent" />
-      )}
       {renaming ? (
         <input
           autoFocus
@@ -377,7 +378,7 @@ function SessionRow({
                 <path d="M9.5 2.5l4 4L6 14l-1-1 2-2-3.5.5L3 11l3-3-3.5-1 1-1L8 5.5l1-1L9.5 2.5z" strokeLinejoin="round" />
               </svg>
             )}
-            <span className="truncate">{s.title || "未命名会话"}</span>
+            <span className="truncate">{s.title || "未命名任务"}</span>
             {bgActivity && (
               <span
                 title={`后台任务${bgLabel}，点开查看后消失`}
@@ -396,21 +397,16 @@ function SessionRow({
           </span>
         </div>
       )}
-      <div className="mt-0.5 flex items-center gap-1.5 truncate text-[0.6875rem] text-ink-3">
+      {!["completed", "idle"].includes(outcome) && <div className="mt-1 flex items-center gap-1.5 truncate text-[0.6875rem] text-ink-3">
         {/* 状态：点形状 + 可读文字 + title（三重表达，颜色只是辅助） */}
         <span title={style.label} className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
         <span className={cn("shrink-0", style.text)}>{style.label}</span>
-        <span className="truncate">
-          {s.agent}
-          {s.model ? ` · ${s.model.providerId}/${s.model.modelId}` : ""}
-        </span>
-        {typeof s.messageCount === "number" && s.messageCount > 0 && (
-          <span className="shrink-0 font-mono text-[0.625rem] text-ink-3">{s.messageCount} 条</span>
-        )}
-      </div>
+      </div>}
       {/* hover 操作：置顶 / 归档 / 重命名 / 删除 */}
       {!renaming && (
-        <div className="absolute right-1.5 top-1.5 hidden items-center gap-0.5 group-hover:flex">
+        <details className="task-row-menu absolute right-1.5 top-1.5 z-10" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); } }}>
+          <summary aria-label="任务操作" className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md bg-surface text-ink-3 hover:text-ink">···</summary>
+          <div className="task-row-options absolute right-0 top-full z-20 mt-1 w-40 rounded-lg border border-line bg-bg p-1.5 shadow-md" onClick={(e) => { const details = e.currentTarget.closest("details"); if (details) details.open = false; }}>
           <button
             type="button"
             title={s.pinned ? "取消置顶" : "置顶"}
@@ -423,6 +419,7 @@ function SessionRow({
             <svg width="11" height="11" viewBox="0 0 16 16" fill={s.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.4">
               <path d="M9.5 2.5l4 4L6 14l-1-1 2-2-3.5.5L3 11l3-3-3.5-1 1-1L8 5.5l1-1L9.5 2.5z" strokeLinejoin="round" />
             </svg>
+            <span>{s.pinned ? "取消置顶" : "置顶"}</span>
           </button>
           <button
             type="button"
@@ -438,6 +435,7 @@ function SessionRow({
               <path d="M5.5 3V2.5A1 1 0 0 1 6.5 1.5h3A1 1 0 0 1 10.5 2.5V3" />
               <path d="M2.5 6.5h11" />
             </svg>
+            <span>{s.archived ? "取消归档" : "归档"}</span>
           </button>
           <button
             type="button"
@@ -451,6 +449,7 @@ function SessionRow({
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M11.3 2.3a1.5 1.5 0 0 1 2.1 2.1L5 12.8l-3 .7.7-3 8.6-8.2z" strokeLinejoin="round" />
             </svg>
+            <span>重命名</span>
           </button>
           <button
             type="button"
@@ -464,8 +463,10 @@ function SessionRow({
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
+            <span>删除任务</span>
           </button>
-        </div>
+          </div>
+        </details>
       )}
     </div>
   );

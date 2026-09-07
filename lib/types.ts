@@ -348,6 +348,7 @@ export type SsoCookiePayload = {
 
 /** Electron 宿主桥（preload.cjs 注入 window.lecternNative；Web 端不存在，需能力探测降级）。 */
 export type LecternNativeBridge = {
+  platform?: string;
   pickFolder?: () => Promise<string | null>;
   /** 任务完成系统通知（主进程 Notification；仅 Electron 宿主存在）。 */
   notifyTaskDone?: () => void;

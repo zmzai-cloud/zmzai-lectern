@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, SlidersHorizontal, ShieldCheck, History, KeyRound, Plug, Blocks, Sparkles } from "lucide-react";
 import { Button, Navbar } from "@zmzai/theme";
 
 import AccountBlock from "@/components/AccountBlock";
@@ -32,6 +32,16 @@ const EXTENSION_NAV: { id: Extract<SectionId, "mcp" | "plugins" | "skills">; lab
   { id: "plugins", label: "插件" },
   { id: "skills", label: "技能" },
 ];
+const SECTION_ICON = { general: SlidersHorizontal, agent: ShieldCheck, audit: History, credentials: KeyRound, mcp: Plug, plugins: Blocks, skills: Sparkles };
+const SECTION_DESCRIPTION: Record<SectionId, string> = {
+  general: "让 Lectern 适合你的工作习惯。",
+  agent: "选择 Agent 在工作中可以执行的操作。",
+  audit: "查看每一次授权决定及其来源。",
+  credentials: "连接模型服务，管理访问凭据。",
+  mcp: "连接外部工具和数据源。",
+  plugins: "管理工作区与本机的扩展能力。",
+  skills: "浏览 Agent 可以使用的技能。",
+};
 
 const SKILL_SOURCE: Record<SkillOption["source"], { label: string; detail: string }> = {
   workspace: { label: "工作区", detail: ".zmzai/skills" },
@@ -42,10 +52,10 @@ const SKILL_SOURCE: Record<SkillOption["source"], { label: string; detail: strin
 /** 分区标题 + 卡片容器（Qoder 式设置分组）。 */
 function Card({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
-    <section className="mb-8">
+    <section className="settings-section mb-8">
       <h2 className="mb-1 text-base font-semibold text-ink">{title}</h2>
       {desc && <p className="mb-3 text-xs leading-5 text-ink-3">{desc}</p>}
-      <div className="rounded-md border border-line bg-surface p-4">{children}</div>
+      <div className="settings-fields py-4">{children}</div>
     </section>
   );
 }
@@ -482,7 +492,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="flex h-full flex-col bg-bg text-ink">
+    <div className="settings-page flex h-full flex-col bg-bg text-ink">
       <Navbar
         sublabel="设置"
         className="h-12"
@@ -492,44 +502,46 @@ export default function SettingsPage() {
       <div className="flex min-h-0 flex-1">
         {/* 左侧导航（Qoder 式设置中心，可收起） */}
         {navOpen && (
-        <aside className="flex w-56 shrink-0 flex-col border-r border-line p-3">
+        <aside className="settings-sidebar flex w-60 shrink-0 flex-col bg-surface p-4">
           <Link
             href="/"
             className="mb-3 inline-flex h-9 items-center gap-2 rounded-sm px-2.5 text-[0.8125rem] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           >
             <ArrowLeft size={16} strokeWidth={1.8} aria-hidden="true" />
-            返回工作台
+            返回任务
           </Link>
-          <nav className="min-h-0 flex-1 overflow-y-auto">
+          <nav aria-label="设置分类" className="min-h-0 flex-1 overflow-y-auto">
             <div className="space-y-0.5">
             {PRIMARY_NAV.map((item) => (
               <button
                 key={item.id}
                 type="button"
+                aria-current={section === item.id ? "page" : undefined}
                 onClick={() => setSection(item.id)}
                 className={
                   "flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors " +
                   (section === item.id ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-3")
                 }
               >
-                {item.label}
+                {(() => { const Icon = SECTION_ICON[item.id]; return <Icon size={16} strokeWidth={1.6} aria-hidden />; })()}{item.label}
               </button>
             ))}
             </div>
             <div className="mt-5">
-              <div className="px-2.5 pb-1 text-[0.6875rem] font-medium text-ink-3">插件</div>
+              <div className="px-2.5 pb-2 text-[0.6875rem] font-medium text-ink-3">扩展能力</div>
               <div className="space-y-0.5">
                 {EXTENSION_NAV.map((item) => (
                   <button
                     key={item.id}
                     type="button"
+                    aria-current={section === item.id ? "page" : undefined}
                     onClick={() => setSection(item.id)}
                     className={
                       "flex w-full items-center rounded-sm py-1.5 pr-2.5 pl-5 text-left text-[0.8125rem] transition-colors " +
                       (section === item.id ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-3")
                     }
                   >
-                    <span className="min-w-0 flex-1">{item.label}</span>
+                    {(() => { const Icon = SECTION_ICON[item.id]; return <Icon size={16} strokeWidth={1.6} aria-hidden />; })()}<span className="min-w-0 flex-1">{item.label}</span>
                     {item.id === "mcp" && mcp && <span className="font-mono text-[0.625rem] text-ink-3">{mcp.statuses.length}</span>}
                     {item.id === "plugins" && <span className="font-mono text-[0.625rem] text-ink-3">{plugins.length}</span>}
                     {item.id === "skills" && <span className="font-mono text-[0.625rem] text-ink-3">{skills.length}</span>}
@@ -540,7 +552,7 @@ export default function SettingsPage() {
           </nav>
 
           {/* 底部账户块独立锚定：导航增长时只滚导航，账户始终贴住侧栏底部。 */}
-          <div className="mt-auto pt-3">
+          <div className="mt-auto border-t border-line pt-3">
             <AccountBlock onChange={() => refreshRelayKeys()} />
           </div>
 
@@ -549,7 +561,12 @@ export default function SettingsPage() {
 
         {/* 右侧内容区 */}
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-2xl p-8">
+          <div className="settings-content mx-auto max-w-[820px] px-10 py-10">
+            <div className="mb-9">
+              <p className="mb-2 text-xs text-ink-3">设置</p>
+              <h1 className="text-2xl font-semibold tracking-tight">{[...PRIMARY_NAV, ...EXTENSION_NAV].find((item) => item.id === section)?.label}</h1>
+              <p className="mt-2 text-sm text-ink-3">{SECTION_DESCRIPTION[section]}</p>
+            </div>
             {error && <div className="mb-4 rounded-sm border border-line bg-surface px-2.5 py-2 text-xs text-danger">{error}</div>}
 
             {section === "general" && (
@@ -563,7 +580,7 @@ export default function SettingsPage() {
                     <ThemeToggle />
                   </div>
                 </Card>
-                <Card title="relay 服务端点" desc="模型目录与对话请求的 OpenAI 兼容基址。优先级：此处配置 > RELAY_URL 环境变量 > 本机默认。修改保存后立即生效（含进行中会话的下一条消息）。">
+                <Card title="模型服务地址" desc="用于获取可用模型和发送消息。保存后，从下一条消息开始使用新地址。">
                   <div className="mb-3 flex items-center gap-2">
                     <input
                       value={relayDraft}
@@ -588,7 +605,7 @@ export default function SettingsPage() {
                     <div>申请入口：relay 控制台 → API Keys → 新建 key（zrk_ 开头），配「模型与凭据」里的个人 key 使用。</div>
                   </div>
                 </Card>
-                <Card title="关于" desc="harness 本地工作台：Agent 对话、文件/Git 审查、MCP、插件均在本页所在服务完成。">
+                <Card title="关于 Lectern" desc="在一个工作区中讨论想法、执行任务，并查看文件变更和成果。">
                   <div className="text-[0.6875rem] leading-5 text-ink-3">
                     <div>数据目录：data/（settings.json 0600、zmzai.db WAL、.secret 密钥文件）</div>
                     <div>插件目录：&lt;workspace&gt;/.zmzai/plugins/（项目）与 data/plugins/（全局）</div>

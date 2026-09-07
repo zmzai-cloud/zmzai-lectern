@@ -171,6 +171,101 @@ html[data-theme="dark"] {
   background: var(--color-live);
   animation: caret-blink 1s steps(2, start) infinite;
 }
+
+/* ===== 对话主界面：阅读优先、动作退后 =====
+ * 延续系统的中性令牌，但不再把每一段交流都做成工作台小卡片。
+ * 用户消息有轻盈承载，Agent 内容保持开放的文章式版心。 */
+.chat-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px 72px;
+  text-align: center;
+}
+.chat-user-bubble {
+  border: 0;
+  border-radius: 16px;
+  background: var(--color-surface-2);
+  box-shadow: none;
+}
+.chat-assistant-message {
+  display: block;
+  max-width: 100%;
+}
+.chat-composer {
+  position: relative;
+  margin-bottom: 0;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-xs);
+}
+.chat-composer:focus-within {
+  border-color: var(--color-line-strong);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-selected-strong) 18%, transparent);
+}
+
+.chat-view { container-type: inline-size; }
+.chat-input-dock { position: relative; min-width: 0; background: var(--color-bg); }
+.chat-latest { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 7px 14px; border: 1px solid var(--color-line); border-radius: 30px; background: var(--color-bg); font-size: 12px; box-shadow: var(--shadow-sm); z-index: 5; }
+.chat-task-plan, .chat-task-summary { padding: 12px 0; border-block: 1px solid var(--color-line); }
+.chat-task-summary { border-bottom: 0; }
+.chat-text-block { overflow-wrap: anywhere; }
+.chat-text-block > div:first-child { font-size: 15px; line-height: 1.8; }
+.chat-welcome { justify-content: center; min-height: 150px; padding: 24px 12px; }
+.chat-copy-actions { min-height: 25px; }
+.task-sidebar { min-width: 0; }
+.task-sidebar { container-type: inline-size; }
+@container (max-width: 240px) { .task-new-shortcut { display: none; } }
+.chat-view .zmz-tool-group-trigger { border: 0; background: transparent; padding: 5px 0; width: fit-content; color: var(--color-ink-3); }
+.chat-view .zmz-tool-group-trigger:hover { color: var(--color-ink); }
+.chat-view .zmz-tool-group-trigger small { display: none; }
+.chat-view .zmz-tool-group-label { font-family: var(--font-sans); font-size: 12px; }
+.chat-view .zmz-reasoning { border-left: 0; padding-left: 0; }
+.chat-view .zmz-reasoning-toggle { font-family: var(--font-sans); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.chat-view .tool-card::before { display: none; }
+.chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
+.chat-view .markdown-body :not(pre) > code { border: 0; border-radius: 4px; }
+.chat-view .markdown-body table { display: block; max-width: 100%; overflow-x: auto; }
+.chat-view .md-codeblock { border-radius: 10px; }
+.task-sidebar .task-row { font-weight: 400; }
+.task-row-menu { opacity: 0; }
+.task-row:hover .task-row-menu, .task-row:focus-within .task-row-menu, .task-row-menu[open] { opacity: 1; }
+.task-row-menu summary::-webkit-details-marker { display: none; }
+.task-row-options button { width: 100%; height: 32px; gap: 9px; justify-content: flex-start; padding-inline: 8px; border-radius: 5px; background: transparent; font-size: 12px; }
+.task-row-options button:hover { background: var(--color-surface-2); }
+@media (hover: none) { .task-row-menu { opacity: 1; } }
+.task-context { background: var(--color-bg); }
+.account-block > button { border-radius: 9px; min-height: 44px; }
+.account-menu button, .account-menu a { border-radius: 7px; min-height: 32px; }
+.settings-sidebar nav button { gap: 10px; min-height: 40px; border-radius: 8px; padding-inline: 12px; }
+.settings-section { border-bottom: 1px solid var(--color-line); padding-bottom: 12px; }
+.settings-section:last-child { border-bottom: 0; }
+.settings-page input, .settings-page select { border-radius: 7px; }
+.settings-page button:focus-visible, .account-block button:focus-visible, .settings-page a:focus-visible { outline: 2px solid var(--color-ink-3); outline-offset: 2px; }
+@container (max-width: 550px) {
+  .composer-root { padding-inline: 12px; }
+  .chat-composer { width: 100%; margin-inline: 0; }
+  .composer-controls button:first-child span { max-width: 95px; }
+  .messages { padding-inline: 16px; }
+}
+@media (max-width: 700px) {
+  .settings-sidebar { width: 168px; padding: 10px; }
+  .settings-content { padding: 24px 18px; }
+  .settings-fields > .flex { flex-wrap: wrap; }
+  .settings-sidebar nav button { font-size: 12px; }
+}
+@media (hover: none) { .chat-copy-actions { opacity: 1; } }
+@media (max-width: 640px) {
+  .chat-assistant-avatar { display: none; }
+  .chat-composer { margin-inline: 10px; width: auto; border-radius: 15px; }
+}
+/* 底部终端展开时，对话区会变成一条短而珍贵的阅读带；空态优先保留标题和说明，
+   不让装饰把真正的下一步挤出视口。 */
+@media (max-height: 760px) {
+  .chat-welcome { gap: 8px; padding-block: 16px 20px; }
+  .chat-welcome-mark { display: none; }
+}
 @keyframes caret-blink {
   50% {
     opacity: 0;
@@ -359,7 +454,7 @@ html[data-theme="dark"] {
 
 /* ===== Electron 集成标题栏（html.electron 由首帧脚本按 lecternNative 存在性注入） =====
  * 顶栏整体可拖拽窗口；交互元素恢复点击。浏览器中 -webkit-app-region 无效，天然无害。 */
-html.electron header {
+html.electron[data-platform="darwin"] header {
   -webkit-app-region: drag;
 }
 html.electron header button,
@@ -369,6 +464,18 @@ html.electron header input {
 }
 /* macOS hiddenInset 红绿灯悬浮在左上角，品牌区固定留出 84px 安全带：
    20px header inset + 64px 三颗控制钮及缓冲，不依赖窗口缩放或 logo 的实际宽度。 */
-html.electron header > div:first-child {
+html.electron[data-platform="darwin"] header:not(.lectern-titlebar) > div:first-child {
   padding-left: 84px;
 }
+
+/* 单层窗口栏：左侧延续侧栏底色，任务标题与内容区对齐。 */
+.lectern-window-controls { background: var(--color-surface); border-right: 1px solid var(--color-line); }
+html.electron[data-platform="darwin"] .lectern-window-controls { padding-left: 100px; }
+.titlebar-button { display: inline-flex; flex: none; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: 7px; color: var(--color-ink-3); }
+.titlebar-button:hover { background: var(--color-surface-3); color: var(--color-ink); }
+.titlebar-button:focus-visible { outline: 2px solid var(--color-ink-3); outline-offset: 2px; }
+.lectern-titlebar-main .task-context { min-height: 0; height: 100%; }
+html.electron[data-platform="darwin"] .lectern-titlebar-main .task-context > span[title] { -webkit-app-region: drag; }
+/* Windows 使用原生窗口边框；页面标题栏不抢原生拖动与最大化行为。 */
+html.electron[data-platform="win32"] { --font-sans: "MiSans", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+@media (max-width: 759px) { .lectern-window-controls { border-right: 0; } }

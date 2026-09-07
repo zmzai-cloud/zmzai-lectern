@@ -149,9 +149,9 @@ function TextBlock({ text, children }: { text: string; children: React.ReactNode
       .catch(() => undefined);
   };
   return (
-    <div className="group relative">
+    <div className="group relative chat-text-block">
       {children}
-      <div className="absolute -top-2.5 right-1 z-10 hidden items-center gap-0.5 rounded-md border border-line bg-bg py-0.5 pl-0.5 pr-1 shadow-sm group-hover:flex">
+      <div className="chat-copy-actions flex items-center gap-0.5 pt-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           type="button"
           onClick={copy}
@@ -293,7 +293,9 @@ function TodoCard({ todos }: { todos: TodoItem[] }) {
     return <span className="h-3.5 w-3.5 rounded-full border border-ink-3" />;
   };
   return (
-    <div className="rounded-lg bg-surface-2/50 p-3">
+    <details className="chat-task-plan" open={todos.some((t) => t.status === "in_progress")}>
+      <summary className="cursor-pointer text-xs text-ink-2">任务计划 · {done}/{todos.length} 已完成</summary>
+      <div className="pt-3">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-3">任务计划</span>
         <span className="font-mono text-[0.625rem] text-ink-3">{done}/{todos.length}</span>
@@ -319,45 +321,11 @@ function TodoCard({ todos }: { todos: TodoItem[] }) {
           </div>
         ))}
       </div>
-    </div>
+      </div>
+    </details>
   );
 }
 
-/** 运行中实时进度条（N6）：任务跑着时，用户眼前不再只有一个点在闪，
- *  而是「正在执行第 N 步 · 当前工具」的明确进展。数据全在投影快照里——
- *  todos 的 in_progress 项 + 消息里最后一个 running 工具，纯前端拼装。 */
-function LiveProgressBar({ todos, currentTool }: { todos: TodoItem[]; currentTool: string | null }) {
-  const done = todos.filter((t) => t.status === "completed").length;
-  const total = todos.length;
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  const current = todos.find((t) => t.status === "in_progress")?.content;
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-live/5 px-3 py-2">
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        <span className="h-2 w-2 animate-pulse rounded-full bg-live" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2 text-[0.6875rem] leading-5">
-          <span className="shrink-0 font-medium text-ink">
-            {total > 0 ? `正在执行第 ${Math.min(done + 1, total)}/${total} 步` : "正在执行"}
-          </span>
-          {currentTool && (
-            <span className="truncate font-mono text-[0.625rem] text-ink-2" title={currentTool}>
-              {currentTool}
-            </span>
-          )}
-          {current && <span className="truncate text-ink-3" title={current}>· {current}</span>}
-        </div>
-        {total > 0 && (
-          <div className="mt-1 h-1 overflow-hidden rounded-pill bg-surface-2">
-            <span className="block h-full rounded-pill bg-live transition-all duration-500" style={{ width: `${pct}%` }} />
-          </div>
-        )}
-      </div>
-      {total > 0 && <span className="shrink-0 font-mono text-[0.625rem] text-ink-3">{pct}%</span>}
-    </div>
-  );
-}
 
 /** 任务终态小结卡（N5）：run 收尾的 AI 一句总结 + 结构化统计。
  *  让「一个 call tool 结束」有了明确收尾——完成/中断/失败三种终态都有落点。
@@ -378,7 +346,9 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
   }
   const [showTimeline, setShowTimeline] = useState(false);
   return (
-    <div className="rounded-lg bg-surface-2/50">
+    <details className="chat-task-summary" open={kind !== "completed"}>
+      <summary className="cursor-pointer py-2 text-xs text-ink-2">{label}{parts.length ? ` · ${parts.join(" · ")}` : ""}</summary>
+      <div>
       <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-2">{label}</span>
@@ -424,7 +394,8 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </details>
   );
 }
 
@@ -572,6 +543,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compactionCount]);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const followTail = useRef(true);
+  const [showLatest, setShowLatest] = useState(false);
+  useEffect(() => { followTail.current = true; setShowLatest(false); }, [sessionId]);
   // 用户消息「编辑重发」原位编辑态：气泡变 textarea，保存即截断重跑
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   // 保存编辑：确认后交 page.tsx 调 rewind API（服务端截断 + 重跑）
@@ -597,16 +571,17 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   useEffect(() => {
     const el = messagesRef.current;
     if (!el) return;
+    if (visible.length === 0) { el.scrollTop = 0; return; }
     if (anchorRef.current) {
       const a = anchorRef.current;
       el.scrollTop = el.scrollHeight - a.height + a.top;
       anchorRef.current = null;
-    } else {
+    } else if (followTail.current || pending) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, pending]);
+  }, [visible, pending]);
   return (
-    <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-bg">
+    <div className="chat-view relative grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-bg">
       {/* 消息区与 Composer 是两个明确的 grid row：上面只能在自身内部滚动，
           下面的 Composer 因此不可能越过 Debug Area。 */}
       <div className="flex min-h-0 flex-col">
@@ -650,8 +625,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (
-        <div className="flex shrink-0 flex-wrap items-center gap-1 px-4 py-1.5">
-          <span className="text-[0.625rem] text-ink-3">读过</span>
+        <details className="chat-read-context shrink-0 px-6 py-2">
+          <summary className="cursor-pointer text-xs text-ink-3">已读取 {reads.length} 个文件</summary>
+          <div className="flex flex-wrap gap-1 pt-2">
           {reads.map((path) => (
             <button
               key={path}
@@ -663,14 +639,20 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               {path}
             </button>
           ))}
-        </div>
+          </div>
+        </details>
       )}
       <div
-        className="messages mx-auto min-h-0 w-full max-w-3xl min-[1440px]:max-w-4xl min-[1920px]:max-w-5xl flex-1 space-y-7 overflow-y-auto px-6 py-6"
+        className={cn(
+          "messages mx-auto min-h-0 w-full max-w-[800px] flex-1 overflow-y-auto px-6 py-8",
+          visible.length === 0 ? "flex flex-col" : "space-y-5",
+        )}
         ref={messagesRef}
         onScroll={(e) => {
           // 触顶自动加载更早历史（hasMore 且未在加载中——防抖在 page 层）
           const el = e.currentTarget;
+          followTail.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+          setShowLatest(!followTail.current);
           if (hasMore && el.scrollTop < 80) handleLoadMore();
         }}
         onClick={(e) => {
@@ -691,16 +673,11 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       {todos && todos.length > 0 && <TodoCard todos={todos} />}
       {/* N6 实时进度：运行中展示「正在执行第 N 步 · 当前工具」，取代单一状态点 */}
-      {running && visible.length > 0 && <LiveProgressBar todos={todos ?? []} currentTool={currentTool} />}
         {visible.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className="text-ink-3" aria-hidden>
-              <path d="M8 1.8v3.1M8 11.1v3.1M1.8 8h3.1M11.1 8h3.1" strokeLinecap="round" />
-              <path d="M8 4.9A3.1 3.1 0 1 0 8 11.1 3.1 3.1 0 0 0 8 4.9z" />
-            </svg>
-            <div className="text-[0.9375rem] font-semibold text-ink">开始一个任务</div>
-            <div className="max-w-md text-xs leading-5 text-ink-3">
-              描述你想交付的结果。Agent 会在当前项目中执行，变更、审查和成果会留在这项任务里。
+          <div className="chat-welcome flex-1">
+            <div className="text-[1.5rem] font-semibold tracking-[-0.035em] text-ink">今天想完成什么？</div>
+            <div className="max-w-md text-[0.8125rem] leading-6 text-ink-3">
+              从一个问题、一个想法，或一项需要完成的工作开始。
             </div>
           </div>
         )}
@@ -753,7 +730,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             return (
               <div key={m.id} className="group flex justify-end [content-visibility:auto] [contain-intrinsic-size:auto_120px]">
                 <div className="relative max-w-[85%]">
-                  <div className="whitespace-pre-wrap rounded-lg rounded-br-sm bg-surface-2 px-3.5 py-2.5 text-[0.875rem] leading-[1.65] text-ink">
+                  <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
                     {m.skill && (
                       <div className="mb-1.5 flex items-center gap-1.5 text-[0.8125rem] leading-5">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" className="shrink-0 text-accent">
@@ -776,7 +753,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                     )}
                     {!m.skill && text}
                   </div>
-                  <div className="absolute -left-14 top-1 hidden items-center gap-0.5 group-hover:flex">
+                  <div className="mt-1 flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                     <button
                       type="button"
                       title="复制"
@@ -835,7 +812,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             );
           }
           return (
-            <div key={m.id} className="space-y-2.5 [content-visibility:auto] [contain-intrinsic-size:auto_120px]">
+            <div key={m.id} className="chat-assistant-message [content-visibility:auto] [contain-intrinsic-size:auto_120px]">
+              <div className="min-w-0 flex-1 space-y-2.5">
               {blocks}
               {m.error && (
                 <div className="rounded-sm border border-danger/40 bg-danger/5 px-3 py-2 text-xs leading-5 text-danger">
@@ -911,6 +889,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                   正在工作…
                 </div>
               )}
+              </div>
             </div>
           );
         })}
@@ -964,13 +943,13 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         )}
       </div>
       </div>
-      {/* Whisper 状态行：无事件时保留占位高度，避免 Composer 跳动 */}
+      <div className="chat-input-dock">
+      {showLatest && <button type="button" className="chat-latest" onClick={() => { followTail.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowLatest(false); }}>↓ 回到最新消息</button>}
+      {/* 状态与输入器共享同一个 grid row，避免隐式第三行挤压消息区。 */}
       <div className="flex h-7 shrink-0 items-center justify-center">
-        {whisper && (
+        {(whisper || running) && (
           <div className="flex items-center text-[0.6875rem] tracking-wide text-ink-3">
-            <span className="h-px w-11 bg-line" />
-            <span className="px-3">{whisper}</span>
-            <span className="h-px w-11 bg-line" />
+            <span className="px-3">{running ? currentTool ? `正在使用 ${currentTool}…` : "正在思考…" : whisper}</span>
           </div>
         )}
       </div>
@@ -984,6 +963,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         permissionMode={permissionMode}
         onCyclePermissionMode={onCyclePermissionMode}
       />
+      </div>
     </div>
   );
 }

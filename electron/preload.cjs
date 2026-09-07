@@ -2,6 +2,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("lecternNative", {
+  /** 只暴露平台名，供标题栏安全区和快捷键提示使用。 */
+  platform: process.platform,
   /** 系统原生文件夹选择对话框（项目切换器「添加文件夹」用）。返回绝对路径或 null。 */
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
 

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { PanelBottom, PanelLeft, PanelRight } from "lucide-react";
-import { BrandLockup, cn, Navbar, navItemClass } from "@zmzai/theme";
+import { cn } from "@zmzai/theme";
+import { usePlatform } from "@/lib/use-platform";
 
 import CommandPalette, { type Command } from "@/components/CommandPalette";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
@@ -198,6 +199,7 @@ function playDoneChime(): void {
 type BackgroundActivity = Record<string, { kind: string; at: number }>;
 
 export default function App() {
+  const { isMac, modifier, shift } = usePlatform();
   const router = useRouter();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -237,13 +239,24 @@ export default function App() {
   const paletteActionsRef = useRef<{ newSession: () => void }>({ newSession: () => undefined });
   // 左侧栏收起/展开（Qoder 同款，持久化）
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(() => readWidth("lectern:sidebar-width", 256, 200, 420));
-  const [workbenchWidth, setWorkbenchWidth] = useState(() => readWidth("lectern:workbench-width", 384, 320, 720));
-  const [workbenchOpen, setWorkbenchOpen] = useState(() => typeof window === "undefined" || window.localStorage.getItem("lectern:workbench-open") !== "0");
-  const [viewportWidth, setViewportWidth] = useState(() => typeof window === "undefined" ? 1440 : window.innerWidth);
-  const [viewportHeight, setViewportHeight] = useState(() => typeof window === "undefined" ? 900 : window.innerHeight);
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(() => readWidth("lectern:bottom-panel-height", 260, 160, 640));
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(() => typeof window === "undefined" || window.localStorage.getItem("lectern:bottom-panel-open") !== "0");
+  const [sidebarWidth, setSidebarWidth] = useState(256);
+  const [workbenchWidth, setWorkbenchWidth] = useState(384);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(1440);
+  const [viewportHeight, setViewportHeight] = useState(900);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(260);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
+  const [layoutReady, setLayoutReady] = useState(false);
+  useEffect(() => {
+    setSidebarWidth(readWidth("lectern:sidebar-width", 256, 200, 420));
+    setWorkbenchWidth(readWidth("lectern:workbench-width", 384, 320, 720));
+    setBottomPanelHeight(readWidth("lectern:bottom-panel-height", 260, 160, 640));
+    setWorkbenchOpen(localStorage.getItem("lectern:workbench-open") === "1");
+    setBottomPanelOpen(localStorage.getItem("lectern:bottom-panel-open") === "1");
+    setViewportWidth(window.innerWidth);
+    setViewportHeight(window.innerHeight);
+    setLayoutReady(true);
+  }, []);
   // 会话级 worktree 隔离（robustness-plan §9）：新建会话默认勾选「隔离副本」（持久化）
   const [isolateNew, setIsolateNew] = useState(false);
   // active 会话的隔离状态（切换会话时按服务端为准查询）+ 操作结果横幅
@@ -267,11 +280,14 @@ export default function App() {
   useEffect(() => {
     void client.authStatus().then(setAuth);
   }, []);
-  useEffect(() => { window.localStorage.setItem("lectern:sidebar-width", String(sidebarWidth)); }, [sidebarWidth]);
-  useEffect(() => { window.localStorage.setItem("lectern:workbench-width", String(workbenchWidth)); }, [workbenchWidth]);
-  useEffect(() => { window.localStorage.setItem("lectern:workbench-open", workbenchOpen ? "1" : "0"); }, [workbenchOpen]);
-  useEffect(() => { window.localStorage.setItem("lectern:bottom-panel-height", String(bottomPanelHeight)); }, [bottomPanelHeight]);
-  useEffect(() => { window.localStorage.setItem("lectern:bottom-panel-open", bottomPanelOpen ? "1" : "0"); }, [bottomPanelOpen]);
+  useEffect(() => {
+    if (!layoutReady) return;
+    localStorage.setItem("lectern:sidebar-width", String(sidebarWidth));
+    localStorage.setItem("lectern:workbench-width", String(workbenchWidth));
+    localStorage.setItem("lectern:workbench-open", workbenchOpen ? "1" : "0");
+    localStorage.setItem("lectern:bottom-panel-height", String(bottomPanelHeight));
+    localStorage.setItem("lectern:bottom-panel-open", bottomPanelOpen ? "1" : "0");
+  }, [layoutReady, sidebarWidth, workbenchWidth, workbenchOpen, bottomPanelHeight, bottomPanelOpen]);
   useEffect(() => {
     const syncViewport = () => {
       setViewportWidth(window.innerWidth);
@@ -781,9 +797,9 @@ export default function App() {
 
   // P2-12 命令面板命令表
   const commands: Command[] = [
-    { id: "new-session", label: "新建会话", hint: "⌘N 不支持时用这里", run: () => paletteActionsRef.current.newSession() },
-    { id: "open-files", label: "搜索文件…", hint: "⌘P", run: () => setPalette("files") },
-    { id: "search-sessions", label: "搜索会话内容…", hint: "⌘⇧F", run: () => setPalette("search") },
+    { id: "new-session", label: "新建会话", hint: `${modifier}N 不支持时用这里`, run: () => paletteActionsRef.current.newSession() },
+    { id: "open-files", label: "搜索文件…", hint: `${modifier}P`, run: () => setPalette("files") },
+    { id: "search-sessions", label: "搜索会话内容…", hint: `${modifier}${shift}F`, run: () => setPalette("search") },
     { id: "toggle-auto", label: autoMode ? "切到确认档（逐次授权）" : "切到自动档（自动授权）", hint: "档位", run: toggleAuto },
     { id: "open-settings", label: "打开设置", hint: "个人 key / relay / MCP / 插件", run: () => router.push("/settings") },
   ];
@@ -831,33 +847,29 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
-      {/* 品牌顶栏：全域统一 Navbar + 侧栏开关（主题 / 设置入口在左下角账户块菜单）。
-          Electron（Codex 基准 ③）：红绿灯落在品牌区安全带内，侧栏开关常驻其右、
-          右侧操作区加底部面板开关——窗口 chrome 与功能按钮融为一排。 */}
-      <Navbar
-        sublabel="lectern"
-        className="h-12"
-        brand={
-          inElectron ? (
-            <div className="flex items-center gap-2.5">
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                title={sidebarOpen ? "收起会话栏" : "展开会话栏"}
-                aria-label={sidebarOpen ? "收起会话栏" : "展开会话栏"}
-                className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
-                  sidebarOpen ? "bg-surface-2 text-ink" : "text-ink-3",
-                )}
-              >
-                <PanelLeft size={16} strokeWidth={1.55} aria-hidden="true" />
-              </button>
-              <BrandLockup sublabel="lectern" />
-            </div>
-          ) : undefined
-        }
-        actions={
-          <>
+      <header className="lectern-titlebar flex h-12 shrink-0 items-stretch">
+        <div className="lectern-window-controls flex shrink-0 items-center gap-2 px-3" style={{ width: sidebarOpen ? sidebarWidth + 6 : inElectron && isMac ? 144 : 56 }}>
+          <button type="button" onClick={toggleSidebar} title={sidebarOpen ? "收起会话栏" : "展开会话栏"} aria-label={sidebarOpen ? "收起会话栏" : "展开会话栏"} aria-expanded={sidebarOpen} className="titlebar-button">
+            <PanelLeft size={16} strokeWidth={1.55} aria-hidden />
+          </button>
+        </div>
+        <div className="lectern-titlebar-main flex min-w-0 flex-1 items-center border-b border-line">
+          <TaskContextStrip
+            presentation={presentation}
+            title={taskTitle}
+            projectName={projectName}
+            summary={chatData.summary?.text ?? null}
+            meta={modelLabel}
+            actions={
+              <>
+              <TaskBarActions
+                connState={connState}
+                isolation={activeIsolation}
+                onWorktreeAction={handleWorktreeAction}
+                locked={presentation.state === "running"}
+                autoMode={autoMode}
+                onToggleAuto={toggleAuto}
+              />
             <button
               type="button"
               onClick={toggleBottomPanel}
@@ -882,22 +894,11 @@ export default function App() {
             >
               <PanelRight size={16} strokeWidth={1.55} aria-hidden="true" />
             </button>
-            {/* 侧栏收起的重开入口只留给浏览器形态（Electron 的常驻开关在左侧品牌区，
-                右侧操作区不再混入侧栏图标——面板开关区只放右栏/底部面板）。 */}
-            {!sidebarOpen && !inElectron && <button
-              type="button"
-              onClick={toggleSidebar}
-              title="展开会话栏"
-              aria-label="展开会话栏"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
-            >
-              <PanelLeft size={16} strokeWidth={1.55} aria-hidden="true" />
-            </button>}
-          </>
-        }
-      >
-        <span className={navItemClass(false)}>工作台</span>
-      </Navbar>
+              </>
+            }
+          />
+        </div>
+      </header>
       {/* 命令面板的「新建会话」需要拿最新 newSession */}
       <PaletteBridge bridge={paletteActionsRef} action={newSession} />
 
@@ -915,7 +916,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
         <SessionList
-          top={<ProjectSwitcher onCollapseSidebar={inElectron ? undefined : toggleSidebar} onActiveChange={setProjectName} />}
+          top={<ProjectSwitcher onActiveChange={setProjectName} />}
           bottom={<AccountBlock />}
           sessions={sessions}
           activeId={activeId}
@@ -934,24 +935,6 @@ export default function App() {
         )}
         {sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {/* 任务上下文条（§4.2）：替代原先散落的「对话 / 空闲 / 自动」控件 */}
-          <TaskContextStrip
-            presentation={presentation}
-            title={taskTitle}
-            projectName={projectName}
-            summary={chatData.summary?.text ?? null}
-            meta={modelLabel}
-            actions={
-              <TaskBarActions
-                connState={connState}
-                isolation={activeIsolation}
-                onWorktreeAction={handleWorktreeAction}
-                locked={presentation.state === "running"}
-                autoMode={autoMode}
-                onToggleAuto={toggleAuto}
-              />
-            }
-          />
           <div className="flex min-h-0 flex-1">
             <ChatView
               data={chatData}

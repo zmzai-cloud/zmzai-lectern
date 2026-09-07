@@ -1,4 +1,5 @@
 "use client";
+import { usePlatform } from "@/lib/use-platform";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@zmzai/theme";
@@ -37,6 +38,7 @@ export default function CommandPalette({
   sessionId?: string | null;
 }) {
   const [query, setQuery] = useState("");
+  const { modifier, shift } = usePlatform();
   const [index, setIndex] = useState(0);
   const [fileHits, setFileHits] = useState<{ path: string; type: "dir" | "file" }[]>([]);
   const [searchHits, setSearchHits] = useState<{ sessionId: string; title: string; snippet: string }[]>([]);
@@ -159,7 +161,7 @@ export default function CommandPalette({
           <span>⏎ 执行</span>
           <span>Esc 关闭</span>
           <span className="flex-1" />
-          <span>{mode === "files" ? "⌘P 文件" : mode === "search" ? "⌘⇧F 搜索" : "⌘K 命令"}</span>
+          <span>{mode === "files" ? `${modifier}P 文件` : mode === "search" ? `${modifier}${shift}F 搜索` : `${modifier}K 命令`}</span>
         </div>
       </div>
     </div>

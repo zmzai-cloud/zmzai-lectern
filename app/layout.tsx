@@ -15,11 +15,14 @@ export const metadata: Metadata = {
  *  （顶栏拖拽区 + 红绿灯让位），避免首帧布局跳动。 */
 const themeBootstrap = `
 (function () {
+  if (window.lecternNative) {
+    document.documentElement.classList.add("electron");
+    document.documentElement.dataset.platform = window.lecternNative.platform || (/Mac/i.test(navigator.platform) ? "darwin" : /Win/i.test(navigator.platform) ? "win32" : "linux");
+  }
   try {
     var q = new URLSearchParams(location.search).get("theme");
     var t = q === "dark" || q === "light" ? q : localStorage.getItem("zmzai-theme") || "system";
     if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
-    if (window.lecternNative) document.documentElement.classList.add("electron");
   } catch (e) {
     // 隐私模式 / 禁用存储时读 localStorage 会抛异常。主题与桌面壳标记都只是锦上
     // 添花，绝不能让它阻断首帧渲染，所以这里只告警不抛出——否则「主题不生效」

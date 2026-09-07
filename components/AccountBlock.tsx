@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { UserRound, ChevronUp } from "lucide-react";
 
 import { client } from "@/lib/client";
 import type { AuthStatus } from "@/lib/types";
@@ -18,31 +19,40 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const [themePref, setThemePref] = useState<"system" | "light" | "dark">("system");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const refresh = useCallback(() => {
     void client
       .authStatus()
       .then((a) => {
         setAuth(a);
-        onChange?.(a);
+        onChangeRef.current?.(a);
       })
       .catch(() => undefined);
-  }, [onChange]);
+  }, []);
 
   useEffect(() => {
     refresh();
-    const stored = localStorage.getItem("zmzai-theme");
-    if (stored === "light" || stored === "dark" || stored === "system") setThemePref(stored);
+    const sync = () => { const stored = localStorage.getItem("zmzai-theme"); setThemePref(stored === "dark" || stored === "light" ? stored : "system"); };
+    sync();
+    window.addEventListener("lectern:theme-change", sync);
+    window.addEventListener("storage", sync);
+    return () => { window.removeEventListener("lectern:theme-change", sync); window.removeEventListener("storage", sync); };
   }, [refresh]);
 
   // 外点关闭菜单
   useEffect(() => {
     if (!menu) return;
+    ref.current?.querySelector<HTMLButtonElement>("#account-options button")?.focus();
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setMenu(false);
     };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") { setMenu(false); triggerRef.current?.focus(); } };
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
   }, [menu]);
 
   // 与 ThemeToggle 同一 localStorage 约定（zmzai-theme）
@@ -51,6 +61,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     localStorage.setItem("zmzai-theme", pref);
     if (pref === "system") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = pref;
+    window.dispatchEvent(new Event("lectern:theme-change"));
   };
 
   const logout = () => {
@@ -67,9 +78,9 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   };
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="account-block relative">
       {menu && (
-        <div className="absolute bottom-full left-0 z-30 mb-2 w-56 rounded-md border border-line bg-surface p-1 shadow-lg ring-1 ring-line">
+        <div id="account-options" className="account-menu absolute bottom-full left-0 z-30 mb-2 w-64 max-w-[calc(100vw-32px)] rounded-xl border border-line bg-bg p-2 shadow-lg">
           <div className="px-2.5 pb-2 pt-2">
             <div className="truncate text-xs font-medium text-ink">{auth?.user?.name ?? "未登录"}</div>
             <div className="truncate text-[0.625rem] text-ink-3">{auth?.user?.email ?? "登录后可同步账号能力"}</div>
@@ -81,6 +92,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
                 key={pref}
                 type="button"
                 onClick={() => pickTheme(pref)}
+                aria-pressed={themePref === pref}
                 className={
                   "flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] transition-colors " +
                   (themePref === pref ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-3")
@@ -133,26 +145,20 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
         </div>
       )}
       <button
+        ref={triggerRef}
         type="button"
+        aria-expanded={menu}
+        aria-controls="account-options"
         onClick={() => setMenu((v) => !v)}
         title="账户与更多"
         className="flex w-full items-center gap-2 rounded-sm px-2.5 py-2 text-left transition-colors hover:bg-surface-2"
       >
-        {auth?.loggedIn && auth.user ? (
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-bg">
-            {auth.user.name.charAt(0).toUpperCase()}
-          </span>
-        ) : (
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs text-ink-3">?</span>
-        )}
+        <UserRound size={17} strokeWidth={1.5} className="shrink-0 text-ink-2" aria-hidden />
         <span className="min-w-0 flex-1 leading-tight">
           <span className="block truncate text-[0.6875rem] font-medium text-ink">{auth?.user?.name ?? "未登录"}</span>
-          <span className="block truncate text-[0.625rem] text-ink-3">{auth?.loggedIn ? "登录会话可用" : "可配置个人 key 直连"}</span>
+          <span className="block truncate text-[0.625rem] text-ink-3">{auth?.loggedIn ? "个人账户" : "登录或连接模型"}</span>
         </span>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className="shrink-0 text-ink-3">
-          <circle cx="8" cy="8" r="2.2" />
-          <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" strokeLinecap="round" />
-        </svg>
+        <ChevronUp size={14} className="text-ink-3" aria-hidden />
       </button>
     </div>
   );

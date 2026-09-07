@@ -9,6 +9,11 @@ import { useLayoutEffect } from "react";
 export default function ElectronShellMarker() {
   useLayoutEffect(() => {
     document.documentElement.classList.toggle("electron", Boolean(window.lecternNative));
+    if (window.lecternNative) {
+      document.documentElement.dataset.platform = window.lecternNative.platform ?? (/Mac/i.test(navigator.platform) ? "darwin" : /Win/i.test(navigator.platform) ? "win32" : "linux");
+    } else {
+      delete document.documentElement.dataset.platform;
+    }
   }, []);
 
   return null;

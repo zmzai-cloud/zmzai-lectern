@@ -136,12 +136,14 @@ and listing failures, and empty queries. Three failed before the fix and pass
 afterwards. Full suite: 98 tests; typecheck and diff check pass. This is not yet
 real-database or browser search evidence.
 
-1. Verify real two-version upgrade and rollback without losing data. Detection,
-   explicit download, integrity verification and confirmation now exist; see
-   `unsigned-updates.md` and `release-0.5.1-verification.md` for the unsigned flow.
-2. Run the native Windows workflow; do not equate workflow YAML with execution.
-3. Complete background task center and retry/continue/duplicate actions, then
-   in-session search, unread counts and bounded long-history rendering.
-4. Continue the full workspace/delivery and agent capability tables above.
-   Certificate provisioning remains an external dependency, not a reason to
-   abandon other work or declare P0 complete.
+The user has promoted four product workflows to the active priority order:
+
+1. Message experience: in-session search, unread message markers, bounded long-history rendering, and SSE cursor replay/reconnect evidence.
+2. Background task center: running/waiting/failed task views, retry/stop/continue/duplicate actions, cross-project navigation, and action state tests.
+3. File attachments: real desktop drag/drop acceptance, download and authorization checks, cancellation/retry behavior, and binary-document handling boundaries.
+4. Delivery workflow: review evidence, accept/return/discard, patch export, commit/rollback, conflict handling, and result-file downloads.
+
+Release follow-ups remain queued behind these workflows: verify real two-version
+update rollback, run the native Windows workflow, and continue the agent
+configuration table. Certificate provisioning remains an external dependency,
+not a reason to abandon the product workflow work.

@@ -109,7 +109,7 @@ UNPACKED=$(find dist/win-unpacked/resources/app.asar.unpacked -type f 2>/dev/nul
 echo "解包原生文件：$UNPACKED 个（期望 ≥9）"
 [ "$UNPACKED" -ge 9 ] || { echo "❌ asarUnpack 未生效，原生二进制留在 asar 内会加载失败" >&2; exit 1; }
 FILE_COUNT=$(find dist/win-unpacked -type f | wc -l | tr -d " ")
-echo "文件数：$FILE_COUNT（阈值 300）"
+echo "文件数：${FILE_COUNT}（阈值 300）"
 [ "$FILE_COUNT" -le 300 ] || { echo "❌ 文件数超标：asar 未生效或 files 排除规则失效" >&2; exit 1; }
 ls -lh dist/*.exe dist/*.zip
 echo "完成。Windows 安装：双击 dist/*Setup*.exe（NSIS 安装器）；或解压 zip 直接运行 Lectern.exe"

@@ -6,8 +6,17 @@
 // 壳内不跑业务逻辑；本地引擎能力（MCP/终端/git，见 legacy/）保留为后续增强。
 
 const { app, BrowserWindow, dialog, ipcMain, session, utilityProcess, Tray, globalShortcut, Notification, nativeImage, shell } = require("electron");
+const updater = require("./updater.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
+
+// Explicit profile isolation for packaged-app QA; never migrate real user data into it.
+const userDataOverride = process.env.LECTERN_USER_DATA_DIR;
+if (userDataOverride) {
+  if (!path.isAbsolute(userDataOverride)) throw new Error("LECTERN_USER_DATA_DIR must be absolute");
+  fs.mkdirSync(userDataOverride, { recursive: true });
+  app.setPath("userData", userDataOverride);
+}
 
 const WEB_PORT = Number(process.env.LECTERN_WEB_PORT ?? 3100);
 const WEB_URL = (process.env.LECTERN_WEB_URL ?? `http://127.0.0.1:${WEB_PORT}`).replace(/\/$/, "");
@@ -183,6 +192,10 @@ function startCookieWatch() {
 
 /** 解析 .env 注入 process.env（已存在的环境变量优先）。standalone server 不保证读 .env，显式注入最稳。 */
 function loadEnvFile() {
+  if (app.isPackaged) {
+    require("./release-defaults.cjs").applyReleaseDefaults(process.env);
+    return;
+  }
   try {
     const raw = fs.readFileSync(path.join(app.getAppPath(), ".env"), "utf8");
     for (const line of raw.split("\n")) {
@@ -381,6 +394,10 @@ app.whenReady().then(async () => {
     await shell.openPath(logDir);
     return logDir;
   });
+  ipcMain.handle("update:state", () => updater.getState());
+  ipcMain.handle("update:check", () => updater.check());
+  ipcMain.handle("update:download", () => updater.download());
+  ipcMain.handle("update:install", () => updater.install());
 
   // SSO 登录桥：打开 auth 子窗口；若默认 session 已有共享会话 cookie 直接返回（免再登）
   ipcMain.handle("auth:openSSO", async (event) => {
@@ -394,7 +411,7 @@ app.whenReady().then(async () => {
   {
     const userData = app.getPath("userData");
     const legacy = path.join(path.dirname(userData), "zmzai Harness");
-    if (path.resolve(legacy) !== path.resolve(userData) && fs.existsSync(legacy)
+    if (!userDataOverride && path.resolve(legacy) !== path.resolve(userData) && fs.existsSync(legacy)
         && !fs.existsSync(path.join(userData, "zmzai.db"))) {
       try {
         fs.cpSync(legacy, userData, { recursive: true });
@@ -413,6 +430,7 @@ app.whenReady().then(async () => {
   startTrayPolling();
   registerGlobalShortcut();
   startCookieWatch();
+  if (updater.configure()) setTimeout(() => void updater.check(), 10_000);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

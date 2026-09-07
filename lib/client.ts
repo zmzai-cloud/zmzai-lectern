@@ -128,7 +128,8 @@ export const client = {
     effort?: ThinkingEffort,
     skillId?: string,
     references?: string[],
-  ) => post(`/api/sessions/${sessionId}/prompt`, { text, agent, model, images, effort, skillId, references }).then((r) => j<{ ok: boolean }>(r)),
+    attachments?: { name: string; mediaType: string; data: string; size: number }[],
+  ) => post(`/api/sessions/${sessionId}/prompt`, { text, agent, model, images, effort, skillId, references, attachments }).then((r) => j<{ ok: boolean }>(r)),
 
   replyPermission: (
     sessionId: string,

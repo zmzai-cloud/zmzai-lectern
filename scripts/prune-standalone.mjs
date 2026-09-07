@@ -41,6 +41,8 @@ const KEEP_PATTERNS = [
   /^tree-sitter-wasms$/,   // repo_map 语言 wasm（框架 dynamic require，trace 漏）
   /^web-tree-sitter$/,     // repo_map 运行时（已在 trace，双保险）
   /^@zmzai\//,             // 私有包
+  /^electron-updater$/,    // Electron main-process update service
+  /^(fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|lazy-val|lodash\.escaperegexp|lodash\.isequal|semver|lru-cache|tiny-typed-emitter)$/,
 ];
 
 function shouldKeep(name) {

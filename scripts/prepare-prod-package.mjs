@@ -5,8 +5,9 @@
 // 之后 npm install --omit=dev 得到完全实体的生产 node_modules，
 // 用于替换 next standalone 输出里不完整的 node_modules（pnpm 下 trace
 // 只产出指向 .pnpm 的断链 symlink）。
-import { execSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 mkdirSync(".package-build", { recursive: true });
@@ -19,7 +20,12 @@ for (const [name, spec] of Object.entries(pkg.dependencies)) {
     continue;
   }
   const dir = spec.slice(spec.indexOf(":") + 1);
-  execSync(`npm pack --silent --pack-destination .package-build ${dir}`, { stdio: "inherit" });
+  if (dir.endsWith(".tgz")) {
+    copyFileSync(dir, `.package-build/${basename(dir)}`);
+    deps[name] = `./${basename(dir)}`;
+    continue;
+  }
+  execFileSync("npm", ["pack", "--silent", "--pack-destination", ".package-build", dir], { stdio: "inherit" });
   const { version } = JSON.parse(readFileSync(`${dir}/package.json`, "utf8"));
   const tarball = `${name.replace(/^@/, "").replace(/\//, "-")}-${version}.tgz`;
   deps[name] = `./${tarball}`;

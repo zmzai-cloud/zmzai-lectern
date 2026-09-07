@@ -65,6 +65,9 @@ export type Part =
   | { id: string; type: "image"; url: string; mediaType: string; messageId: string; sessionId: string }
   | { id: string; type: "compaction"; summary: string; messageId: string; sessionId: string };
 
+/** 独立于用户文本的输入附件契约（v1）。data 为 data URL，供 relay/framework 消费。 */
+export type InputAttachment = { name: string; mediaType: string; data: string; size: number };
+
 export type PermissionRequest = {
   id: string;
   sessionId: string;
@@ -349,6 +352,11 @@ export type SsoCookiePayload = {
 /** Electron 宿主桥（preload.cjs 注入 window.lecternNative；Web 端不存在，需能力探测降级）。 */
 export type LecternNativeBridge = {
   platform?: string;
+  updateCheck?: () => Promise<UpdateState>;
+  updateDownload?: () => Promise<UpdateState>;
+  updateInstall?: () => Promise<boolean>;
+  updateState?: () => Promise<UpdateState>;
+  onUpdateStatus?: (callback: (state: UpdateState) => void) => () => void;
   pickFolder?: () => Promise<string | null>;
   /** 任务完成系统通知（主进程 Notification；仅 Electron 宿主存在）。 */
   notifyTaskDone?: () => void;
@@ -360,6 +368,13 @@ export type LecternNativeBridge = {
   onSsoCookie?: (callback: (payload: SsoCookiePayload) => void) => void;
   /** ⌘W 被宿主截获后调用；回调由前端按当前焦点关闭对应 pane。 */
   onCloseFocusedPane?: (callback: () => void) => () => void;
+};
+
+export type UpdateState = {
+  status: "idle" | "checking" | "available" | "current" | "downloading" | "ready" | "error" | "unavailable";
+  version: string | null;
+  percent: number;
+  error: string | null;
 };
 
 declare global {

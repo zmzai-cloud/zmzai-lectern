@@ -56,7 +56,11 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     .filter((p) => p.type === "image")
     .map((p) => ({ url: p.url, mediaType: p.mediaType }));
   const text = body?.text?.trim() || originalText;
-  if (!text && images.length === 0) {
+  const attachments = target.parts.filter((p) => p.type === "file" && p.url.startsWith("data:")).map((p) => {
+    if (p.type !== "file") throw new Error("Invalid attachment");
+    return { name: p.filename, mediaType: p.mime, data: p.url, size: Buffer.from(p.url.slice(p.url.indexOf(",") + 1), "base64").length };
+  });
+  if (!text && images.length === 0 && attachments.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });
   }
 
@@ -81,6 +85,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         text,
         agent: target.info.agent,
         model,
+        attachments,
         ...(images.length > 0 ? { images } : {}),
         ...(selectedSkill ? { skill: selectedSkill } : {}),
         ...(references?.length ? { references } : {}),

@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "@zmzai/theme";
 import { usePlatform } from "@/lib/use-platform";
 import type { SessionListItem } from "@/lib/types";
+import { groupTasks, unreadTaskCount, type TaskGroup } from "@/lib/task-groups";
 
 function timeLabel(iso?: string): string {
   if (!iso) return "";
@@ -17,34 +18,18 @@ function timeLabel(iso?: string): string {
 }
 
 /**
- * 会话四分组（visual spec §4.3）。
+ * 四个活动分组 + 独立折叠的归档组。
  *
  * **只是视觉分组**——不改变 project-scoped 的 session API，也不改变归档语义：
  * 归档会话进 `archived` 组，其余按「是否需要你处理 / 是否正在跑 / 其余」归类。
  */
-type GroupKey = "needs_attention" | "running" | "recent" | "archived";
-
-const GROUP_LABEL: Record<GroupKey, string> = {
+const GROUP_LABEL: Record<TaskGroup, string> = {
+  awaiting_permission: "待确认",
   needs_attention: "需要处理",
   running: "进行中",
   recent: "最近",
   archived: "已归档",
 };
-
-/** 分组求值顺序：归档 > 待确认(HITL) > 进行中 > 需要处理 > 最近（先命中先归）。
- *  待确认排在 running 前：被权限卡住的后台会话最需要用户看见。 */
-function groupOf(
-  s: SessionListItem,
-  activity?: Record<string, { kind: string; at: number }>,
-): GroupKey {
-  if (s.archived) return "archived";
-  if (s.awaitingPermission) return "needs_attention";
-  if (s.running) return "running";
-  // 需要处理 = 后台任务刚结束且你还没点开（未读动态），或上一次 run 以失败/中断收尾。
-  if (activity?.[s.id]) return "needs_attention";
-  if (s.lastOutcome === "error" || s.lastOutcome === "aborted") return "needs_attention";
-  return "recent";
-}
 
 /** 终态 → 可读文案 + 语义色（三重表达：点形状 + 文字 + title，颜色仅辅助）。 */
 const OUTCOME: Record<string, { label: string; dot: string; text: string; tint: string }> = {
@@ -89,12 +74,13 @@ type Props = {
   /** N6 置顶/归档（服务端持久化，父组件即时反馈）。 */
   onTogglePinned: (id: string) => void;
   onToggleArchived: (id: string) => void;
+  onAbortSession?: (id: string) => void;
   /** 后台会话动态（P2-15 续）：id → 结束态。非激活会话结束时列表出徽标，点击清除。 */
   activity?: Record<string, { kind: string; at: number }>;
   width?: number;
 };
 
-export default function SessionList({ sessions, activeId, top, bottom, onNewSession, canCreate, isolateNew, onToggleIsolateNew, onSelectSession, onRenameSession, onDeleteSession, onTogglePinned, onToggleArchived, activity, width }: Props) {
+export default function SessionList({ sessions, activeId, top, bottom, onNewSession, canCreate, isolateNew, onToggleIsolateNew, onSelectSession, onRenameSession, onDeleteSession, onTogglePinned, onToggleArchived, onAbortSession, activity, width }: Props) {
   const [query, setQuery] = useState("");
   const { modifier } = usePlatform();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -119,20 +105,8 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
 
   // 搜索时不做分组：分组维度（是否需要处理）与搜索意图无关，平铺更好扫。
   // 非搜索态按四分组，空组不渲染（不占视觉），组内保持「置顶优先 + 原顺序」。
-  const groups = useMemo(() => {
-    const buckets: Record<GroupKey, SessionListItem[]> = {
-      needs_attention: [],
-      running: [],
-      recent: [],
-      archived: [],
-    };
-    for (const s of filtered) buckets[groupOf(s, activity)].push(s);
-    const pinnedFirst = (list: SessionListItem[]) =>
-      [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
-    return (["needs_attention", "running", "recent", "archived"] as GroupKey[])
-      .map((key) => ({ key, items: pinnedFirst(buckets[key]) }))
-      .filter((g) => g.items.length > 0);
-  }, [filtered, activity]);
+  const groups = useMemo(() => groupTasks(filtered, activity), [filtered, activity]);
+  const unreadCount = useMemo(() => unreadTaskCount(sessions, activity), [activity, sessions]);
 
   const renderRow = (s: SessionListItem) => (
     <SessionRow
@@ -152,6 +126,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
       }}
       onTogglePinned={onTogglePinned}
       onToggleArchived={onToggleArchived}
+      onAbort={onAbortSession}
       onDelete={onDeleteSession}
     />
   );
@@ -250,6 +225,12 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
 
       {/* 会话列表：分组节头（最近/进行中/…）自带标签，「会话」总标题层已并入上行 chrome */}
       <div className="flex min-h-0 flex-1 flex-col pt-2.5">
+        {unreadCount > 0 && (
+          <div role="status" aria-label={`${unreadCount} 个未读任务`} className="mx-3 mb-1 flex items-center justify-between rounded-md bg-surface-2 px-2.5 py-1.5 text-[0.6875rem] text-ink-2">
+            <span>未读任务</span>
+            <span className="font-mono text-ink-3">{unreadCount}</span>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {filtered.length === 0 && (
             <div className="px-3 py-4 text-xs text-ink-3">
@@ -315,6 +296,7 @@ function SessionRow({
   onEndRename,
   onTogglePinned,
   onToggleArchived,
+  onAbort,
   onDelete,
 }: {
   s: SessionListItem;
@@ -330,6 +312,7 @@ function SessionRow({
   onEndRename: () => void;
   onTogglePinned: (id: string) => void;
   onToggleArchived: (id: string) => void;
+  onAbort?: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const outcome = outcomeOf(s);
@@ -407,6 +390,15 @@ function SessionRow({
         <details className="task-row-menu absolute right-1.5 top-1.5 z-10" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); } }}>
           <summary aria-label="任务操作" className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md bg-surface text-ink-3 hover:text-ink">···</summary>
           <div className="task-row-options absolute right-0 top-full z-20 mt-1 w-40 rounded-lg border border-line bg-bg p-1.5 shadow-md" onClick={(e) => { const details = e.currentTarget.closest("details"); if (details) details.open = false; }}>
+          <button
+            type="button"
+            title="停止任务"
+            onClick={(e) => { e.stopPropagation(); onAbort?.(s.id); }}
+            className={cn("flex h-5 w-5 items-center justify-center rounded-sm bg-surface text-ink-3 transition-colors hover:text-warning", !s.running && "hidden")}
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1" /></svg>
+            <span>停止任务</span>
+          </button>
           <button
             type="button"
             title={s.pinned ? "取消置顶" : "置顶"}

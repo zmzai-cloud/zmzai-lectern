@@ -468,7 +468,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void client.listSessions().then(ingestSessionList);
+    // 任务侧栏需要显示所有项目的后台结束态；API 只读聚合各项目 SQLite 库，
+    // 不改变当前项目 runtime 的创建与事件订阅边界。
+    void client.listSessions(true).then(ingestSessionList);
   }, [auth?.loggedIn, ingestSessionList]);
 
   // 仅恢复当前项目库中仍存在的上次会话。旧跨项目 pendingSession 不再参与恢复。
@@ -643,7 +645,7 @@ export default function App() {
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
     const refresh = () => {
-      void client.listSessions().then(ingestSessionList).catch(() => undefined);
+      void client.listSessions(true).then(ingestSessionList).catch(() => undefined);
     };
     const start = () => {
       clearInterval(timer);
@@ -684,12 +686,12 @@ export default function App() {
   }, [newSession]);
 
   const send = useCallback(
-    async (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[]) => {
-      if (!text.trim() && !images?.length) return;
+    async (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[], attachments?: { name: string; mediaType: string; data: string; size: number }[]) => {
+      if (!text.trim() && !images?.length && !attachments?.length) return;
       // 无会话时自动建（composer 不再强制先选会话）
       let sid = activeId;
       if (!sid) {
-        if (!auth?.loggedIn) return;
+        if (!auth?.loggedIn) throw new Error("请先登录后发送附件或消息");
         const s = await client.createSession(activeAgent, undefined, isolateNew);
         setSessions((prev) => [s, ...prev]);
         setActiveId(s.id);
@@ -702,13 +704,14 @@ export default function App() {
       void client.checkpointCreate(`任务前快照 · ${text.trim().slice(0, 30) || "图片任务"}`, sid).catch(() => undefined);
       // per-prompt 模型/推理力度覆盖：composer 选了则随本条消息下发，否则跟随代理默认
       try {
-        await client.prompt(sid, text, activeAgent, selectedModel ?? undefined, images, effort, skill?.id, references);
-      } catch {
+        await client.prompt(sid, text, activeAgent, selectedModel ?? undefined, images, effort, skill?.id, references, attachments);
+      } catch (error) {
         setEcho(null); // 发送失败：撤回乐观气泡，错误经其它途径提示
+        throw error;
       }
       // prompt 可能排队返回，刷新标题等元数据；AI 摘要标题异步落库，延迟再刷一次
-      void client.listSessions().then(setSessions);
-      setTimeout(() => void client.listSessions().then(setSessions), 4000);
+      void client.listSessions(true).then(setSessions);
+      setTimeout(() => void client.listSessions(true).then(setSessions), 4000);
     },
     [activeId, activeAgent, auth?.loggedIn, selectedModel, isolateNew],
   );
@@ -931,6 +934,7 @@ export default function App() {
           onDeleteSession={(id) => void deleteSession(id)}
           onTogglePinned={(id) => void togglePinned(id)}
           onToggleArchived={(id) => void toggleArchived(id)}
+          onAbortSession={(id) => void client.abort(id).then(() => client.listSessions(true).then(ingestSessionList))}
         />
         )}
         {sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}

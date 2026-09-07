@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { cloudRuntime } from "@/lib/runtime";
+import { getActiveProject, listProjects, projectStore } from "@/lib/projects";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,14 +13,25 @@ export async function GET(request: NextRequest) {
   if (!q) return NextResponse.json({ query: q, results: [] });
 
   const runtime = cloudRuntime();
-  const sessions = await runtime.store.listSessions({ userId: "local", workspaceId: "local" });
+  const active = getActiveProject();
   const needle = q.toLowerCase();
   const results: { sessionId: string; title: string; snippet: string; updatedAt?: string }[] = [];
 
-  for (const s of sessions) {
+  for (const project of listProjects()) {
+    if (results.length >= 30) break;
+    let store;
+    let sessions;
+    try {
+      store = project.id === active.id ? runtime.store : projectStore(project.id);
+      sessions = await store.listSessions({ userId: "local", workspaceId: "local" });
+    } catch {
+      // A damaged or unavailable project must not hide other project results.
+      continue;
+    }
+    for (const s of sessions) {
     let messages;
     try {
-      messages = await runtime.store.getMessages(s.id);
+      messages = await store.getMessages(s.id);
     } catch {
       continue; // 单会话读取失败不阻塞整体
     }
@@ -43,6 +55,7 @@ export async function GET(request: NextRequest) {
       break; // 每会话取第一个命中
     }
     if (results.length >= 30) break; // 上限防长尾
+    }
   }
 
   return NextResponse.json({ query: q, results });

@@ -44,7 +44,7 @@ type Props = {
   running: boolean;
   selectedModel: ModelRef | null;
   onSelectModel: (m: ModelRef | null) => void;
-  onSend: (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[]) => void;
+  onSend: (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[], attachments?: { name: string; mediaType: string; data: string; size: number }[]) => void | Promise<void>;
   onAbort: () => void;
   /** 会话级权限模式（Codex 基准 ④）：胶囊常驻展示，点击循环切换。 */
   permissionMode?: PermissionMode;
@@ -78,6 +78,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   // 图片附件（P2-11）：data URL 随 prompt 下发，framework 多模态输入；
   // imgNotice：选图/粘贴被拒的短暂提示（超限、非图片）
   const [images, setImages] = useState<{ url: string; mediaType: string; name: string }[]>([]);
+  const [attachments, setAttachments] = useState<{ name: string; mediaType: string; data: string; size: number }[]>([]);
   const [imgNotice, setImgNotice] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -310,26 +311,42 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   const submit = useCallback(async () => {
     const body = text.trim();
     // 无会话也可发送（page.send 会自动建会话）
-    if (!body && images.length === 0) return;
+    if (!body && images.length === 0 && attachments.length === 0) return;
     if (images.length > 0 && VISION_UNSAFE.test(currentModelId)) {
       setImgNotice(`${currentModelId} 不支持图片输入，请点击底部模型名切换（如 gpt-5.6-*）`);
       return;
     }
-    let full = body || "（见附件图片）";
+    const full = body;
     // @ 引用的文件收集为上下文提示（agent 有 fs 工具，按路径自行读取）
     const refs = [...body.matchAll(/(^|\s)@([^\s@]+)/g)].map((m) => m[2]);
-    onSend(
+    try { await onSend(
       full,
       images.map((im) => ({ url: im.url, mediaType: im.mediaType })),
       effort === "off" ? undefined : effort,
       skill ? { id: skill.id, name: skill.name } : undefined,
       [...new Set(refs)],
+      attachments,
     );
+    } catch (error) { setImgNotice(error instanceof Error ? error.message : "发送失败，附件已保留"); return; }
     setText("");
     setSkill(null);
     setAtQuery(null);
     setImages([]);
-  }, [text, sessionId, skill, onSend, images, effort, currentModelId]);
+    setAttachments([]);
+  }, [text, sessionId, skill, onSend, images, attachments, effort, currentModelId]);
+
+  const pickAttachments = useCallback((input: FileList | File[] | null) => {
+    if (!input) return;
+    for (const file of [...input].slice(0, 5)) {
+      if (file.type.startsWith("image/")) continue;
+      if (file.size > 512 * 1024) { setImgNotice(`「${file.name}」超过 512KB`); continue; }
+      if (!/\.(md|mdx|txt|json|ya?ml|csv|log|xml|html?|css|js|jsx|ts|tsx|py|go|rs|java|c|cpp|h|sh)$/i.test(file.name) && !file.type.startsWith("text/")) { setImgNotice(`暂不支持「${file.name}」的格式`); continue; }
+      const reader = new FileReader();
+      reader.onload = () => setAttachments((prev) => prev.length >= 5 || prev.some((item) => item.name === file.name) ? prev : [...prev, { name: file.name, mediaType: "text/plain", data: String(reader.result ?? ""), size: file.size }]);
+      reader.onerror = () => setImgNotice(`「${file.name}」读取失败`);
+      reader.readAsDataURL(new Blob([file], { type: "text/plain" }));
+    }
+  }, []);
 
   /** 本地选图 → data URL（限 4MB/张，最多 4 张）。被拒时给短暂提示（不再静默丢）。 */
   const pickImages = useCallback((files: FileList | File[] | null) => {
@@ -616,7 +633,9 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
       )}
 
       {/* 对话编辑器：ChatGPT 式柔和承载面，控制项沉在底部，不抢正文注意力。 */}
-      <div className="chat-composer mx-auto w-full max-w-[752px] bg-surface transition-colors">
+      <div className="chat-composer mx-auto w-full max-w-[752px] bg-surface transition-colors"
+        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+        onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); pickAttachments(e.dataTransfer.files); pickImages([...e.dataTransfer.files].filter((f) => f.type.startsWith("image/"))); }}>
         {/* 图片附件预览 chips */}
         {images.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
@@ -636,6 +655,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             ))}
           </div>
         )}
+        {attachments.length > 0 && <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">{attachments.map((file) => <span key={file.name} className="inline-flex max-w-64 items-center gap-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"><span className="truncate">{file.name}</span><button type="button" title="移除文件" onClick={() => setAttachments((prev) => prev.filter((item) => item.name !== file.name))}>×</button></span>)}</div>}
         {skill && (
           <div className="flex items-center gap-1 px-3 pt-2.5">
             <span className="inline-flex max-w-64 items-center gap-1 rounded-[3px] bg-accent/15 px-2 py-0.5 text-[0.6875rem] font-medium text-accent-strong">
@@ -708,11 +728,12 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.md,.mdx,.txt,.json,.yaml,.yml,.csv,.log,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.go,.rs,.java,.c,.cpp,.h,.sh,text/*"
           multiple
           className="hidden"
           onChange={(e) => {
-            pickImages(e.target.files);
+            pickImages([...(e.target.files ?? [])].filter((f) => f.type.startsWith("image/")));
+            pickAttachments(e.target.files);
             e.target.value = "";
           }}
         />
@@ -824,7 +845,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             <button
               type="button"
               onClick={submit}
-              disabled={!text.trim() && images.length === 0}
+              disabled={!text.trim() && images.length === 0 && attachments.length === 0}
               title="发送（⏎）"
               className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-bg shadow-sm transition-all hover:-translate-y-px hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
             >

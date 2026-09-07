@@ -5,7 +5,7 @@ import Link from "next/link";
 import { UserRound, ChevronUp } from "lucide-react";
 
 import { client } from "@/lib/client";
-import type { AuthStatus } from "@/lib/types";
+import type { AuthStatus, UpdateState } from "@/lib/types";
 
 /**
  * 左下角账户块（Qoder 式）：头像 + 用户名，右侧齿轮弹出更多菜单
@@ -18,6 +18,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const [menu, setMenu] = useState(false);
   const [themePref, setThemePref] = useState<"system" | "light" | "dark">("system");
   const [busy, setBusy] = useState(false);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const onChangeRef = useRef(onChange);
@@ -41,6 +42,21 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     window.addEventListener("storage", sync);
     return () => { window.removeEventListener("lectern:theme-change", sync); window.removeEventListener("storage", sync); };
   }, [refresh]);
+
+  useEffect(() => {
+    const bridge = window.lecternNative;
+    if (!bridge?.updateState) return;
+    void bridge.updateState().then(setUpdate).catch(() => undefined);
+    return bridge.onUpdateStatus?.(setUpdate);
+  }, []);
+
+  const updateAction = () => {
+    const bridge = window.lecternNative;
+    if (!bridge) return;
+    if (update?.status === "available") void bridge.updateDownload?.();
+    else if (update?.status === "ready") void bridge.updateInstall?.();
+    else void bridge.updateCheck?.();
+  };
 
   // 外点关闭菜单
   useEffect(() => {
@@ -103,6 +119,18 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
             ))}
           </div>
           <div className="border-t border-line pt-1">
+            {typeof window !== "undefined" && window.lecternNative?.updateCheck && (
+              <button
+                type="button"
+                onClick={updateAction}
+                disabled={update?.status === "checking" || update?.status === "downloading"}
+                className="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-50"
+              >
+                <span>{update?.status === "ready" ? (window.lecternNative?.platform === "darwin" ? "查看更新包并手动替换" : `安装 v${update.version}`) : update?.status === "available" ? `下载 v${update.version}` : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
+                {update?.status === "current" && <span className="text-[0.625rem] text-ink-3">已是最新</span>}
+              </button>
+            )}
+            {update?.error && <p role="status" className="px-2.5 py-1 text-[0.6875rem] text-ink-3 break-words">{update.error}</p>}
             <Link
               href="/settings"
               onClick={() => setMenu(false)}

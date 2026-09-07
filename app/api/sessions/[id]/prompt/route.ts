@@ -5,6 +5,7 @@ import { sessionRuntime, workspaceRootForSession } from "@/lib/runtime";
 import { withRequestCookie } from "@/lib/request-cookie";
 import { generateSessionTitle } from "@/lib/session-title";
 import { loadSkill } from "@/lib/skills";
+import { validateAttachments } from "@zmzai/agent-framework";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     effort?: string;
     skillId?: string;
     references?: string[];
+    attachments?: { name?: string; mediaType?: string; data?: string; size?: number }[];
   } | null;
   const text = body?.text?.trim() ?? "";
   const effort = (EFFORTS as readonly string[]).includes(body?.effort ?? "") ? (body?.effort as Effort) : undefined;
@@ -31,7 +33,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     (im) => typeof im?.url === "string" && im.url.length > 0 && im.url.length < 8_000_000 && /^image\//.test(im.mediaType ?? ""),
   );
   const references = [...new Set((body?.references ?? []).filter((path): path is string => typeof path === "string" && path.length > 0 && path.length <= 1024 && !path.includes("\0")))].slice(0, 32);
-  if (!text && images.length === 0) {
+  let attachments;
+  try { attachments = validateAttachments(body?.attachments); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "附件不合法" }, { status: 422 }); }
+  if (!text && images.length === 0 && attachments.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });
   }
 
@@ -50,7 +55,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   try {
     const ses = await runtime.store.getSession(id);
     if (ses && (!ses.title || ses.title === "新会话")) {
-      const seed = text || (images.length ? "[图片消息]" : "");
+      const seed = text || (images.length ? "[图片消息]" : attachments.length ? `[文件：${attachments[0].name}]` : "");
       if (seed) {
         autoTitleSeed = seed.replace(/\s+/g, " ").slice(0, 30);
         await runtime.store.updateSession(id, { title: autoTitleSeed });
@@ -62,7 +67,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
   try {
     await withRequestCookie(cookieHeader, () =>
-      runtime.runner.prompt(id, { text, agent: body?.agent, model, images, ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
+      runtime.runner.prompt(id, { text, agent: body?.agent, model, images, attachments, ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
     );
     // AI 摘要标题：后台生成不阻塞响应；仅当标题仍是占位时覆盖。
     // 显式带上本轮实际模型：runner 会在 runLoop 回写 session.model，但

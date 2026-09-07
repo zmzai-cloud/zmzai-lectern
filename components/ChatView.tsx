@@ -752,6 +752,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                       </div>
                     )}
                     {!m.skill && text}
+                    {m.parts.map(({ part }) => part.type === "file" ? <div key={part.id} className="mt-2 rounded-md border border-line px-3 py-2 text-xs"><a href={part.url} download={part.filename}>📎 {part.filename}</a></div> : null)}
                   </div>
                   <div className="mt-1 flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                     <button

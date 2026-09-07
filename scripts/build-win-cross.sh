@@ -13,6 +13,7 @@
 #   - Windows 首次运行 SmartScreen 提示属预期：选「更多信息」→「仍要运行」。
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [ "${LECTERN_REQUIRE_SIGNING:-0}" = "1" ]; then node scripts/signing-preflight.mjs win32; fi
 
 UPLOAD=0
 DRY=0
@@ -28,7 +29,7 @@ guard_mv() {
   local d
   for d in "$@"; do
     [ -e "$d" ] || continue
-    mv "$d" "/tmp/lectern-rm-$(date +%s)-$RANDOM" || true
+    mv "$d" "/tmp/lectern-rm-$(date +%s)-$RANDOM"
   done
 }
 
@@ -39,7 +40,7 @@ echo "==> [1/5] next build（生产构建，含 standalone 输出）"
 # 清掉上次构建的 .next/types 与 tsbuildinfo：残留会导致类型检查阶段引用不存在的
 # 文件而 Failed to compile（与 mac 侧同一坑）。大目录 rm 会触发 WorkBuddy
 # safe-delete 守卫（>50 文件拦截），一律 mv 到 /tmp。
-guard_mv .next/types tsconfig.tsbuildinfo
+guard_mv .next tsconfig.tsbuildinfo
 pnpm build
 
 # fail-fast：入口不存在就停，绝不打出会闪退的包
@@ -87,10 +88,14 @@ echo "==> [4/5] electron-builder 打包 Windows（nsis 安装器 + zip，x64）"
 # 无代码签名证书：SmartScreen 首次运行提示属预期（自分发场景可直接运行）
 # 双镜像必需：ELECTRON_MIRROR（Electron 本体）+ ELECTRON_BUILDER_BINARIES_MIRROR
 # （nsis/nsis-resources 等工具链二进制）——漏后者会直连 GitHub 下载 502/超时。
+BUILD_ARGS=(--win --x64 --publish never)
+if [ "${LECTERN_REQUIRE_SIGNING:-0}" = "1" ]; then
+  node scripts/signing-preflight.mjs win32
+  BUILD_ARGS+=(-c.forceCodeSigning=true)
+fi
 ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}" \
 ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}" \
-CSC_IDENTITY_AUTO_DISCOVERY=false \
-pnpm exec electron-builder --win --x64 --publish never
+pnpm exec electron-builder "${BUILD_ARGS[@]}"
 
 echo "==> [5/5] 产物体检"
 # fail-fast 补刀：① 不得混入 darwin 原生依赖（--os/--cpu 没生效的典型症状，
@@ -111,6 +116,8 @@ echo "解包原生文件：$UNPACKED 个（期望 ≥9）"
 FILE_COUNT=$(find dist/win-unpacked -type f | wc -l | tr -d " ")
 echo "文件数：${FILE_COUNT}（阈值 300）"
 [ "$FILE_COUNT" -le 300 ] || { echo "❌ 文件数超标：asar 未生效或 files 排除规则失效" >&2; exit 1; }
+node scripts/release-validation.mjs package dist/win-unpacked/resources/app.asar win32
+node scripts/release-validation.mjs release dist win32
 ls -lh dist/*.exe dist/*.zip
 echo "完成。Windows 安装：双击 dist/*Setup*.exe（NSIS 安装器）；或解压 zip 直接运行 Lectern.exe"
 

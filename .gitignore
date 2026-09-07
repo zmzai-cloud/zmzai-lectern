@@ -18,3 +18,4 @@ components.d.ts
 data/
 .env.release
 .fw-revisions.json
+test-results/

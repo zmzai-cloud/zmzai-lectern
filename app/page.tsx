@@ -18,6 +18,7 @@ import AccountBlock from "@/components/AccountBlock";
 import { client, type ConnectionState } from "@/lib/client";
 import { detectPermissionMode, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData } from "@/lib/chat-projector";
+import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
 import { deriveTaskPresentation, previewableOf, type SessionStatus } from "@/lib/task-presentation";
 import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation } from "@/lib/types";
@@ -210,6 +211,11 @@ export default function App() {
   const projectorRef = useRef<ChatProjector | null>(null);
   const rafRef = useRef<number | null>(null);
   const [chatData, setChatData] = useState<ChatViewData>(EMPTY_CHAT_VIEW);
+  const [historyState, setHistoryState] = useState<HistoryState>(EMPTY_HISTORY_STATE);
+  const historyRef = useRef<SessionHistory | null>(null);
+  const readingHistoryRef = useRef(false);
+  const sendIdentityRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
+  const sessionCreationIdentityRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
   // 乐观回显：send 时暂存本条用户消息，切会话后作废
   const [echo, setEcho] = useState<{ text: string; images: { url: string; mediaType: string }[]; skill?: { id: string; name: string }; references?: string[] } | null>(null);
   const [status, setStatus] = useState<string>("idle");
@@ -470,7 +476,9 @@ export default function App() {
   useEffect(() => {
     // 任务侧栏需要显示所有项目的后台结束态；API 只读聚合各项目 SQLite 库，
     // 不改变当前项目 runtime 的创建与事件订阅边界。
-    void client.listSessions(true).then(ingestSessionList);
+    // The conversation sidebar is project-scoped. Cross-project aggregation belongs
+    // to the task center and must never leak into the active project's session list.
+    void client.listSessions().then(ingestSessionList);
   }, [auth?.loggedIn, ingestSessionList]);
 
   // 仅恢复当前项目库中仍存在的上次会话。旧跨项目 pendingSession 不再参与恢复。
@@ -514,6 +522,7 @@ export default function App() {
 
   useEffect(() => {
     const projector = projectorRef.current ?? (projectorRef.current = new ChatProjector());
+    setHistoryState(EMPTY_HISTORY_STATE);
     if (!activeId) {
       projector.reset();
       setChatData(EMPTY_CHAT_VIEW);
@@ -524,11 +533,11 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    // 历史恢复与实时流的竞态防护（语义与旧 events 数组版一致）：
-    // 订阅先建立（不丢事件），转录异步载入期间实时事件进 buffer；
-    // 转录 ingest 完成后再合并 buffer——投影顺序仍是 历史→实时。
-    let historyLoaded = false;
-    const liveBuffer: LecternEvent[] = [];
+    readingHistoryRef.current = false;
+    let historyRevision = 1;
+    let ignoredLiveSeq = 0;
+    const cursorAt = (messageSeq: number) => btoa(JSON.stringify({ sessionId: activeId, messageSeq, historyRevision }));
+    // 同水位快照装载完成后从 snapshotSeq 续订，补齐快照请求期间产生的事件。
     projector.reset();
     setChatData(EMPTY_CHAT_VIEW);
     setStatus("idle");
@@ -539,7 +548,9 @@ export default function App() {
     setWtNotice(null);
     // 隔离副本状态以服务端为准（worktree 映射在 worktrees.db）
     client.worktreeStatus(activeId).then((st) => !cancelled && setActiveIsolation(st)).catch(() => undefined);
-    const unsub = client.subscribe(activeId, (ev) => {
+    let unsub = () => {};
+    const handleLive = (ev: LecternEvent) => {
+      if (cancelled) return;
       lastEventAtRef.current = Date.now();
       if (ev.type === "session.status") setStatus((ev.data as { status: string }).status);
       else if (ev.type === "permission.asked") {
@@ -566,55 +577,85 @@ export default function App() {
         setPending(null);
         setSessions((prev) => prev.map((s) => (s.id === activeId ? { ...s, awaitingPermission: false } : s)));
       }
-      if (!historyLoaded) liveBuffer.push(ev);
-      else {
-        projector.ingest(ev);
-        flushProjection();
+      if (ev.type === "session.rewound") {
+        void history.load("latest");
+        return;
       }
-    }, setConnState);
-    // 跨会话恢复：尾部分页拉取转录（首屏 50 条），逐条折叠进投影器
-    client.getMessagesPage(activeId, 0).then((page) => {
-      if (cancelled) return;
-      loadedCountRef.current = page.messages.length;
-      for (const ev of transcriptToEvents(page.messages)) projector.ingest(ev);
-      historyLoaded = true;
-      for (const ev of liveBuffer) projector.ingest(ev);
-      setHasMore(page.hasMore);
+      if (ev.type === "message.updated") {
+        const message = (ev.data as { message: { id: string } }).message;
+        if ((readingHistoryRef.current || history.hasNewer) && !projector.hasMessage(message.id)) {
+          ignoredLiveSeq = Math.max(ignoredLiveSeq, ev.seq ?? 0);
+          const last = projector.bounds().last;
+          if (last !== undefined) history.setBoundary("after", cursorAt(last));
+          return;
+        }
+      }
+      projector.ingest(ev);
+      if (projector.trimMessages("tail")) {
+        const first = projector.bounds().first;
+        if (first !== undefined) history.setBoundary("before", cursorAt(first));
+      }
       flushProjection();
+    };
+    // 跨会话恢复：尾部分页拉取转录（首屏 50 条），逐条折叠进投影器
+    const history = new SessionHistory({
+      fetchPage: (cursor, signal, direction) => direction === "newer" && cursor ? client.getMessageContext(activeId, { after: cursor }, signal) : client.getMessagesPage(activeId, cursor, 50, signal),
+      apply: (page, initial, direction) => {
+        historyRevision = page.historyRevision;
+        if (initial) {
+          unsub();
+          projector.reset();
+          setPending(null);
+          setStatus("idle");
+          for (const ev of transcriptToEvents(page.messages)) projector.ingest(ev);
+          for (const ev of page.stateEvents ?? []) {
+            // Restoring an approval must not silently repeat an external reply.
+            if (ev.type === "session.status") setStatus((ev.data as { status: string }).status);
+            if (ev.type === "permission.asked") setPending((ev.data as { request: PermissionRequest }).request);
+            projector.ingest(ev);
+          }
+          unsub = client.subscribe(activeId,handleLive,(state) => { if (!cancelled) setConnState(state); },page.snapshotSeq);
+        } else {
+          projector.ingestBatch(transcriptToEvents(page.messages.filter(message => !projector.hasMessage(message.info.id))), direction !== "newer");
+        }
+        const keep = direction === "older" && !initial ? "head" : "tail";
+        if (projector.trimMessages(keep)) {
+          const bounds = projector.bounds();
+          const sequence = keep === "head" ? bounds.last : bounds.first;
+          if (sequence !== undefined) history.setBoundary(keep === "head" ? "after" : "before", cursorAt(sequence));
+        }
+        if (!initial && ignoredLiveSeq > page.snapshotSeq) {
+          const last = projector.bounds().last;
+          if (last !== undefined) history.setBoundary("after", cursorAt(last));
+        }
+        flushProjection();
+      },
+      onState: setHistoryState,
     });
+    historyRef.current = history;
+    void history.load();
     return () => {
       cancelled = true;
+      history.dispose();
+      if (historyRef.current === history) historyRef.current = null;
       unsub();
     };
     // autoMode / permAuto 均经 ref 镜像读取，不列入依赖——否则切换档位或权限
     // 配置会整段重跑：断开重连 SSE、重置投影器、重拉历史转录。
   }, [activeId, flushProjection]);
 
-  // 触顶加载更早历史：prepend 进投影器（不破坏已折叠的实时事件），视口锚定在 ChatView。
-  // 投影按消息 id 幂等 upsert，SSE 重连的重放事件天然去重，无需额外标记。
-  const [hasMore, setHasMore] = useState(false);
-  const loadedCountRef = useRef(0);
-  const loadingOlderRef = useRef(false);
-  const loadOlder = useCallback(async () => {
-    const sid = activeId;
-    if (!sid || loadingOlderRef.current) return;
-    loadingOlderRef.current = true;
-    try {
-      const page = await client.getMessagesPage(sid, loadedCountRef.current);
-      if (!page.messages.length) {
-        setHasMore(false);
-        return;
-      }
-      loadedCountRef.current += page.messages.length;
-      projectorRef.current?.ingestBatch(transcriptToEvents(page.messages), true);
-      setHasMore(page.hasMore);
-      flushProjection();
-    } catch {
-      /* 拉取失败静默，下次触顶重试 */
-    } finally {
-      loadingOlderRef.current = false;
-    }
-  }, [activeId, flushProjection]);
+  const loadHistory = useCallback(() => { void historyRef.current?.load(); }, []);
+  const loadNewerHistory = useCallback(() => { void historyRef.current?.load("newer"); }, []);
+  const loadLatestHistory = useCallback(() => { void historyRef.current?.load("latest"); }, []);
+  const setReadingHistory = useCallback((reading: boolean) => { readingHistoryRef.current = reading; }, []);
+  useEffect(() => {
+    const update = (event: Event) => {
+      const { sessionId, readState } = (event as CustomEvent<{ sessionId: string; readState: import("@/lib/types").ReadState }>).detail;
+      setSessions(items => items.map(item => item.id === sessionId ? { ...item, readState } : item));
+    };
+    window.addEventListener("lectern:read-state", update);
+    return () => window.removeEventListener("lectern:read-state", update);
+  }, []);
 
   // P2-14 任务完成通知：running → idle 时——后台窗口弹系统通知；前台弹页内 toast
   // （不再只在隐藏时提示，盯着的用户也有明确「完成了」的落点）。两者都触发。
@@ -645,7 +686,7 @@ export default function App() {
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
     const refresh = () => {
-      void client.listSessions(true).then(ingestSessionList).catch(() => undefined);
+      void client.listSessions().then(ingestSessionList).catch(() => undefined);
     };
     const start = () => {
       clearInterval(timer);
@@ -692,7 +733,14 @@ export default function App() {
       let sid = activeId;
       if (!sid) {
         if (!auth?.loggedIn) throw new Error("请先登录后发送附件或消息");
-        const s = await client.createSession(activeAgent, undefined, isolateNew);
+        const fingerprint = JSON.stringify({ activeAgent,isolateNew,text,images,effort,skillId: skill?.id,references,attachments });
+        const retained = sessionCreationIdentityRef.current;
+        const requestId = retained?.fingerprint === fingerprint
+          ? retained.requestId
+          : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        sessionCreationIdentityRef.current = { fingerprint,requestId };
+        const s = await client.createSession(activeAgent, undefined, isolateNew,requestId);
+        if (sessionCreationIdentityRef.current?.requestId === requestId) sessionCreationIdentityRef.current = null;
         setSessions((prev) => [s, ...prev]);
         setActiveId(s.id);
         setActiveIsolation(s.isolation ?? { enabled: false });
@@ -704,14 +752,21 @@ export default function App() {
       void client.checkpointCreate(`任务前快照 · ${text.trim().slice(0, 30) || "图片任务"}`, sid).catch(() => undefined);
       // per-prompt 模型/推理力度覆盖：composer 选了则随本条消息下发，否则跟随代理默认
       try {
-        await client.prompt(sid, text, activeAgent, selectedModel ?? undefined, images, effort, skill?.id, references, attachments);
+        const fingerprint = JSON.stringify({ sid,text,activeAgent,model: selectedModel,images,effort,skillId: skill?.id,references,attachments });
+        const retained = sendIdentityRef.current;
+        const requestId = retained?.fingerprint === fingerprint
+          ? retained.requestId
+          : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        sendIdentityRef.current = { fingerprint,requestId };
+        await client.prompt(sid, text, activeAgent, selectedModel ?? undefined, images, effort, skill?.id, references, attachments, requestId);
+        if (sendIdentityRef.current?.requestId === requestId) sendIdentityRef.current = null;
       } catch (error) {
         setEcho(null); // 发送失败：撤回乐观气泡，错误经其它途径提示
         throw error;
       }
       // prompt 可能排队返回，刷新标题等元数据；AI 摘要标题异步落库，延迟再刷一次
-      void client.listSessions(true).then(setSessions);
-      setTimeout(() => void client.listSessions(true).then(setSessions), 4000);
+      void client.listSessions().then(setSessions);
+      setTimeout(() => void client.listSessions().then(setSessions), 4000);
     },
     [activeId, activeAgent, auth?.loggedIn, selectedModel, isolateNew],
   );
@@ -934,16 +989,20 @@ export default function App() {
           onDeleteSession={(id) => void deleteSession(id)}
           onTogglePinned={(id) => void togglePinned(id)}
           onToggleArchived={(id) => void toggleArchived(id)}
-          onAbortSession={(id) => void client.abort(id).then(() => client.listSessions(true).then(ingestSessionList))}
+          onAbortSession={(id) => void client.abort(id).then(() => client.listSessions().then(ingestSessionList))}
         />
         )}
         {sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1">
             <ChatView
+              key={activeId ?? "empty"}
               data={chatData}
-              hasMore={hasMore}
-              onLoadMore={() => void loadOlder()}
+              historyState={historyState}
+              onLoadMore={loadHistory}
+              onLoadNewer={loadNewerHistory}
+              onLoadLatest={loadLatestHistory}
+              onReadingHistory={setReadingHistory}
               status={status}
               pending={pending}
               sessionId={activeId}

@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useSessionReadState } from "@/lib/use-session-read-state";
 import { Markdown, PermissionCard, Reasoning, ToolCard, ToolGroup, cn } from "@zmzai/theme";
+import { ArrowDown, LoaderCircle, RotateCw, Search } from "lucide-react";
 
 import type { ConnectionState } from "@/lib/client";
+import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
 import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer from "./Composer";
 import DiffView, { diffStat } from "./DiffView";
+import SessionMessageSearch from "./SessionMessageSearch";
 
 type SubagentActivity = import("@/lib/chat-projector").SubagentActivity;
 type UiPart = import("@/lib/chat-projector").UiPart;
@@ -178,6 +183,16 @@ function TextBlock({ text, children }: { text: string; children: React.ReactNode
   );
 }
 
+function MessageText({ text, markdown = false }: { text: string; markdown?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = text.length > 8000;
+  const shown = collapsible && !expanded ? text.slice(0, 8000) : text;
+  return <>
+    {markdown ? <Markdown text={shown} /> : <span className="whitespace-pre-wrap">{shown}</span>}
+    {collapsible && <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className="mt-2 block text-xs text-ink-3 underline">{expanded ? "收起正文" : "展开完整正文"}</button>}
+  </>;
+}
+
 function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity }) {
   switch (part.type) {
     case "text":
@@ -186,12 +201,12 @@ function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part
       return markdown ? (
         <TextBlock text={part.text}>
           <div className="text-[0.875rem] leading-[1.65] text-ink">
-            <Markdown text={part.text} />
+            <MessageText text={part.text} markdown />
           </div>
         </TextBlock>
       ) : (
         <TextBlock text={part.text}>
-          <div className="whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink">{part.text}</div>
+          <div className="whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink"><MessageText text={part.text} /></div>
         </TextBlock>
       );
     case "reasoning":
@@ -267,8 +282,11 @@ type Props = {
   /** 点击消息内的文件路径（可带行号）→ 产物侧文件 Tab 打开并滚动定位（P1-10/F2 联动）。 */
   onOpenFile: (path: string, line?: number) => void;
   /** 历史分页：还有更早消息 + 触顶时回调（page.tsx 分页拉取并 prepend）。 */
-  hasMore: boolean;
+  historyState: HistoryState;
   onLoadMore: () => void;
+  onLoadNewer: () => void;
+  onLoadLatest: () => void;
+  onReadingHistory: (reading: boolean) => void;
   /** 乐观回显：发送瞬间的用户消息（真实 message.updated 到达后自动让位）。 */
   echo: { text: string; images: { url: string; mediaType: string }[]; skill?: { id: string; name: string }; references?: string[] } | null;
   /** 隔离操作结果横幅（page.tsx 持有，8s 自动消退）。 */
@@ -432,7 +450,7 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, hasMore, onLoadMore, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -545,7 +563,23 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const followTail = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
-  useEffect(() => { followTail.current = true; setShowLatest(false); }, [sessionId]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const virtual = useVirtualizer({ count: visible.length, getScrollElement: () => messagesRef.current, estimateSize: () => 140,
+    getItemKey: index => visible[index]!.id, overscan: 8, scrollMargin,
+  });
+  useLayoutEffect(() => {
+    const list = listRef.current; const root = messagesRef.current;
+    if (!list || !root) return;
+    setScrollMargin(list.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop);
+  }, [historyState, todos, visible.length]);
+  const readState = useSessionReadState(sessionId, messagesRef, !searchOpen && !historyState.hasNewer && !historyState.loading && !historyState.error && connState === "connected",
+    [...visible].reverse().find(message => message.error || message.parts.some(item => item.part.type !== "reasoning" && (item.part.type !== "text" || item.part.text.trim().length > 0)))?.messageSeq ?? 0, 0);
+  const firstUnreadId = readState ? visible.find(message => message.role === "assistant" && (message.messageSeq ?? 0) > readState.lastReadMessageSeq && message.parts.some(item => item.part.type !== "reasoning"))?.id : undefined;
+  useEffect(() => { onReadingHistory(searchOpen || showLatest || !!historyState.hasNewer); }, [searchOpen, showLatest, historyState.hasNewer, onReadingHistory]);
+  useEffect(() => { followTail.current = true; setShowLatest(false); setSearchOpen(false); }, [sessionId]);
   // 用户消息「编辑重发」原位编辑态：气泡变 textarea，保存即截断重跑
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   // 保存编辑：确认后交 page.tsx 调 rewind API（服务端截断 + 重跑）
@@ -561,30 +595,51 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     onRewind(editing.id, next);
   };
   // 历史翻页的视口锚定：prepend 后恢复滚动位置；平时新消息到达滚到底部
-  const anchorRef = useRef<{ height: number; top: number } | null>(null);
-  const handleLoadMore = () => {
+  const anchorRef = useRef<{ id: string; offset: number } | null>(null);
+  useEffect(() => { anchorRef.current = null; }, [sessionId]);
+  useEffect(() => {
+    if (historyState.error) anchorRef.current = null;
+  }, [historyState.error]);
+  const captureAnchor = () => {
     const el = messagesRef.current;
-    if (el) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
+    if (!el) return;
+    const row = Array.from(el.querySelectorAll<HTMLElement>("[data-virtual-message]")).find(item => item.getBoundingClientRect().bottom > el.getBoundingClientRect().top);
+    if (row) anchorRef.current = { id: row.dataset.virtualMessage!, offset: row.getBoundingClientRect().top - el.getBoundingClientRect().top };
+  };
+  const handleLoadMore = () => {
+    if (historyState.loading) return;
+    captureAnchor();
     onLoadMore();
   };
   // 新消息/片段到达时自动滚到底（流式输出的基本体验）；触顶加载更早时锚定原视口
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = messagesRef.current;
     if (!el) return;
     if (visible.length === 0) { el.scrollTop = 0; return; }
     if (anchorRef.current) {
       const a = anchorRef.current;
-      el.scrollTop = el.scrollHeight - a.height + a.top;
+      const index = visible.findIndex(message => message.id === a.id);
+      if (index >= 0) {
+        virtual.scrollToIndex(index, { align: "start" });
+        requestAnimationFrame(() => {
+          const row = el.querySelector<HTMLElement>(`[data-virtual-message="${CSS.escape(a.id)}"]`);
+          if (row) el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
+        });
+      }
       anchorRef.current = null;
-    } else if (followTail.current || pending) {
+    } else if (followTail.current && !historyState.hasNewer) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [visible, pending]);
+  }, [visible, pending, virtual.getTotalSize()]);
   return (
     <div className="chat-view relative grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-bg">
       {/* 消息区与 Composer 是两个明确的 grid row：上面只能在自身内部滚动，
           下面的 Composer 因此不可能越过 Debug Area。 */}
-      <div className="flex min-h-0 flex-col">
+      <div className="flex min-h-0 flex-col" inert={searchOpen}>
+      {sessionId && <div className="flex h-8 shrink-0 justify-end px-4">
+        <button ref={searchButtonRef} type="button" title="搜索当前会话" aria-label="搜索当前会话" onClick={() => setSearchOpen(true)}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"><Search size={15} /></button>
+      </div>}
       {/* 头部条已移除：「对话 / 空闲 / 自动」等控件按 visual spec §4.2 并入任务
           上下文条（TaskContextStrip，由 page.tsx 渲染在对话区顶部）。此处直接进
           入横幅与消息流，不再有第二根 36px 条。 */}
@@ -645,15 +700,17 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       <div
         className={cn(
           "messages mx-auto min-h-0 w-full max-w-[800px] flex-1 overflow-y-auto px-6 py-8",
-          visible.length === 0 ? "flex flex-col" : "space-y-5",
+          visible.length === 0 ? "flex flex-col" : "",
         )}
         ref={messagesRef}
+        data-cached-messages={messages.length}
         onScroll={(e) => {
           // 触顶自动加载更早历史（hasMore 且未在加载中——防抖在 page 层）
           const el = e.currentTarget;
           followTail.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
           setShowLatest(!followTail.current);
-          if (hasMore && el.scrollTop < 80) handleLoadMore();
+          onReadingHistory(searchOpen || !followTail.current || !!historyState.hasNewer);
+          if (historyState.hasMore && !historyState.error && el.scrollTop < 80) handleLoadMore();
         }}
         onClick={(e) => {
           // F2 路径联动：点击 Markdown 正文中的 code/a 元素，若文本像工作区内路径
@@ -667,13 +724,28 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           }
         }}
       >
-      {/* 「加载更早」提示：触顶自动触发，仅作状态提示 */}
-      {hasMore && (
-        <div className="py-2 text-center text-[0.6875rem] text-ink-3">上滑加载更早消息…</div>
+      {(historyState.loading || historyState.error || historyState.hasMore) && (
+        <div className="flex min-h-10 items-center justify-center gap-2 py-2 text-xs text-ink-3" role={historyState.error ? "alert" : "status"}>
+          {historyState.error ? (
+            <>
+              <span className="min-w-0 break-words text-danger" title={historyState.error}>
+                {historyState.phase === "initial" ? "历史消息加载失败" : "更早消息加载失败"}
+              </span>
+              <button type="button" onClick={handleLoadMore} title="重试加载历史消息" aria-label="重试加载历史消息"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                <RotateCw size={14} />
+              </button>
+            </>
+          ) : historyState.loading ? (
+            <><LoaderCircle size={14} className="shrink-0 animate-spin" /><span>正在加载{historyState.phase === "initial" ? "历史" : "更早"}消息…</span></>
+          ) : (
+            <button type="button" onClick={handleLoadMore} className="min-h-8 hover:text-ink">加载更早消息</button>
+          )}
+        </div>
       )}
       {todos && todos.length > 0 && <TodoCard todos={todos} />}
       {/* N6 实时进度：运行中展示「正在执行第 N 步 · 当前工具」，取代单一状态点 */}
-        {visible.length === 0 && (
+        {visible.length === 0 && !historyState.loading && !historyState.error && (
           <div className="chat-welcome flex-1">
             <div className="text-[1.5rem] font-semibold tracking-[-0.035em] text-ink">今天想完成什么？</div>
             <div className="max-w-md text-[0.8125rem] leading-6 text-ink-3">
@@ -681,7 +753,11 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             </div>
           </div>
         )}
-        {visible.map((m, idx) => {
+        <div ref={listRef} className="relative w-full" style={{ height: virtual.getTotalSize(), overflowAnchor: "none" }}>
+        {virtual.getVirtualItems().map(item => {
+          const idx = item.index;
+          const m = visible[idx]!;
+          const renderMessage = () => {
           const isAssistant = m.role === "assistant";
           const lastActive = isAssistant && idx === visible.length - 1 && running;
           if (!isAssistant) {
@@ -693,7 +769,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             if (editing?.id === m.id) {
               // 原位编辑态：气泡变 textarea，保存即回溯重跑（服务端截断该消息之后的历史）
               return (
-                <div key={m.id} className="flex justify-end">
+                <div key={m.id} data-message-id={m.id} className="flex justify-end">
                   <div className="w-[85%]">
                     <textarea
                       autoFocus
@@ -728,7 +804,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               );
             }
             return (
-              <div key={m.id} className="group flex justify-end [content-visibility:auto] [contain-intrinsic-size:auto_120px]">
+              <div key={m.id} data-message-id={m.id} className="group flex justify-end">
                 <div className="relative max-w-[85%]">
                   <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
                     {m.skill && (
@@ -737,7 +813,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                           <path d="m8 1.8 5 2.9v6.6l-5 2.9-5-2.9V4.7l5-2.9Z" /><path d="m3 4.7 5 2.9 5-2.9M8 7.6v6.6" />
                         </svg>
                         <span className="font-medium text-accent">{m.skill.name}</span>
-                        <span className="text-ink">{text}</span>
+                        <span className="text-ink"><MessageText text={text} /></span>
                       </div>
                     )}
                     {m.references?.length ? <div className="mb-1.5 flex flex-wrap gap-1">{m.references.map((path) => <span key={path} className="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-2">@{path}</span>)}</div> : null}
@@ -813,7 +889,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             );
           }
           return (
-            <div key={m.id} className="chat-assistant-message [content-visibility:auto] [contain-intrinsic-size:auto_120px]">
+            <div key={m.id} data-message-id={m.id} className="chat-assistant-message">
               <div className="min-w-0 flex-1 space-y-2.5">
               {blocks}
               {m.error && (
@@ -893,7 +969,15 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               </div>
             </div>
           );
+          };
+          return <div key={m.id} data-index={idx} data-virtual-message={m.id} ref={virtual.measureElement}
+            className="absolute left-0 top-0 min-h-8 w-full pb-5" style={{ transform: `translateY(${item.start - scrollMargin}px)` }}>
+            {m.id === firstUnreadId && <div className="mb-4 flex items-center gap-3 text-[0.6875rem] text-ink-3"><span className="h-px flex-1 bg-line" />未读消息<span className="h-px flex-1 bg-line" /></div>}
+            {renderMessage()}
+          </div>;
         })}
+        </div>
+        {historyState.hasNewer && <button type="button" disabled={historyState.loading} className="my-3 w-full text-xs text-ink-3 disabled:opacity-40" onClick={() => { captureAnchor(); onLoadNewer(); }}>加载更新消息</button>}
         {/* 任务终态小结（N5）：run 收尾的 AI 一句总结，挂在消息流末尾。
             只在非 running 时显示——running 时 summary 尚未生成（终态才发）。
             N6：总结卡带「继续下一步」按钮 + 可展开「执行轨迹」时间线。 */}
@@ -944,8 +1028,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         )}
       </div>
       </div>
-      <div className="chat-input-dock">
-      {showLatest && <button type="button" className="chat-latest" onClick={() => { followTail.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowLatest(false); }}>↓ 回到最新消息</button>}
+      <div className="chat-input-dock" inert={searchOpen}>
+      {(showLatest || historyState.hasNewer) && <button type="button" title="回到最新消息" aria-label="回到最新消息" className="chat-latest inline-flex items-center gap-1.5" onClick={() => { followTail.current = true; onReadingHistory(false); if (historyState.hasNewer || historyState.error) onLoadLatest(); else messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight }); setShowLatest(false); }}><ArrowDown size={14} />回到最新消息{readState && readState.unreadCount > 0 ? ` · ${readState.unreadCount} 条未读` : ""}</button>}
       {/* 状态与输入器共享同一个 grid row，避免隐式第三行挤压消息区。 */}
       <div className="flex h-7 shrink-0 items-center justify-center">
         {(whisper || running) && (
@@ -965,6 +1049,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         onCyclePermissionMode={onCyclePermissionMode}
       />
       </div>
+      {searchOpen && sessionId && <SessionMessageSearch key={sessionId} sessionId={sessionId} onClose={() => { setSearchOpen(false); requestAnimationFrame(() => searchButtonRef.current?.focus()); }} />}
     </div>
   );
 }

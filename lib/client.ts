@@ -45,7 +45,7 @@ async function j<T>(res: Response): Promise<T> {
     if (!body?.error && res.status >= 500) {
       throw new Error(`服务异常（${res.status}）：服务端未捕获错误，详情见运行日志（账户菜单 → 打开日志文件夹）`);
     }
-    throw new Error(body?.error ?? `请求失败（${res.status}）`);
+    throw Object.assign(new Error(body?.error ?? `请求失败（${res.status}）`), { status: res.status });
   }
   return res.json() as Promise<T>;
 }
@@ -81,10 +81,10 @@ export const client = {
   /** 会话全文搜索（消息文本 + 工具摘要），每会话取首个命中。 */
   searchSessions: (q: string) =>
     fetch(`/api/sessions/search?q=${encodeURIComponent(q)}`)
-      .then((r) => j<{ query: string; results: { sessionId: string; title: string; snippet: string }[] }>(r)),
+      .then((r) => j<{ query: string; results: { projectId: string; projectName: string; sessionId: string; title: string; snippet: string }[] }>(r)),
 
-  createSession: (agent?: string, model?: ModelRef, isolate?: boolean) =>
-    post("/api/sessions", { agent, model, isolate }).then((r) => j<SessionInfo>(r)),
+  createSession: (agent?: string, model?: ModelRef, isolate?: boolean, requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`) =>
+    post("/api/sessions", { agent, model, isolate, requestId }).then((r) => j<SessionListItem>(r)),
 
   /** 会话 worktree 隔离状态（隔离副本会话 → { enabled: true, path, branch }）。 */
   worktreeStatus: (sessionId: string) =>
@@ -114,10 +114,21 @@ export const client = {
   deleteSession: (sessionId: string) =>
     send("DELETE", `/api/sessions/${sessionId}`).then((r) => j<{ ok?: boolean; error?: string }>(r)),
 
-  /** 消息转录尾部分页：skip = 已从尾部取走的条数。hasMore=false 表示已到最早。 */
-  getMessagesPage: (sessionId: string, skip: number, limit = 50) =>
-    fetch(`/api/sessions/${sessionId}/messages?tail=${limit}&skip=${skip}`)
-      .then((r) => j<{ messages: TranscriptMessage[]; total: number; hasMore: boolean }>(r)),
+  /** 稳定消息窗口：游标绑定 session + messageSeq + historyRevision。 */
+  getReadState: (sessionId: string, signal?: AbortSignal) => fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { signal }).then(r => j<import("./types").ReadState>(r)),
+  markRead: (sessionId: string, lastReadMessageSeq: number, historyRevision: number, signal?: AbortSignal) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lastReadMessageSeq, historyRevision }), signal }).then(r => j<import("./types").ReadState>(r)),
+  searchSessionMessages: (sessionId: string, query: string, cursor: string | null, signal?: AbortSignal) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/search?q=${encodeURIComponent(query)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })
+      .then(r => j<{ results: import("./types").MessageSearchHit[]; nextCursor: string | null }>(r)),
+
+  getMessageContext: (sessionId: string, target: { around: string } | { before: string } | { after: string }, signal?: AbortSignal) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages?view=window&limit=50&${new URLSearchParams(target)}`, { signal })
+      .then(r => j<import("./session-history").HistoryPage & { afterCursor: string | null; hasMoreAfter: boolean }>(r)),
+
+  getMessagesPage: (sessionId: string, before: string | null, limit = 50, signal?: AbortSignal) =>
+    fetch(`/api/sessions/${sessionId}/messages?view=window&limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`, { signal })
+      .then((r) => j<import("./session-history").HistoryPage>(r)),
 
   prompt: (
     sessionId: string,
@@ -129,7 +140,8 @@ export const client = {
     skillId?: string,
     references?: string[],
     attachments?: { name: string; mediaType: string; data: string; size: number }[],
-  ) => post(`/api/sessions/${sessionId}/prompt`, { text, agent, model, images, effort, skillId, references, attachments }).then((r) => j<{ ok: boolean }>(r)),
+    requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  ) => post(`/api/sessions/${sessionId}/prompt`, { text, agent, model, images, effort, skillId, references, attachments, requestId }).then((r) => j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition: "started" | "queued" }>(r)),
 
   replyPermission: (
     sessionId: string,
@@ -307,39 +319,56 @@ export const client = {
     sessionId: string,
     cb: (ev: LecternEvent) => void,
     onState?: (state: ConnectionState) => void,
+    initialSeq = 0,
   ) => {
     let es: EventSource | null = null;
-    let lastSeq = 0;
+    let lastSeq = initialSeq;
     let attempt = 0;
     let closed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const reconnect = (source: EventSource) => {
+      if (closed || es !== source) return;
+      source.close();
+      es = null;
+      attempt += 1;
+      onState?.(attempt >= 3 ? "offline" : "reconnecting");
+      const delay = Math.min(15_000, 1_000 * 2 ** Math.min(attempt - 1, 4));
+      retryTimer = setTimeout(connect, delay);
+    };
     const connect = () => {
       if (closed) return;
+      retryTimer = null;
       const url = `/api/sessions/${sessionId}/events${lastSeq > 0 ? `?since=${lastSeq}` : ""}`;
-      es = new EventSource(url);
-      es.onopen = () => {
-        attempt = 0;
+      const source = new EventSource(url);
+      es = source;
+      source.onopen = () => {
+        if (closed || es !== source) return;
         onState?.("connected");
       };
-      es.onmessage = (e) => {
+      source.onmessage = (e) => {
+        if (closed || es !== source) return;
         try {
-          const ev = JSON.parse(e.data) as LecternEvent & { seq?: number };
-          if (typeof ev.seq === "number" && ev.seq > lastSeq) lastSeq = ev.seq;
+          const ev = JSON.parse(e.data) as LecternEvent & { seq: number; sessionId: string };
+          if (!ev || ev.sessionId !== sessionId || !Number.isSafeInteger(ev.seq) || ev.seq < 1
+            || typeof ev.type !== "string" || !ev.data || typeof ev.data !== "object") {
+            reconnect(source);
+            return;
+          }
+          if (ev.seq <= lastSeq) return;
+          // Do not acknowledge a gap: replay from the last successfully applied event.
+          if (ev.seq !== lastSeq + 1) {
+            reconnect(source);
+            return;
+          }
           cb(ev);
+          lastSeq = ev.seq;
+          attempt = 0;
         } catch {
-          /* 忽略无法解析的帧 */
+          reconnect(source);
         }
       };
-      es.onerror = () => {
-        es?.close();
-        es = null;
-        if (closed) return;
-        attempt += 1;
-        onState?.(attempt >= 3 ? "offline" : "reconnecting");
-        const delay = Math.min(15_000, 1_000 * 2 ** Math.min(attempt - 1, 4));
-        retryTimer = setTimeout(connect, delay);
-      };
+      source.onerror = () => reconnect(source);
     };
 
     connect();

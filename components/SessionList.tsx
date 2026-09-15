@@ -362,6 +362,7 @@ function SessionRow({
               </svg>
             )}
             <span className="truncate">{s.title || "未命名任务"}</span>
+            {!!s.readState?.unreadCount && <span title={`${s.readState.unreadCount} 条未读消息`} aria-label={`${s.readState.unreadCount} 条未读消息`} className="ml-1 shrink-0 text-[0.625rem] tabular-nums text-ink">{s.readState.unreadCount > 99 ? "99+" : s.readState.unreadCount}</span>}
             {bgActivity && (
               <span
                 title={`后台任务${bgLabel}，点开查看后消失`}

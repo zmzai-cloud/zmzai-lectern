@@ -1,0 +1,35 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { ReadDwell } from "./read-dwell";
+afterEach(() => vi.useRealTimers());
+it("requires 500 continuous eligible milliseconds", () => {
+  vi.useFakeTimers();
+  const commit = vi.fn();
+  const dwell = new ReadDwell(commit, () => true);
+  dwell.update("1:50");
+  vi.advanceTimersByTime(499);
+  expect(commit).not.toHaveBeenCalled();
+  dwell.update(null);
+  dwell.update("1:50");
+  vi.advanceTimersByTime(499);
+  expect(commit).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit).toHaveBeenCalledWith("1:50");
+});
+it("does not postpone an unchanged candidate and rechecks focus at commit", () => {
+  vi.useFakeTimers();
+  let eligible = true;
+  const commit = vi.fn();
+  const dwell = new ReadDwell(commit, () => eligible);
+  dwell.update("1:50");
+  vi.advanceTimersByTime(300);
+  dwell.update("1:50");
+  eligible = false;
+  vi.advanceTimersByTime(200);
+  expect(commit).not.toHaveBeenCalled();
+  eligible = true;
+  dwell.update("1:51");
+  dwell.cancel();
+  vi.advanceTimersByTime(1000);
+  expect(commit).not.toHaveBeenCalled();
+});

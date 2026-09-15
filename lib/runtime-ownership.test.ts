@@ -1,0 +1,79 @@
+import { afterAll, beforeEach, expect, it, vi } from "vitest";
+
+const fixture = vi.hoisted(() => ({
+  active: { id: "a", path: "/workspace/a" },
+  create: vi.fn(), gitTools: vi.fn(), terminalTools: vi.fn(),
+  resolve: vi.fn(),
+}));
+vi.mock("node:fs", () => ({ existsSync: () => true, mkdirSync: vi.fn(), watch: vi.fn() }));
+vi.mock("@zmzai/agent-framework", () => ({
+  createAgentRuntime: fixture.create,
+  createSqliteSessionStore: () => ({}), createSqliteEventLog: () => ({}),
+  createOpenAiModelProvider: () => ({ getModel: () => ({}) }),
+  createGitTools: fixture.gitTools, createTerminalTools: fixture.terminalTools,
+  createHostTerminalBackend: vi.fn(), TerminalManager: class {},
+  reclaimExpiredLeases: vi.fn(), listActiveSessions: () => [],
+}));
+vi.mock("./projects", () => ({
+  DEFAULT_PROJECT: { id: "default" },
+  getActiveProject: () => fixture.active,
+  listProjects: () => [{ id: "a", path: "/workspace/a" }, { id: "b", path: "/workspace/b" }],
+  dataDirFor: (p: { id: string }) => `/data/${p.id}`,
+  projectStore: vi.fn(),
+}));
+vi.mock("./session-owner", () => ({ resolveSessionOwner: fixture.resolve, assertWorkspaceAvailable: vi.fn() }));
+vi.mock("./worktree", () => ({ worktreeForSession: () => null }));
+vi.mock("./settings", () => ({ authHeaders: () => ({}), ollamaBase: () => null, getFailoverEndpoints: () => [] }));
+vi.mock("./relay", () => ({ relayBase: () => "https://relay.invalid" }));
+vi.mock("./mcp-config", () => ({ loadMcpConfig: () => ({ entries: [], errors: [], sources: [] }) }));
+vi.mock("./skills", () => ({ listSkills: () => [], loadSkill: vi.fn() }));
+import { runtimeFor, sessionRuntime, workspaceRootForSession } from "./runtime";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fixture.active = { id: "a", path: "/workspace/a" };
+  fixture.create.mockImplementation((config) => ({ config }));
+  fixture.gitTools.mockReturnValue([]);
+  fixture.terminalTools.mockReturnValue([]);
+  fixture.resolve.mockReturnValue({ project: { id: "a", path: "/workspace/a" }, effectiveWorkspaceRoot: "/workspace/a" });
+  globalThis.__lecternRuntimes = new Map();
+  globalThis.__lecternMcp = new Map();
+  // Avoid launching the background lease poller in a unit test.
+  globalThis.__lecternLeaseTimer ??= setInterval(() => {}, 60_000);
+  globalThis.__lecternLeaseTimer.unref();
+});
+
+afterAll(() => {
+  clearInterval(globalThis.__lecternLeaseTimer);
+  globalThis.__lecternLeaseTimer = undefined;
+  globalThis.__lecternLeaseTargets?.clear();
+});
+
+it("pins all tool roots when the active project changes during a background run", () => {
+  runtimeFor("/workspace/a");
+  fixture.active = { id: "b", path: "/workspace/b" };
+  const config = fixture.create.mock.calls[0][0];
+  expect(config.workspace.root).toBe("/workspace/a");
+  expect(config.sandbox.workspaceRoot()).toBe("/workspace/a");
+  expect(config.capabilities.repoMap.workspaceRoot()).toBe("/workspace/a");
+  expect(fixture.gitTools.mock.calls[0][0].cwd()).toBe("/workspace/a");
+  expect(fixture.terminalTools.mock.calls[0][1].workspaceRoot()).toBe("/workspace/a");
+});
+
+it("resolves an ordinary background session independently of the active project", () => {
+  fixture.active = { id: "b", path: "/workspace/b" };
+  sessionRuntime("session_a");
+  expect(fixture.resolve).toHaveBeenCalledWith("session_a");
+  expect(fixture.create.mock.calls[0][0].workspace.root).toBe("/workspace/a");
+  expect(workspaceRootForSession("session_a")).toBe("/workspace/a");
+});
+
+it("never constructs a runtime for an unregistered project", () => {
+  expect(() => runtimeFor("/unregistered")).toThrow();
+  expect(fixture.create).not.toHaveBeenCalled();
+});
+
+it("only uses the active project when no session was supplied", () => {
+  expect(workspaceRootForSession()).toBe("/workspace/a");
+  expect(fixture.resolve).not.toHaveBeenCalled();
+});

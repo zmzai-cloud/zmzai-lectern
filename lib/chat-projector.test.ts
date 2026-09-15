@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { ChatProjector, EMPTY_CHAT_VIEW } from "./chat-projector";
+import { ChatProjector, EMPTY_CHAT_VIEW, MESSAGE_CACHE_LIMIT, transcriptToEvents } from "./chat-projector";
 import type { Artifact } from "./types";
+
+it("bounds 10,000 streamed messages without evicting independent task snapshots", () => {
+  const projector = new ChatProjector();
+  projector.ingest({ type: "todo.updated", data: { todos: [{ content: "task", status: "pending" }] } });
+  for (let n = 1; n <= 10000; n++) {
+    projector.ingestBatch(transcriptToEvents([{ info: { id: `m${n}`, role: "assistant" }, messageSeq: n, parts: [{ id: `p${n}`, messageId: `m${n}`, sessionId: "s", type: "text", text: `${n}` }] }]));
+    projector.trimMessages("tail");
+  }
+  expect(projector.data().messages).toHaveLength(MESSAGE_CACHE_LIMIT);
+  expect(projector.bounds()).toEqual({ first: 9601, last: 10000 });
+  expect(projector.data().todos).toHaveLength(1);
+  projector.ingestBatch(transcriptToEvents(Array.from({ length: 50 }, (_, i) => ({ info: { id: `older${i}`, role: "user" }, messageSeq: 9551 + i, parts: [] }))), true);
+  projector.trimMessages("head");
+  expect(projector.bounds()).toEqual({ first: 9551, last: 9950 });
+  expect(projector.hasMessage("m10000")).toBe(false);
+  projector.ingest({ type: "message.part.delta", data: { messageId: "m10000", partId: "p10000", delta: "late" } });
+  expect(projector.data().messages).toHaveLength(MESSAGE_CACHE_LIMIT);
+});
 
 /** 构造一个 artifact.created 事件。 */
 function artifactEvent(id: string, path: string): { type: string; data: unknown } {

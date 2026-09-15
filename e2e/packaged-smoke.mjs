@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, parse, resolve } from "node:path";
 import { createServer } from "node:net";
 import { _electron } from "playwright";
 
@@ -11,7 +11,7 @@ const executablePath = resolve(process.argv[2] ?? (process.platform === "darwin"
 const root = mkdtempSync(join(tmpdir(), "lectern-packaged-smoke-"));
 const userData = join(root, "profile");
 const workspace = join(root, "workspace with spaces");
-const reportDir = resolve("test-results/packaged-smoke");
+const reportDir = resolve(process.env.LECTERN_SMOKE_REPORT_DIR ?? "test-results/packaged-smoke");
 mkdirSync(workspace, { recursive: true });
 mkdirSync(reportDir, { recursive: true });
 execFileSync("git", ["init", workspace]);
@@ -46,9 +46,16 @@ async function launch() {
   desktop = await _electron.launch({ executablePath, env, timeout: 90000 });
   const window = await desktop.firstWindow({ timeout: 90000 });
   await window.waitForLoadState("domcontentloaded");
+  const homepage = await fetch(origin, { signal: AbortSignal.timeout(15000) });
+  assert.equal(homepage.status, 200, "Packaged homepage must return HTTP 200");
   assert.equal(await desktop.evaluate(({ app }) => app.getPath("userData")), userData, "Profile is not isolated");
   assert.equal(await desktop.evaluate(({ app }) => app.isPackaged), true);
+  if (process.env.LECTERN_SMOKE_CROSS_DRIVE === "1") {
+    const appPath = await desktop.evaluate(({ app }) => app.getAppPath());
+    assert.notEqual(parse(appPath).root.toLowerCase(), parse(userData).root.toLowerCase(), "Actual app and profile must be on different drives");
+  }
   await window.waitForFunction(() => document.body.innerText.trim().length > 20);
+  await window.locator(".account-block > button").waitFor();
   assert.equal(await window.evaluate(() => window.lecternNative.platform), process.platform);
   return window;
 }

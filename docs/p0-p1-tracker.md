@@ -147,3 +147,39 @@ Release follow-ups remain queued behind these workflows: verify real two-version
 update rollback, run the native Windows workflow, and continue the agent
 configuration table. Certificate provisioning remains an external dependency,
 not a reason to abandon the product workflow work.
+
+## Additional High-Priority Requests
+
+These two requests join the high-priority backlog; their relative implementation
+order is not yet set. They are requirements, not completed features.
+
+### Scenario-Based Model Selection and Custom Models
+
+- Offer automatic model selection and explicit user-selected/custom models.
+- Explain recommendations by common scenarios: everyday questions, writing and
+  summarization, code building/debugging, and complex analysis or large changes.
+- Distinguish cost-effective and best-quality choices; show capability limits,
+  speed and pricing basis instead of only vague fast/balanced/extreme labels.
+- Price explanations must identify currency, billing unit and any multiplier's
+  baseline. Estimates must be labeled; unknown custom-model prices are not zero.
+- Custom models need provider, endpoint, API key, model ID, connection testing,
+  selection and persistent configuration; credentials must remain protected.
+- Automatic routing must respect task capabilities and user budget preferences,
+  expose the actual selected model, and not silently override a pinned model or
+  switch to a more expensive provider.
+- Acceptance: representative task scenarios, routing and custom-model behavior,
+  pricing clarity, unavailable-model fallback, and settings persistence.
+
+### Client Recharge Entry and Insufficient-Balance Recovery
+
+- Add an account-menu balance/recharge entry linked to the correct billing
+  account and its existing secure payment flow; do not invent a payment endpoint.
+- Replace a raw upstream HTTP 402 with an actionable balance message and recharge
+  entry, while retaining diagnostic details separately.
+- Preserve task progress, input and attachments; after payment, refresh balance
+  and let the user explicitly continue without replaying completed side effects.
+- Distinguish platform balance from a custom provider's balance. For custom
+  providers, direct users to the correct provider or model configuration rather
+  than suggesting that platform recharge will fix the problem.
+- Acceptance: insufficient balance, cancelled/failed payment, successful return,
+  balance refresh, repeated clicks, and resuming a partially completed task.

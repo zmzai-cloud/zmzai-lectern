@@ -21,6 +21,15 @@ installs to a unique temporary directory, executes the same packaged workflow,
 and checks uninstall. This is not proof of cross-version upgrade/rollback or
 human interaction with SmartScreen and permission dialogs.
 
+`e2e/windows-cross-drive-smoke.ps1` also runs in the Windows CI job. It maps an
+unused drive letter to an isolated fixture, copies the packaged application to
+a path with Chinese characters and spaces, and runs the packaged workflows with
+the profile on a different drive. The smoke asserts the actual app path crosses
+drives and checks homepage HTTP 200, UI readiness, APIs, terminal and restart
+persistence. Reports are kept in `test-results/packaged-cross-drive/`. This gate
+was added after the 0.5.1 D:-install/C:-profile startup failure; a passing path
+unit test or cross-build alone is not a native Windows acceptance result.
+
 ## Signing
 
 Default local macOS builds use ad-hoc signing before ZIP/DMG creation; Windows

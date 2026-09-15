@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { EngineRuntime, expandPlaceholders, collectMcpEntries } from "./engine.js";
 
@@ -43,8 +43,11 @@ describe("expandPlaceholders / collectMcpEntries", () => {
       "a/Rb//D",
     );
 
-    const pluginsRoot = "/ws/.zmzai/plugins";
-    const dataRoot = "/data/plugins";
+    // 用 resolve 归一化：实现侧 collectMcpEntries 内部即 resolve(pluginsRoot, name)，
+    // Windows 下会把无盘符路径补成当前盘（D:\ws\...），测试若直接用 POSIX 字面量 + join
+    // 会得到不带盘符的 \ws\...，两侧必然不等。
+    const pluginsRoot = resolve("/ws/.zmzai/plugins");
+    const dataRoot = resolve("/data/plugins");
     const entries = collectMcpEntries({
       pluginsRoot,
       pluginDataRoot: dataRoot,
@@ -97,11 +100,13 @@ describe("expandPlaceholders / collectMcpEntries", () => {
     const started = await rt.runLocalTool("terminal_start", { command: "echo terminal_e2e_ok" });
     const meta = started.metadata as { sessionId: string };
     expect(meta.sessionId).toMatch(/^tty_/);
-    // 轮询直到进程退出（退出态会在 read 输出里注明）
+    // 轮询直到进程退出（退出态会在 read 输出里注明）。Windows 侧终端优先
+    // pwsh/powershell（framework Windows 加固），冷启动在 CI runner 上可达数秒，
+    // 因此预算按「真实进程退出」而非「shell 多快启动」设定。
     let output = "";
     let status = "";
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => setTimeout(r, 250));
       const res = await rt.runLocalTool("terminal_read", { sessionId: meta.sessionId, since: 0 });
       output = res.output;
       status = (res.metadata as { status?: string }).status ?? "";
@@ -109,7 +114,7 @@ describe("expandPlaceholders / collectMcpEntries", () => {
     }
     expect(output).toContain("terminal_e2e_ok");
     expect(status).toBe("exited");
-  }, 15_000);
+  }, 30_000);
 
   it("git_status 端到端：本机工具注入后可对真实仓库执行并读出变更", async () => {
     const { execFile } = await import("node:child_process");

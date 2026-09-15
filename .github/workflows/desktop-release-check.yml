@@ -32,9 +32,9 @@ jobs:
       ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
     steps:
       - uses: actions/checkout@v5
+      # pnpm version comes from package.json "packageManager"; passing it here too
+      # makes action-setup fail with "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.34.5
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

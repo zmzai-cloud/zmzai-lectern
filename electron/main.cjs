@@ -264,18 +264,22 @@ function ensureWebServer() {
   // asar 化后 serverEntry 落在 app.asar 内（虚拟目录），不能当进程工作目录：
   // libuv 的 chdir 不吃 Electron 的 fs 补丁，会直接 ENOTDIR 崩掉（server.js 里
   // 原有的 process.chdir 已由 scripts/patch-standalone-for-asar.mjs 摘掉）。
-  // cwd 必须指向真实可写目录 —— 用 userData：与数据/日志同根，且在安装目录之外
-  // （Windows 装进 Program Files 后往安装目录写会被 UAC 挡掉）。
+  // Windows cwd 必须与安装包同盘：Next 15 用 join(cwd, relative(cwd, dir))
+  // 定位路由资源；跨盘 relative 返回 D:\... 绝对路径，join 却将其拼到 C:\...
+  // 后面，触发 Invalid package / 首页 500。resourcesPath 是 asar 外真实目录。
+  // cwd 只用于资源定位；数据、工作区、日志仍用下方显式注入的用户目录，
+  // 不在 Program Files 等安装目录创建用户数据。macOS 保持原来的 cwd。
+  const serverCwd = process.platform === "win32" ? process.resourcesPath : userData;
   fs.mkdirSync(userData, { recursive: true });
   // standalone server.js 不解析 -p 参数，端口走 PORT 环境变量
   webProcess = utilityProcess.fork(serverEntry, [], {
-    cwd: userData,
+    cwd: serverCwd,
     env: {
       ...process.env,
       NODE_ENV: "production",
       PORT: String(WEB_PORT),
       HOSTNAME: "127.0.0.1",
-      // 覆盖相对路径：打包后 cwd 是 asar（只读），会话与工作区必须落用户目录。
+      // 会话与工作区必须显式落用户目录，不依赖服务 cwd 或安装目录可写性。
       // LECTERN_DATA_DIR / LECTERN_WORKSPACE 是 lib/runtime-constants 实际读取的变量；
       // ZMZAI_* 为兼容别名保留（勿只写 ZMZAI_*：旧版曾因此把数据写进 app 包内）
       // 注意：LECTERN_DATA_DIR 是**最终数据目录**而非"根"（runtime-constants 不再补拼

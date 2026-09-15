@@ -57,6 +57,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./e2e/windows-installer-smoke.ps1
+      - name: Windows cross-drive packaged workflows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./e2e/windows-cross-drive-smoke.ps1
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@v4

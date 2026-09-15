@@ -42,6 +42,11 @@ export function listProjects(): Project[] {
   return [DEFAULT_PROJECT, ...load().projects.filter((p) => existsSync(p.path) && statSync(p.path).isDirectory())];
 }
 
+/** Ownership lookup must include registered projects on temporarily missing disks. */
+export function registeredProjects(): Project[] {
+  return [DEFAULT_PROJECT, ...load().projects];
+}
+
 export function getActiveProject(): Project {
   const state = load();
   if (state.activeId === DEFAULT_PROJECT.id) return DEFAULT_PROJECT;
@@ -65,6 +70,7 @@ export function setActiveProject(id: string): Project {
 export function addProject(rawPath: string): Project {
   const path = resolve(rawPath.replace(/^~(?=\/|$)/, process.env.HOME ?? "~"));
   if (!existsSync(path) || !statSync(path).isDirectory()) throw new Error(`文件夹不存在: ${path}`);
+  if (path === resolve(DEFAULT_PROJECT.path)) return setActiveProject(DEFAULT_PROJECT.id);
   const state = load();
   const existing = state.projects.find((p) => resolve(p.path) === path);
   if (existing) return setActiveProject(existing.id);
@@ -86,10 +92,11 @@ export function dataDirFor(project: Project): string {
   return resolve(dataDir, "projects", project.id);
 }
 
-/** 按项目 id 取数据目录（跨项目会话清理等场景；找不到项目时回落 active）。 */
+/** 按项目 id 取数据目录；未知项目不能回落到活动项目的数据目录。 */
 export function dataDirForId(id: string): string {
-  const project = id === DEFAULT_PROJECT.id ? DEFAULT_PROJECT : listProjects().find((p) => p.id === id);
-  return dataDirFor(project ?? getActiveProject());
+  const project = registeredProjects().find((p) => p.id === id);
+  if (!project) throw new Error("项目不存在");
+  return dataDirFor(project);
 }
 
 declare global {

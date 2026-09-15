@@ -1,6 +1,9 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { sessionRuntime } from "@/lib/runtime";
+import { resolveSessionOwner } from "@/lib/session-owner";
+import { WorkflowError } from "@/lib/workflow-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -8,16 +11,59 @@ export const runtime = "nodejs";
 /**
  * 跨会话恢复：读取某会话已持久化的转录（消息+片段）。
  *
- * 尾部分页（framework store 无分页接口，在本 route 切片——SQLite 本机读取
- * 微秒级，省的是传输量与前端投影态）：`?tail=50` 取最近 50 条；触顶加载更早
- * 时 `?tail=50&skip=<已取条数>` 再往前翻一页。响应带 total/hasMore。
+ * view=window 使用绑定会话与 historyRevision 的稳定游标，返回同水位运行快照。
+ * tail/skip 仅保留给旧客户端兼容。
  */
-export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const runtime = sessionRuntime(id);
-  const messages = await runtime.store.getMessages(id);
-
   const url = new URL(request.url);
+  if (url.searchParams.get("view") === "window" && runtime.store.getMessageSnapshot) {
+    const limitRaw = Number(url.searchParams.get("limit") ?? "50");
+    if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > 200) throw new WorkflowError("INVALID_INPUT","limit 必须是 1..200 的整数",422);
+    let before: number | undefined;
+    let revision: number | undefined;
+    const beforeCursorParam = url.searchParams.get("before");
+    const afterCursorParam = url.searchParams.get("after");
+    const around = url.searchParams.get("around") ?? undefined;
+    if ([beforeCursorParam,afterCursorParam,around].filter(Boolean).length > 1) throw new WorkflowError("INVALID_INPUT", "before、after 和 around 不能同时使用",422);
+    const cursor = beforeCursorParam ?? afterCursorParam;
+    if (cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursor,"base64url").toString("utf8")) as { sessionId?: unknown; messageSeq?: unknown; historyRevision?: unknown };
+        if (decoded.sessionId !== id || !Number.isSafeInteger(decoded.messageSeq) || !Number.isSafeInteger(decoded.historyRevision)) throw new Error("invalid");
+        before = decoded.messageSeq as number;
+        revision = decoded.historyRevision as number;
+      } catch {
+        throw new WorkflowError("INVALID_INPUT","历史游标无效",422);
+      }
+    }
+    try {
+      const snapshot = await runtime.store.getMessageSnapshot(id,{ limit: limitRaw,before: afterCursorParam ? undefined : before,after: afterCursorParam ? before : undefined,around,revision });
+      const beforeCursor = snapshot.nextBefore === null ? null : Buffer.from(JSON.stringify({ sessionId: id,messageSeq: snapshot.nextBefore,historyRevision: snapshot.revision })).toString("base64url");
+      const afterCursor = snapshot.nextAfter === null ? null : Buffer.from(JSON.stringify({ sessionId: id,messageSeq: snapshot.nextAfter,historyRevision: snapshot.revision })).toString("base64url");
+      return NextResponse.json({
+        projectId: resolveSessionOwner(id).project.id,
+        sessionId: id,
+        messages: snapshot.messages,
+        beforeCursor,
+        afterCursor,
+        hasMoreBefore: snapshot.hasMore,
+        hasMoreAfter: snapshot.hasMoreAfter,
+        historyRevision: snapshot.revision,
+        snapshotSeq: snapshot.snapshotSeq,
+        readState: snapshot.readState,
+        stateEvents: snapshot.stateEvents,
+        runs: snapshot.runs,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "HISTORY_REVISION_CONFLICT") throw new WorkflowError("CONFLICT","历史已发生回溯，请重新加载",409,true);
+      if (error instanceof Error && error.message === "MESSAGE_NOT_FOUND") throw new WorkflowError("NOT_FOUND","该消息已不存在，请重新搜索",404);
+      throw error;
+    }
+  }
+
+  const messages = await runtime.store.getMessages(id);
   const tailRaw = Number(url.searchParams.get("tail") ?? "0");
   if (!Number.isFinite(tailRaw) || tailRaw <= 0) {
     // 兼容：无参数 = 全量（旧语义）
@@ -36,3 +82,5 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     hasMore: start > 0,
   });
 }
+
+export const GET = withWorkflowErrors(handleGET);

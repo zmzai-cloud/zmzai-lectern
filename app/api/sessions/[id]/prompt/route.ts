@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError, WorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { resolveModel, sessionCookieName } from "@/lib/relay";
@@ -6,6 +7,7 @@ import { withRequestCookie } from "@/lib/request-cookie";
 import { generateSessionTitle } from "@/lib/session-title";
 import { loadSkill } from "@/lib/skills";
 import { validateAttachments } from "@zmzai/agent-framework";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,8 +16,21 @@ export const runtime = "nodejs";
 const EFFORTS = ["off", "minimal", "low", "medium", "high"] as const;
 type Effort = (typeof EFFORTS)[number];
 
+function requestShape(input: {
+  text?: string; agent?: string; model?: { providerId: string; modelId: string };
+  images?: readonly { url: string; mediaType: string }[]; effort?: string;
+  skillId?: string; skill?: { id: string }; references?: readonly string[];
+  attachments?: readonly { name: string; mediaType: string; data: string; size: number }[];
+}, includeModel: boolean) {
+  return JSON.stringify({
+    text: input.text ?? "",agent: input.agent ?? null,model: includeModel ? input.model ?? null : null,
+    images: input.images ?? [],effort: input.effort ?? null,skillId: input.skillId ?? input.skill?.id ?? null,
+    references: input.references ?? [],attachments: input.attachments ?? [],
+  });
+}
+
 /** 发送提示词：进入 agent-framework runner，推理经 relay（cookie 透传）。 */
-export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as {
     text?: string;
@@ -25,6 +40,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     effort?: string;
     skillId?: string;
     references?: string[];
+    requestId?: string;
     attachments?: { name?: string; mediaType?: string; data?: string; size?: number }[];
   } | null;
   const text = body?.text?.trim() ?? "";
@@ -33,18 +49,34 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     (im) => typeof im?.url === "string" && im.url.length > 0 && im.url.length < 8_000_000 && /^image\//.test(im.mediaType ?? ""),
   );
   const references = [...new Set((body?.references ?? []).filter((path): path is string => typeof path === "string" && path.length > 0 && path.length <= 1024 && !path.includes("\0")))].slice(0, 32);
+  if (body?.requestId !== undefined && (typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(body.requestId))) {
+    throw new WorkflowError("INVALID_INPUT", "非法 requestId", 422);
+  }
+  const requestId = body?.requestId ?? randomUUID();
   let attachments;
-  try { attachments = validateAttachments(body?.attachments); }
-  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "附件不合法" }, { status: 422 }); }
+  try {
+    attachments = validateAttachments(body?.attachments);
+  } catch (error) {
+    rethrowWorkflowError(error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "附件不合法" }, { status: 422 });
+  }
   if (!text && images.length === 0 && attachments.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });
   }
 
   const cookie = request.cookies.get(sessionCookieName)?.value;
   const cookieHeader = cookie ? `${sessionCookieName}=${cookie}` : null;
-
-  const model = body?.model ?? (await resolveModel(body?.agent, cookieHeader));
   const runtime = sessionRuntime(id);
+  const prior = await runtime.store.workflow?.findPrompt(id,requestId);
+  if (prior) {
+    const incoming = { text,agent: body?.agent,model: body?.model,images,attachments,effort,skillId: body?.skillId,references };
+    if (requestShape(incoming,body?.model !== undefined) !== requestShape(prior.input,body?.model !== undefined)) {
+      throw new WorkflowError("CONFLICT","requestId 已用于不同的消息内容",409);
+    }
+    const replay = await withRequestCookie(cookieHeader,() => runtime.runner.prompt(id,prior.input));
+    return NextResponse.json({ ...replay,requestId });
+  }
+  const model = body?.model ?? (await resolveModel(body?.agent, cookieHeader));
   const selected = body?.skillId ? loadSkill(workspaceRootForSession(id), body.skillId) : null;
   if (body?.skillId && !selected) return NextResponse.json({ error: "选中的 Skill 不存在、不可读取或超过大小限制" }, { status: 422 });
 
@@ -66,8 +98,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   }
 
   try {
-    await withRequestCookie(cookieHeader, () =>
-      runtime.runner.prompt(id, { text, agent: body?.agent, model, images, attachments, ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
+    const result = await withRequestCookie(cookieHeader, () =>
+      runtime.runner.prompt(id, { requestId, text, agent: body?.agent, model, images, attachments, ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
     );
     // AI 摘要标题：后台生成不阻塞响应；仅当标题仍是占位时覆盖。
     // 显式带上本轮实际模型：runner 会在 runLoop 回写 session.model，但
@@ -83,9 +115,14 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         })
         .catch(() => undefined);
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ...result, requestId });
   } catch (e) {
+    if (e instanceof Error && e.message === "REQUEST_ID_REUSED") throw new WorkflowError("CONFLICT","requestId 已用于不同的消息内容",409);
+    if (e instanceof Error && e.message === "RECOVERY_REQUIRED") throw new WorkflowError("RECOVERY_REQUIRED","上一任务的外部副作用尚未确认，请先核对后再继续",409);
+    rethrowWorkflowError(e);
     const message = e instanceof Error ? e.message : "发送失败";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withWorkflowErrors(handlePOST);

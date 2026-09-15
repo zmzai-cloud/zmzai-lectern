@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -12,7 +13,7 @@ export const runtime = "nodejs";
 const MAX_BYTES = 512 * 1024;
 
 /** GET /api/fs/file?path=README.md — 读取工作区内文本文件预览（限 512KB） */
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rel = request.nextUrl.searchParams.get("path");
   if (!rel) return NextResponse.json({ error: "缺少 path 参数" }, { status: 400 });
   try {
@@ -29,12 +30,13 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ path: rel, size: st.size, content: buf.toString("utf8") });
   } catch (err) {
+    rethrowWorkflowError(err);
     return NextResponse.json({ error: err instanceof Error ? err.message : "读取文件失败" }, { status: 400 });
   }
 }
 
 /** PUT /api/fs/file — 编辑器保存回写（工作区内，限制同 GET）。 */
-export async function PUT(request: NextRequest) {
+async function handlePUT(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as { path?: string; content?: string; sessionId?: string } | null;
   const rel = body?.path;
   if (!rel || typeof body?.content !== "string") {
@@ -49,6 +51,10 @@ export async function PUT(request: NextRequest) {
     await writeFile(abs, body.content, "utf8");
     return NextResponse.json({ ok: true, size: Buffer.byteLength(body.content, "utf8") });
   } catch (err) {
+    rethrowWorkflowError(err);
     return NextResponse.json({ error: err instanceof Error ? err.message : "写入文件失败" }, { status: 400 });
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);
+export const PUT = withWorkflowErrors(handlePUT);

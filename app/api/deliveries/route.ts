@@ -1,3 +1,4 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -15,7 +16,7 @@ export const runtime = "nodejs";
  * 返回当前 session 的交付概览：delivery + active attempt + 命令记录。
  * owner 由 sessionId 在服务端推导，不接受客户端提交 projectId/root。
  */
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const sessionId = request.nextUrl.searchParams.get("sessionId");
   if (!sessionId) return NextResponse.json({ error: "缺少 sessionId" }, { status: 400 });
 
@@ -32,3 +33,5 @@ export async function GET(request: NextRequest) {
     runs,
   });
 }
+
+export const GET = withWorkflowErrors(handleGET);

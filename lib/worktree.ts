@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { dataDir } from "./runtime-constants";
+import { WorkflowError } from "./workflow-error";
 
 /**
  * 会话级 git worktree 隔离（robustness-plan §9）：
@@ -80,7 +81,7 @@ export function worktreeForSession(sessionId: string): WorktreeRecord | null {
     if (!row) return null;
     return { sessionId: row.session_id, projectPath: row.project_path, path: row.path, branch: row.branch, createdAt: row.created_at };
   } catch {
-    return null;
+    throw new WorkflowError("RESOURCE_UNAVAILABLE", "隔离副本映射不可读取，已阻止回落主工作区", 503, true);
   }
 }
 

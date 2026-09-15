@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -33,7 +34,7 @@ const MIME_TYPES: Record<string, string> = {
  * 等相对资源会继续落在这个路由下，因而能像普通静态站点一样解析。sessionId
  * 是路径的一部分，后续模块/样式/图片请求会继续命中同一个隔离 worktree。
  */
-export async function GET(
+async function handleGET(
   _request: Request,
   ctx: { params: Promise<{ sessionId: string; filePath: string[] }> },
 ) {
@@ -57,6 +58,9 @@ export async function GET(
       },
     });
   } catch (cause) {
+    rethrowWorkflowError(cause);
     return new Response(cause instanceof Error ? cause.message : "无法读取预览文件", { status: 404 });
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);

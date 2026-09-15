@@ -1,8 +1,10 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { type NextRequest } from "next/server";
 
 import { subscribeEventLog } from "@zmzai/agent-framework";
 
 import { sessionRuntime } from "@/lib/runtime";
+import { WorkflowError } from "@/lib/workflow-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,13 +19,15 @@ const HEARTBEAT_MS = 15_000;
  * 每帧写 `id: <seq>`；每 15s 发注释帧保活，防代理/系统休眠切断空闲连接
  * （注释帧不触发 EventSource.onmessage，纯保活）。
  */
-export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const runtime = sessionRuntime(id);
   const encoder = new TextEncoder();
 
   const sinceRaw = Number(new URL(request.url).searchParams.get("since") ?? "0");
   const sinceSeq = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0;
+  const latestSeq = await runtime.eventLog.count(id);
+  if (sinceSeq > latestSeq) throw new WorkflowError("CONFLICT","事件水位已失效，请重新加载会话快照",409,true);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -59,3 +63,5 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     },
   });
 }
+
+export const GET = withWorkflowErrors(handleGET);

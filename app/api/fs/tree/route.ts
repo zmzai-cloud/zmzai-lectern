@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -32,7 +33,7 @@ const SKIP_DIRS = new Set([
 ]);
 
 /** GET /api/fs/tree?path=src/lib — 列出工作区内某目录一层内容（懒加载目录树） */
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const dir = request.nextUrl.searchParams.get("path") ?? "";
   const root = workspaceRootForSession(request.nextUrl.searchParams.get("sessionId"));
   try {
@@ -69,6 +70,9 @@ export async function GET(request: NextRequest) {
     nodes.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
     return NextResponse.json({ path: dir, nodes });
   } catch (err) {
+    rethrowWorkflowError(err);
     return NextResponse.json({ error: err instanceof Error ? err.message : "读取目录失败" }, { status: 400 });
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);

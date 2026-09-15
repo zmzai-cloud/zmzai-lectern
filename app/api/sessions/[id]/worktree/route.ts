@@ -1,6 +1,7 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { sessionRuntime } from "@/lib/runtime";
+import { sessionRuntime, workspaceRootForSession } from "@/lib/runtime";
 import { mergeWorktree, removeWorktree, worktreeCommits, worktreeForSession } from "@/lib/worktree";
 
 export const dynamic = "force-dynamic";
@@ -9,9 +10,10 @@ export const runtime = "nodejs";
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 /** GET /api/sessions/[id]/worktree — 隔离副本状态（enabled/路径/分支/领先提交数）。 */
-export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
+  workspaceRootForSession(id);
   const wt = worktreeForSession(id);
   if (!wt) return NextResponse.json({ enabled: false });
   const commits = await worktreeCommits(id);
@@ -19,7 +21,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
 }
 
 /** POST /api/sessions/[id]/worktree — 合并回主工作区（merge）或丢弃副本（discard）。 */
-export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
   const body = (await request.json().catch(() => null)) as { action?: "merge" | "discard" } | null;
@@ -38,3 +40,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const result = await mergeWorktree(id);
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });
 }
+
+export const GET = withWorkflowErrors(handleGET);
+export const POST = withWorkflowErrors(handlePOST);

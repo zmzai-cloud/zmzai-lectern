@@ -1,3 +1,4 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -18,7 +19,7 @@ const MAX_DIFF = 200_000;
 
 /** 工作区未提交变更的 diff（产物侧「审查」Tab 数据源）。
  *  只读白名单：git diff HEAD（tracked 变更）；非 git 仓库降级 available:false。 */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const search = new URL(request.url).searchParams;
   const cwd = resolveWithinWorkspace(null, workspaceRootForSession(search.get("sessionId")));
   const context = search.get("path") ?? "";
@@ -56,3 +57,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ available: false, files: [], diff: "" } satisfies GitDiff);
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);

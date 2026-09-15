@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { terminalManager, workspaceRootForSession } from "@/lib/runtime";
@@ -9,10 +10,11 @@ export const runtime = "nodejs";
 /** GET /api/terminal — 终端会话列表 + 后端种类（pty/pipe）+ 系统 shell 探测结果 */
 const ownerPrefix = (sessionId: string) => `lectern:${sessionId}:`;
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const mgr = terminalManager();
   const { defaultShell, shells } = resolveShells();
   const sessionId = request.nextUrl.searchParams.get("sessionId");
+  if (sessionId != null) workspaceRootForSession(sessionId);
   const sessions = mgr.list().filter((session) => !sessionId || session.name?.startsWith(ownerPrefix(sessionId)));
   return NextResponse.json({ backendKind: mgr.backendKind, sessions, defaultShell, shells });
 }
@@ -38,7 +40,7 @@ async function startInteractiveShell(shellArg?: string, sessionId?: string, size
  * POST /api/terminal — 启动一条命令（sh -c "<command>"，cwd 固定在工作区）。
  * 两种后端下都是"命令会话"：输出游标读、exit 即结束，行为统一可预测。
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as
     | { command?: string; name?: string; interactive?: boolean; shell?: string; sessionId?: string; cols?: number; rows?: number }
     | null;
@@ -48,6 +50,7 @@ export async function POST(request: NextRequest) {
     try {
       return await startInteractiveShell(body.shell?.trim() || undefined, body.sessionId, { cols: body?.cols, rows: body?.rows });
     } catch (err) {
+      rethrowWorkflowError(err);
       return NextResponse.json(
         { error: err instanceof Error ? err.message : "启动失败" },
         { status: 500 },
@@ -69,6 +72,10 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(session);
   } catch (err) {
+    rethrowWorkflowError(err);
     return NextResponse.json({ error: err instanceof Error ? err.message : "启动失败" }, { status: 500 });
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);
+export const POST = withWorkflowErrors(handlePOST);

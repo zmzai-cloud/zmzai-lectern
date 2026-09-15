@@ -1,3 +1,4 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
@@ -21,7 +22,7 @@ const MAX_NODES = 4000;
 type Hit = { path: string; type: "dir" | "file"; depth: number };
 
 /** GET /api/fs/search?q=main — 递归文件名搜索（⌘P 文件快开，限深限噪）。 */
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const q = (request.nextUrl.searchParams.get("q") ?? "").toLowerCase();
   const root = resolveWithinWorkspace("", workspaceRootForSession(request.nextUrl.searchParams.get("sessionId")));
   const out: Hit[] = [];
@@ -71,3 +72,5 @@ export async function GET(request: NextRequest) {
     results: out.slice(0, MAX_RESULTS).map(({ path: p, type }) => ({ path: p, type })),
   });
 }
+
+export const GET = withWorkflowErrors(handleGET);

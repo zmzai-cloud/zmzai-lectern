@@ -1,6 +1,7 @@
 // 与 @zmzai/agent-framework 事件契约对应的本地类型（UI 层不直接依赖引擎包）
 
 export type ModelRef = { providerId: string; modelId: string };
+export type ReadState = { lastReadMessageSeq: number; latestMessageSeq: number; unreadCount: number; historyRevision: number };
 
 export type AgentInfo = {
   name: string;
@@ -25,6 +26,7 @@ export type SessionInfo = {
   lastOutcome?: "completed" | "aborted" | "error";
   /** 消息数（N6，GET /api/sessions 附带，批量 GROUP BY 填充）。 */
   messageCount?: number;
+  readState?: ReadState;
   /** 置顶（N6）：列表置顶展示。 */
   pinned?: boolean;
   /** 归档（N6）：归档后从默认列表隐藏。 */
@@ -78,7 +80,7 @@ export type PermissionRequest = {
   tool?: { messageId: string; callId: string };
 };
 
-export type LecternEvent = { type: string; data: unknown };
+export type LecternEvent = { type: string; data: unknown; seq?: number; sessionId?: string };
 
 /** 任务终态小结（framework session.summary 事件，N5）：
  *  run 收尾时 summary 模型生成的一句总结 + 本轮结构化统计。 */
@@ -102,7 +104,13 @@ export type Artifact = {
 
 /** 会话已持久化的转录（来自引擎 getMessages）。info 取 id/role/error，parts 即完整片段。 */
 export type SelectedSkill = { id: string; name: string; digest: string };
-export type TranscriptMessage = { info: { id: string; role: string; error?: { name: string; message: string }; skill?: SelectedSkill; references?: string[] }; parts: Part[] };
+export type TranscriptMessage = { info: { id: string; role: string; error?: { name: string; message: string }; skill?: SelectedSkill; references?: string[] }; parts: Part[]; messageSeq?: number };
+
+export type MessageSearchHit = {
+  projectId: string; sessionId: string; messageId: string; partId: string;
+  kind: "text" | "tool" | "attachment_name";
+  messageSeq: number; snippet: string; match: { start: number; length: number };
+};
 
 export type AuthStatus = {
   loggedIn: boolean;

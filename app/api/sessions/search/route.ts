@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   const runtime = cloudRuntime();
   const active = getActiveProject();
   const needle = q.toLowerCase();
-  const results: { sessionId: string; title: string; snippet: string; updatedAt?: string }[] = [];
+  const results: { projectId: string; projectName: string; sessionId: string; title: string; snippet: string; updatedAt?: string }[] = [];
 
   for (const project of listProjects()) {
     if (results.length >= 30) break;
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       const line = text.slice(lineStart, lineEnd < 0 ? undefined : lineEnd).trim();
       const start = Math.max(0, idx - 60);
       const snippet = (start > 0 ? "…" : "") + text.slice(start, idx + q.length + 60).replace(/\s+/g, " ") + (idx + q.length + 60 < text.length ? "…" : "");
-      results.push({ sessionId: s.id, title: s.title || "未命名会话", snippet: line.length > 0 && line.length < 200 ? line : snippet, updatedAt: s.time?.updated });
+      results.push({ projectId: project.id, projectName: project.name, sessionId: s.id, title: s.title || "未命名会话", snippet: line.length > 0 && line.length < 200 ? line : snippet, updatedAt: s.time?.updated });
       break; // 每会话取第一个命中
     }
     if (results.length >= 30) break; // 上限防长尾

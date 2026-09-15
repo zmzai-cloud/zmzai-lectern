@@ -1,3 +1,4 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { NextResponse } from "next/server";
 
 import { capsFor } from "@/lib/model-caps";
@@ -44,7 +45,7 @@ async function contextWindowFor(sessionId: string, runtime: ReturnType<typeof se
 /** 会话上下文用量（composer 的上下文条数据源）。
  *  语义：以最近一次 step-finish 为准——LLM 每次请求的 input 即全量上下文，
  *  input + cacheRead + output ≈ 当前窗口占用。事件日志在内存（重启归零，UI 显示 0%）。 */
-export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const runtime = sessionRuntime(id);
   const contextWindow = await contextWindowFor(id, runtime);
@@ -77,3 +78,5 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     return NextResponse.json({ used: 0, contextWindow, input: 0, output: 0, cacheRead: 0, steps: 0 } satisfies UsageInfo);
   }
 }
+
+export const GET = withWorkflowErrors(handleGET);

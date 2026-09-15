@@ -1,3 +1,4 @@
+import { withWorkflowErrors, WorkflowError } from "@/lib/workflow-error";
 import { rm, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Ruleset } from "@zmzai/agent-framework";
@@ -16,7 +17,7 @@ const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 /** PATCH /api/sessions/[id] — 重命名 / 置顶 / 归档 / 权限模式（store.updateSession 落库）。
  *  title / pinned / archived / permissionMode 四者可独立或组合更新。 */
-export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handlePATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
   const body = (await request.json().catch(() => null)) as
@@ -36,10 +37,10 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   const found = await sessionStoreFor(id);
-  if (!found) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+  if (!found) throw new WorkflowError("NOT_FOUND", "会话不存在", 404);
   if (patch.permission) {
     const session = await found.store.getSession(id);
-    if (!session) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+    if (!session) throw new WorkflowError("NOT_FOUND", "会话不存在", 404);
     patch.permission = applyModeRules(session.permission, body!.permissionMode as PermissionMode);
   }
   if (Object.keys(patch).length === 0) return NextResponse.json({ error: "没有可更新的字段" }, { status: 400 });
@@ -50,12 +51,12 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 /** DELETE /api/sessions/[id] — 删除会话及其消息/片段。
  *  存储现在是 SQLite（zmzai.db）：必须走 store.deleteSession 级联删三表；
  *  旧 JSONL 文件仍一并清扫（不删的话，空库重新导入时会把已删会话复活）。 */
-export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handleDELETE(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
 
   const found = await sessionStoreFor(id);
-  if (!found) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+  if (!found) throw new WorkflowError("NOT_FOUND", "会话不存在", 404);
   await found.store.deleteSession?.(id);
 
   // 隔离副本会话：worktree 目录与分支一并清理（未合并的提交随分支丢弃）
@@ -85,3 +86,6 @@ export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id:
   }
   return NextResponse.json({ ok: true });
 }
+
+export const PATCH = withWorkflowErrors(handlePATCH);
+export const DELETE = withWorkflowErrors(handleDELETE);

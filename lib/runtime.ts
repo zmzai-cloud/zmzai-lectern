@@ -1,4 +1,4 @@
-import { mkdirSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { resolve } from "node:path";
 import {
   createAgentRuntime,
@@ -31,8 +31,9 @@ import { authHeaders, ollamaBase, getFailoverEndpoints } from "./settings";
 import { capsFor } from "./model-caps";
 import { relayBase } from "./relay";
 import { loadMcpConfig } from "./mcp-config";
-import { dataDirFor, getActiveProject, listProjects, projectStore } from "./projects";
-import { worktreeForSession } from "./worktree";
+import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects";
+import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner";
+import { WorkflowError } from "./workflow-error";
 import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants";
 import { listSkills, loadSkill } from "./skills";
 
@@ -172,8 +173,11 @@ export function activeWorkspaceRoot(): string {
  * 不能因为页面上的当前项目切换而落回主工作区。
  */
 export function workspaceRootForSession(sessionId?: string | null): string {
-  const worktree = sessionId ? worktreeForSession(sessionId) : null;
-  return worktree?.path ?? activeWorkspaceRoot();
+  // Empty/malformed IDs are not the same as an absent session.
+  if (sessionId != null) return resolveSessionOwner(sessionId).effectiveWorkspaceRoot;
+  const root = activeWorkspaceRoot();
+  assertWorkspaceAvailable(root);
+  return root;
 }
 
 /** 切换项目后同步 live binding 与 runtime 缓存指向。 */
@@ -193,19 +197,26 @@ function contextWindowFor(): number {
  *  （store 仍按项目分库，隔离会话的转录消息与普通会话同库）。 */
 export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string }): AgentFramework {
   const root = opts?.workspaceRoot ? resolve(opts.workspaceRoot) : projectPath;
+  const matches = listProjects().filter((p) => resolve(p.path) === resolve(projectPath));
+  if (matches.length > 1) throw new WorkflowError("CONFLICT", "同一路径登记了多个项目，无法确定会话数据库", 409);
+  const project = matches[0];
+  if (!project) throw new WorkflowError("NOT_FOUND", "项目不存在或不可访问", 404);
+  // Preserve first-launch creation of the built-in empty workspace only. Once a
+  // database exists, a missing root is a recovery error, never a new workspace.
+  if (!opts?.workspaceRoot && project.id === DEFAULT_PROJECT.id && !existsSync(root)
+    && !existsSync(resolve(dataDirFor(project), "zmzai.db"))) mkdirSync(root, { recursive: true });
+  assertWorkspaceAvailable(root);
   const cacheKey = opts?.workspaceRoot ? `${projectPath}::${root}` : projectPath;
   const cache = (globalThis.__lecternRuntimes ??= new Map());
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
-  // store 分库按项目（隔离 runtime 与主 runtime 同库同转录）；找不到项目条目时回落 active
-  const project = listProjects().find((p) => resolve(p.path) === resolve(projectPath)) ?? getActiveProject();
+  // Store remains owned by the registered project, including isolated runtimes.
   const dir = dataDirFor(project);
   mkdirSync(dir, { recursive: true });
-  mkdirSync(root, { recursive: true });
 
-  // 隔离会话的工作区固定为 worktree；普通会话保持 active 项目跟随（live 语义不变）
-  const wsRoot = () => (opts?.workspaceRoot ? root : activeWorkspaceRoot());
+  // Background tools must never follow the UI's active project.
+  const wsRoot = () => { assertWorkspaceAvailable(root); return root; };
 
   // git 工具直接跑本机真实仓库（沙箱快照是隔离副本，git 操作会丢上下文）；
   // 终端工具用宿主后端（node-pty 可用即真 PTY，否则降级管道模式）。
@@ -287,7 +298,7 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     // repo_map 能力（R1）随 fs 工作区默认开启（隔离会话落 worktree）
     workspace: { kind: "fs", root },
     // 本机子进程沙箱：bash 工具在本机执行（程序白名单，产物回传）
-    // 快照从当前工作区采集、新产物回写（隔离会话固定 worktree，普通会话随项目切换）
+    // 快照与产物回写固定到本 runtime 的工作区，不跟随 UI 项目切换。
     sandbox: { kind: "subprocess", workspaceRoot: wsRoot },
     localTools,
     capabilities: { repoMap: { workspaceRoot: wsRoot }, subagents: 1 },
@@ -405,32 +416,23 @@ export function cloudRuntime(): AgentFramework {
   return runtimeFor(project.path);
 }
 
-/** 会话感知的 runtime 解析：隔离副本会话 → worktree runtime（fs/git/沙箱全落副本），
- *  其余会话 → active 项目 runtime（行为与历史版本一致）。
- *  所有会话级 route（prompt/events/messages/permission/usage/compact/abort）统一走这里，
- *  保证事件总线与工作区都命中创建会话时的那个 runtime 实例。 */
+/** Resolve the persisted session owner before constructing any runtime. */
 export function sessionRuntime(sessionId: string): AgentFramework {
-  const wt = worktreeForSession(sessionId);
-  if (wt) return runtimeFor(wt.projectPath, { workspaceRoot: wt.path });
-  return cloudRuntime();
+  const owner = resolveSessionOwner(sessionId);
+  return runtimeFor(owner.project.path, owner.effectiveWorkspaceRoot === owner.project.path
+    ? undefined : { workspaceRoot: owner.effectiveWorkspaceRoot });
 }
 
 /** 会话所在项目的 store（跨项目重命名/删除用，P1）：先查 active 项目库，
  *  再遍历其余项目库（轻量 projectStore）。找不到返回 null。 */
 export async function sessionStoreFor(id: string): Promise<{ store: SqliteSessionStore; projectId: string } | null> {
-  const active = getActiveProject();
-  const activeStore = cloudRuntime().store as SqliteSessionStore;
-  if (await activeStore.getSession(id)) return { store: activeStore, projectId: active.id };
-  for (const project of listProjects()) {
-    if (project.id === active.id) continue;
-    try {
-      const store = projectStore(project.id);
-      if (await store.getSession(id)) return { store, projectId: project.id };
-    } catch {
-      /* 单项目库异常跳过 */
-    }
+  try {
+    const { project } = resolveSessionOwner(id);
+    return { store: projectStore(project.id), projectId: project.id };
+  } catch (error) {
+    if (error instanceof WorkflowError && error.code === "NOT_FOUND") return null;
+    throw error;
   }
-  return null;
 }
 
 /** 优雅收尾（会话稳定性 P2，Electron before-quit 经 HTTP 触发）：

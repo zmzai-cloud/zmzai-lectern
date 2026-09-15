@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -66,7 +67,7 @@ function assertAttemptOwned(attemptId: string, sessionId: string) {
  * body: { sessionId, action: "begin"|"verify"|"finish"|"accept"|"discard"|"cancel"|"commands"|"check" }
  * 单一入口，owner 全部从 sessionId 推导；attemptId 必须与该 session 的 delivery join。
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   let body: ActionBody;
   try {
     body = (await request.json()) as ActionBody;
@@ -184,8 +185,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "未知 action" }, { status: 400 });
     }
   } catch (err) {
+    rethrowWorkflowError(err);
     const message = err instanceof Error ? err.message : "操作失败";
     const status = /不存在|不属于|不可接受|非法|越出|必须是|缺少/.test(message) ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = withWorkflowErrors(handlePOST);

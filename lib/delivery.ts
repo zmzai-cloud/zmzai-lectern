@@ -21,7 +21,8 @@ import { join, resolve } from "node:path";
 import { dataDir } from "./runtime-constants";
 import { resolveCwdWithin } from "./delivery-path";
 import { worktreeForSession } from "./worktree";
-import { getActiveProject, listProjects } from "./projects";
+import { resolveSessionOwner } from "./session-owner";
+import { WorkflowError } from "./workflow-error";
 import {
   casUpdateRef,
   currentBranch,
@@ -123,32 +124,27 @@ function newId(prefix: string): string {
 /**
  * 从 sessionId 推导 DeliveryOwner。这是所有 API 的唯一入口：
  * - 隔离会话 -> worktree 的 projectPath + path + branch。
- * - 普通会话 -> active project（单用户本地应用，active 即当前项目）。
- * 返回 null 表示无法推导（会话不存在等）。
+ * - 普通会话 -> 持久化会话所在项目，不依赖 UI 的活动项目。
+ * 无法确认归属时抛出结构化错误，绝不创建猜测归属的交付。
  */
 export function resolveOwner(sessionId: string): DeliveryOwner | null {
-  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) return null;
-  const wt = worktreeForSession(sessionId);
-  if (wt) {
-    return {
-      projectId: projectIdForPath(wt.projectPath),
-      sessionId,
-      effectiveWorkspaceRoot: wt.path,
-    };
-  }
-  const active = getActiveProject();
-  return {
-    projectId: active.id,
+  const owner = resolveSessionOwner(sessionId);
+  const resolved = {
+    projectId: owner.project.id,
     sessionId,
-    effectiveWorkspaceRoot: active.path,
+    effectiveWorkspaceRoot: owner.effectiveWorkspaceRoot,
   };
-}
-
-/** 从项目路径反查 projectId（找不到回落 active id）。 */
-function projectIdForPath(path: string): string {
-  const resolved = resolve(path);
-  const found = listProjects().find((p) => resolve(p.path) === resolved);
-  return found?.id ?? getActiveProject().id;
+  // Existing records created by older versions may have captured the then-active
+  // project. Never execute or expose those records under the corrected owner.
+  const delivery = getDeliveryForSession(sessionId);
+  const attempt = delivery ? getActiveAttempt(delivery.id) : null;
+  for (const record of [delivery, attempt]) {
+    if (record && (record.projectId !== resolved.projectId || record.sessionId !== sessionId
+      || resolve(record.effectiveWorkspaceRoot) !== resolve(resolved.effectiveWorkspaceRoot))) {
+      throw new WorkflowError("CONFLICT", "已有交付记录的工作区与会话归属不一致，请核对记录后重新建立交付", 409);
+    }
+  }
+  return resolved;
 }
 
 // re-export 路径守卫（独立模块，供 API 层与单测直接使用）

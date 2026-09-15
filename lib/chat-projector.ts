@@ -12,7 +12,9 @@ export type TodoItem = { content: string; status: "pending" | "in_progress" | "c
 export type SubagentStep = { tool: string; title?: string; state?: string };
 export type SubagentActivity = { steps: SubagentStep[]; finished?: { state: string; durationMs?: number; toolCalls?: number } };
 export type UiPart = { part: Part; diff?: string; subagent?: SubagentActivity };
-export type UiMessage = { id: string; role: string; parts: UiPart[]; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
+export type UiMessage = { id: string; role: string; messageSeq?: number; parts: UiPart[]; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
+// Reserve room for a 50-message request and a 50-message search context.
+export const MESSAGE_CACHE_LIMIT = 400;
 
 export type ChatViewData = {
   messages: UiMessage[];
@@ -50,7 +52,7 @@ export const EMPTY_CHAT_VIEW: ChatViewData = { messages: [], todos: null, reads:
 export function transcriptToEvents(messages: TranscriptMessage[]): LecternEvent[] {
   const out: LecternEvent[] = [];
   for (const m of messages) {
-    out.push({ type: "message.updated", data: { message: { id: m.info.id, role: m.info.role, ...(m.info.skill ? { skill: m.info.skill } : {}), ...(m.info.references?.length ? { references: m.info.references } : {}), ...(m.info.error ? { error: m.info.error } : {}) } } });
+    out.push({ type: "message.updated", data: { message: { id: m.info.id, role: m.info.role, messageSeq: m.messageSeq, ...(m.info.skill ? { skill: m.info.skill } : {}), ...(m.info.references?.length ? { references: m.info.references } : {}), ...(m.info.error ? { error: m.info.error } : {}) } } });
     for (const p of m.parts) {
       out.push({ type: "message.part.updated", data: { part: p } });
     }
@@ -58,7 +60,7 @@ export function transcriptToEvents(messages: TranscriptMessage[]): LecternEvent[
   return out;
 }
 
-type InternalMessage = { id: string; role: string; parts: Map<string, UiPart>; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
+type InternalMessage = { id: string; role: string; messageSeq?: number; parts: Map<string, UiPart>; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
 
 export class ChatProjector {
   private messages = new Map<string, InternalMessage>();
@@ -79,6 +81,27 @@ export class ChatProjector {
   /** 最近一次中途进度快照（session.checkpoint，N6）。 */
   private checkpoint: SessionCheckpoint | null = null;
 
+  hasMessage(id: string): boolean { return this.messages.has(id); }
+
+  clearMessages(): void { this.messages.clear(); this.order = []; this.pendingEdits.clear(); this.subagentActivity.clear(); }
+
+  /** Evict only transcript data; task/todo/artifact snapshots are independent. */
+  trimMessages(keep: "head" | "tail", limit = MESSAGE_CACHE_LIMIT): boolean {
+    if (this.order.length <= limit) return false;
+    const removed = keep === "head" ? this.order.splice(limit) : this.order.splice(0, this.order.length - limit);
+    for (const id of removed) {
+      const message = this.messages.get(id);
+      for (const item of message?.parts.values() ?? []) if (item.part.type === "subtask") this.subagentActivity.delete(item.part.childSessionId);
+      this.messages.delete(id);
+    }
+    this.pendingEdits.clear();
+    return true;
+  }
+
+  bounds(): { first?: number; last?: number } {
+    return { first: this.messages.get(this.order[0] ?? "")?.messageSeq, last: this.messages.get(this.order.at(-1) ?? "")?.messageSeq };
+  }
+
   /** 切会话时重置（复用实例避免反复分配）。 */
   reset(): void {
     this.messages.clear();
@@ -97,13 +120,14 @@ export class ChatProjector {
   /** 折叠单个事件（分支逻辑与原 project() 逐条对应，行为保持不变）。 */
   ingest(ev: LecternEvent): void {
     if (ev.type === "message.updated") {
-      const m = (ev.data as { message: { id: string; role: string; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } } }).message;
+      const m = (ev.data as { message: { id: string; role: string; messageSeq?: number; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } } }).message;
       const existing = this.messages.get(m.id);
       if (existing) {
         // 失败收尾会补发带 error 的 message.updated——保留最新错误供 UI 展示
         if (m.error) existing.error = m.error;
+        if (m.messageSeq !== undefined) existing.messageSeq = m.messageSeq;
       } else {
-        this.messages.set(m.id, { id: m.id, role: m.role, parts: new Map(), ...(m.skill ? { skill: m.skill } : {}), ...(m.references?.length ? { references: m.references } : {}), ...(m.error ? { error: m.error } : {}) });
+        this.messages.set(m.id, { id: m.id, role: m.role, messageSeq: m.messageSeq, parts: new Map(), ...(m.skill ? { skill: m.skill } : {}), ...(m.references?.length ? { references: m.references } : {}), ...(m.error ? { error: m.error } : {}) });
         this.order.push(m.id);
       }
     } else if (ev.type === "message.part.updated") {
@@ -247,7 +271,7 @@ export class ChatProjector {
     return {
       messages: this.order.map((id) => {
         const m = this.messages.get(id)!;
-        return { id: m.id, role: m.role, parts: [...m.parts.values()], ...(m.skill ? { skill: m.skill } : {}), ...(m.references?.length ? { references: m.references } : {}), ...(m.error ? { error: m.error } : {}) };
+        return { id: m.id, role: m.role, messageSeq: m.messageSeq, parts: [...m.parts.values()], ...(m.skill ? { skill: m.skill } : {}), ...(m.references?.length ? { references: m.references } : {}), ...(m.error ? { error: m.error } : {}) };
       }),
       todos: this.todos,
       reads: this.reads.slice(0, 8),

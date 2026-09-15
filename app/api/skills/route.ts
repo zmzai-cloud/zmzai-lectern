@@ -1,3 +1,4 @@
+import { withWorkflowErrors } from "@/lib/workflow-error";
 import { NextResponse } from "next/server";
 import { workspaceRootForSession } from "@/lib/runtime";
 import { listSkills, loadSkill } from "@/lib/skills";
@@ -6,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** Lists metadata only; bodies require an explicit selected id. */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const query = new URL(request.url).searchParams;
   const root = workspaceRootForSession(query.get("sessionId"));
   const id = query.get("id");
@@ -17,3 +18,5 @@ export async function GET(request: Request) {
   }
   return NextResponse.json({ skills: listSkills(root) });
 }
+
+export const GET = withWorkflowErrors(handleGET);

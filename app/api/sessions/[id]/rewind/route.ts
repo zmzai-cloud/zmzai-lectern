@@ -1,3 +1,4 @@
+import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isSessionActive, notifyEventLogListeners } from "@zmzai/agent-framework";
@@ -17,7 +18,7 @@ export const runtime = "nodejs";
  *  裁掉其后状态；重放场景下「旧事件 → rewound → 新 run 事件」最终态正确）
  *  → runner.prompt 走标准管道（消息落库/事件流/UI 增量渲染全部复用）。
  *  图片附件原样透传；agent/model 取原消息所用值，保证重跑环境一致。 */
-export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as { messageId?: string; text?: string } | null;
   const messageId = body?.messageId;
@@ -39,6 +40,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   }
   if (session.queuedPrompts.length > 0) {
     return NextResponse.json({ error: "会话有排队中的消息，请先停止再回溯" }, { status: 409 });
+  }
+  const workflowRuns = await runtime.store.workflow?.workflowRuns(id) ?? [];
+  if (workflowRuns.some(run => run.status === "queued" || run.status === "running" || run.status === "recovery_required")) {
+    return NextResponse.json({ error: "会话存在未结算或待确认的任务，请先处理后再回溯" }, { status: 409 });
   }
 
   const entries = await runtime.store.getMessages(id);
@@ -68,13 +73,12 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     if (!runtime.store.truncateFrom) {
       return NextResponse.json({ error: "当前存储后端不支持回溯" }, { status: 500 });
     }
-    await runtime.store.truncateFrom(id, messageId);
-
-    const rewound = await runtime.eventLog.append({
-      type: "session.rewound",
-      sessionId: id,
-      data: { fromMessageId: messageId },
-    });
+    let rewound;
+    if (runtime.store.rewind) rewound = await runtime.store.rewind(id,messageId);
+    else {
+      await runtime.store.truncateFrom(id,messageId);
+      rewound = await runtime.eventLog.append({ type: "session.rewound",sessionId: id,data: { fromMessageId: messageId } });
+    }
     notifyEventLogListeners(rewound);
 
     const cookie = request.cookies.get(sessionCookieName)?.value;
@@ -93,7 +97,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     );
     return NextResponse.json({ ok: true });
   } catch (e) {
+    rethrowWorkflowError(e);
     const message = e instanceof Error ? e.message : "回溯失败";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withWorkflowErrors(handlePOST);

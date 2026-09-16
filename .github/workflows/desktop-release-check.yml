@@ -61,6 +61,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./e2e/windows-cross-drive-smoke.ps1
+      - name: Dump packaging evidence
+        # 无论成败都落盘证据：asar 实际清单 + standalone/resources 目录布局。
+        # release-validation 报"not found in this archive"时，靠它定位差异。
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          if (Test-Path dist\win-unpacked\resources) {
+            "=== resources/ ===" | Out-File -Encoding utf8 test-results\packaging-evidence.txt
+            Get-ChildItem dist\win-unpacked\resources | ForEach-Object { $_.Name } | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+            if (Test-Path dist\win-unpacked\resources\app.asar) {
+              "=== app.asar entries (first 400) ===" | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+              node -e "const a=require('@electron/asar');const l=a.listPackage('dist/win-unpacked/resources/app.asar');console.log('total',l.length);console.log(l.slice(0,400).join('\n'))" | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+              "=== app.asar .next entries (first 200) ===" | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+              node -e "const a=require('@electron/asar');console.log(a.listPackage('dist/win-unpacked/resources/app.asar').filter(p=>p.includes('.next')).slice(0,200).join('\n'))" | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+            }
+          }
+          if (Test-Path .next\standalone) {
+            "=== .next/standalone top level ===" | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+            Get-ChildItem .next\standalone | ForEach-Object { $_.Name } | Out-File -Append -Encoding utf8 test-results\packaging-evidence.txt
+          }
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@v4

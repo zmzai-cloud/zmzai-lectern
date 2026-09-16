@@ -63,10 +63,28 @@ function describe(entryPath) {
   }
 }
 
-/** 扫描 `.next/**\/*.nft.json`，列出解析后落在仓库之外的追踪条目。
- *  正常情况下 nft 的条目全部用相对路径指向仓库内；出现越界条目说明有依赖在
- *  读取构建机的绝对路径（%APPDATA% / $HOME 之类），必须查清来路。 */
-function outOfRootTraces(root, maxPerFile = 6) {
+/** 扫描 `.next/**\/*.nft.json`，按三类「异常追踪条目」归集：
+ *  - outside：解析后落在仓库之外（构建机绝对路径直陈）；
+ *  - drive：路径里出现盘符伪段（如 `..\..\..\..\..\C:\Users\…`——Next 的 trace
+ *    插件把 nft 给的绝对路径当相对路径 join 进仓库根，`C:` 沦为普通目录名。
+ *    这类条目 resolve 后仍在「仓库内」，单靠前缀比对必然漏报）；
+ *  - source：解析后落在仓库的源码目录（app/lib/components/…）——源码不该进
+ *    standalone，物化后会变成根部残留目录。
+ *  三类都只报告不判定成败：真正会进产物的问题由根部白名单 + 特征扫描兜住。 */
+const SOURCE_TOP_DIRS = new Set([
+  "app",
+  "lib",
+  "components",
+  "electron",
+  "scripts",
+  "docs",
+  "legacy",
+  "e2e",
+  "tests",
+  "demos",
+]);
+
+function suspiciousTraces(root, maxPerFile = 6) {
   const nftRoot = join(root, ".next");
   if (!existsSync(nftRoot)) return [];
   const files = [];
@@ -87,11 +105,29 @@ function outOfRootTraces(root, maxPerFile = 6) {
       continue;
     }
     const dir = file.slice(0, file.lastIndexOf(sep));
-    const strays = (data.files ?? []).filter((rel) => {
+    const kinds = { outside: [], drive: [], source: [] };
+    for (const rel of data.files ?? []) {
+      // 盘符伪段按原始条目判定（分隔符两种都拆），不依赖 resolve 语义
+      const rawSegments = String(rel).split(/[\\/]/);
+      if (rawSegments.some((s) => /^[A-Za-z]:$/.test(s))) {
+        kinds.drive.push(rel);
+        continue;
+      }
       const abs = resolve(dir, rel);
-      return !abs.startsWith(root + sep);
-    });
-    if (strays.length) out.push({ file: file.slice(root.length + 1), total: strays.length, sample: strays.slice(0, maxPerFile) });
+      if (!abs.startsWith(root + sep)) {
+        kinds.outside.push(rel);
+        continue;
+      }
+      const relToRoot = abs.slice(root.length + 1);
+      if (SOURCE_TOP_DIRS.has(relToRoot.split(sep)[0])) kinds.source.push(rel);
+    }
+    const present = Object.entries(kinds).filter(([, v]) => v.length > 0);
+    if (present.length) {
+      out.push({
+        file: file.slice(root.length + 1),
+        kinds: Object.fromEntries(present.map(([k, v]) => [k, { total: v.length, sample: v.slice(0, maxPerFile) }])),
+      });
+    }
   }
   return out;
 }
@@ -163,19 +199,29 @@ if (hits.length > 0) {
   );
 }
 
-// 越界追踪单独报告：它本身不决定成败（跨盘复制会 ENOENT 失败，同盘复制会被上面的
-// 白名单拦下），但它说明了"某个依赖把构建机的绝对路径喂给了 nft"，必须看见。
-const outOfRoot = outOfRootTraces(root);
-if (outOfRoot.length > 0) {
-  report.push("\n⚠️ .nft.json 中存在指向仓库之外的追踪条目（构建机绝对路径）：\n");
-  for (const o of outOfRoot) {
-    report.push(`   · ${o.file} —— ${o.total} 条，例如：`);
-    for (const s of o.sample) report.push(`       ${s}`);
+// 异常追踪单独报告：它们本身不决定成败（越界/盘符条目在 Windows 上因路径非法
+// 复制必失败，源码残留由 strip-standalone-source.mjs 在守卫之前清理），但它们
+// 说明了「构建机路径或源码进了追踪图」，必须看得见。
+const KIND_LABELS = {
+  outside: "解析后落在仓库之外（构建机绝对路径）",
+  drive: "含盘符伪段（Next 把绝对路径当相对路径 join，如 ..\\..\\C:\\Users\\…）",
+  source: "指向仓库源码目录（源码不该进 standalone）",
+};
+const suspicious = suspiciousTraces(root);
+if (suspicious.length > 0) {
+  report.push("\n⚠️ .nft.json 中存在异常追踪条目：\n");
+  for (const s of suspicious) {
+    report.push(`   · ${s.file}`);
+    for (const [kind, info] of Object.entries(s.kinds)) {
+      report.push(`       [${kind}] ${info.total} 条 —— ${KIND_LABELS[kind] ?? kind}，例如：`);
+      for (const sample of info.sample) report.push(`         ${sample}`);
+    }
   }
   report.push(
-    "\n影响：Next 会把这些条目拼到 .next/standalone 下再 mkdir，跨盘必 ENOENT（噪音）；\n" +
-      "      若与仓库同盘则会真的复制进产物——那正是历史上 data/ 泄漏的同一机制。\n" +
-      "      排查方向：模块顶层是否读了 process.env.APPDATA / os.homedir() 之类的构建机路径。",
+    "\n影响：outside/drive 类条目若与仓库同盘会被真的复制进产物（历史 data/ 泄漏同机制）；\n" +
+      "      跨盘 / 含盘符伪段时 mkdir 必失败（Next 会打 Failed to copy traced files 警告，构建不中断）。\n" +
+      "      source 类条目物化为 standalone 根部源码目录，由 strip-standalone-source.mjs 镜像校验后清理。\n" +
+      "      排查方向：模块顶层是否读了 process.env.APPDATA / os.homedir()；Next trace 插件在 Windows 上的路径处理。",
   );
 }
 
@@ -196,4 +242,4 @@ if (report.length > 0) {
 if (rootStrays.length > 0 || hits.length > 0) process.exit(1);
 
 console.log("✅ standalone 产物干净（无 .secret / 会话库 / 本机数据）");
-if (outOfRoot.length === 0) console.log("✅ 追踪图未越出仓库（无构建机绝对路径）");
+if (suspicious.length === 0) console.log("✅ 追踪图无异常条目（无越界 / 盘符伪段 / 源码目录指向）");

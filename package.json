@@ -18,7 +18,7 @@
     "start": "next start -p 3100",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:release": "node --test scripts/release-validation.test.mjs scripts/signing-preflight.test.mjs scripts/upload-oss.source-test.mjs electron/updater.source-test.cjs electron/web-server.source-test.cjs",
+    "test:release": "node --test scripts/release-validation.test.mjs scripts/signing-preflight.test.mjs scripts/upload-oss.source-test.mjs scripts/strip-standalone-source.source-test.mjs scripts/check-standalone-clean.source-test.mjs electron/updater.source-test.cjs electron/web-server.source-test.cjs",
     "test:packaged": "node e2e/packaged-smoke.mjs",
     "test:task-groups-ui": "node e2e/task-groups-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",

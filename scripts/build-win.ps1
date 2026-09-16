@@ -52,6 +52,10 @@ if ($LASTEXITCODE -ne 0) { throw "next build 失败" }
 if (-not (Test-Path .next\standalone\server.js)) {
   throw ".next\standalone\server.js 缺失，standalone 布局异常，中止打包"
 }
+# Windows 原生构建的已知 Next 缺陷：源码 app/** 会被追进 standalone（trace 插件
+# 的 bundled 过滤在 Windows 上失效）。逐文件镜像校验后清理；校验不过即中止。
+node scripts/strip-standalone-source.mjs
+if ($LASTEXITCODE -ne 0) { throw "standalone source residue failed mirror verification" }
 node scripts/check-standalone-clean.mjs
 if ($LASTEXITCODE -ne 0) { throw "Private data detected in standalone output" }
 

@@ -54,7 +54,9 @@ async function launch() {
     const appPath = await desktop.evaluate(({ app }) => app.getAppPath());
     assert.notEqual(parse(appPath).root.toLowerCase(), parse(userData).root.toLowerCase(), "Actual app and profile must be on different drives");
   }
-  await window.waitForFunction(() => document.body.innerText.trim().length > 20);
+  // Windows 渲染器首帧 body 可能尚未就绪（waitForLoadState 在初始空文档上就返回）；
+  // predicate 必须 null 安全：null 时返回 false 持续重试，渲染失败则走正常超时。
+  await window.waitForFunction(() => (document.body?.innerText ?? "").trim().length > 20);
   await window.locator(".account-block > button").waitFor();
   assert.equal(await window.evaluate(() => window.lecternNative.platform), process.platform);
   return window;

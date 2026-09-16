@@ -17,6 +17,19 @@ function readEnv(name: string): string | undefined {
   return process.env[name];
 }
 
+/** 间接读取 home 目录（与 readEnv 同一防折叠模式）。
+ *
+ * 【为什么不能直接调 homedir()】nft 把 os 模块按真实函数注入静态求值环境：
+ * `join(homedir(), "AppData", "Roaming")` 这类表达式会在**构建机**上被真实执行，
+ * 折出构建机的 home 绝对路径并当资产发射——Windows CI（仓库在 D:、home 在 C:）上
+ * 跨盘 path.relative() 返回绝对路径、骗过 nft 的 base 外守卫，导致
+ * %APPDATA%\\Roaming 整目录被递归 glob 进 .nft.json（CI 实测每路由 70+ 条
+ * C:\\Users\\runneradmin\\AppData\\… 条目）。经函数间接后 nft 无法折叠，
+ * 运行时行为不变。 */
+function readHome(): string {
+  return homedir();
+}
+
 /**
  * 数据目录解析（会话稳定性 P0-①）：
  *
@@ -35,14 +48,14 @@ function platformDataRoot(): string {
   switch (process.platform) {
     case "win32":
       // Electron userData on Windows = %APPDATA%/<productName>
-      return join(readEnv("APPDATA") ?? join(homedir(), "AppData", "Roaming"), "Lectern");
+      return join(readEnv("APPDATA") ?? join(readHome(), "AppData", "Roaming"), "Lectern");
     case "darwin":
       // Electron userData on macOS = ~/Library/Application Support/<productName>
-      return join(homedir(), "Library", "Application Support", "Lectern");
+      return join(readHome(), "Library", "Application Support", "Lectern");
     default:
       // Linux: XDG 规范（Electron userData = $XDG_CONFIG_HOME/<productName>，
       // 数据放 XDG_DATA 侧更合适，lectern 小写命名）
-      return join(readEnv("XDG_DATA_HOME") ?? join(homedir(), ".local", "share"), "lectern");
+      return join(readEnv("XDG_DATA_HOME") ?? join(readHome(), ".local", "share"), "lectern");
   }
 }
 

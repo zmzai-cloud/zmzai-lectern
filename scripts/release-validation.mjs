@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { extractFile, listPackage, statFile } from "@electron/asar";
@@ -13,6 +13,13 @@ export async function digest(file, algorithm = "sha512", encoding = "base64") {
 
 function requireThat(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+// @electron/asar 在 win32 上按 path.sep（反斜杠）切分查找键；
+// electron-builder 在 Windows 打出的 asar 头也是反斜杠路径。
+// 所有带分隔符的 asar 查询必须先经此转换，否则 win32 必抛 "was not found"。
+export function asarPath(p) {
+  return p.split("/").join(sep);
 }
 
 export function artifactNames(version, platform) {
@@ -100,7 +107,7 @@ export function verifyPackage(archive, version, platform, arch) {
   const pkg = JSON.parse(extractFile(archive, "package.json"));
   requireThat(pkg.version === version, "Packaged version mismatch");
   const root = ".next/standalone/";
-  const server = extractFile(archive, `${root}server.js`).toString();
+  const server = extractFile(archive, asarPath(`${root}server.js`)).toString();
   requireThat(!/process\.chdir\(__dirname\)/.test(server), "Standalone server still changes cwd into asar");
   requireThat(files.some((p) => p.startsWith(`/${root}.next/static/`)), "Missing Next static resources");
   const target = `${platform}-${arch}`;
@@ -113,7 +120,7 @@ export function verifyPackage(archive, version, platform, arch) {
   for (const native of nativePaths) {
     const relative = `${root}node_modules/${native}`;
     requireThat(files.includes(`/${relative}`), `Missing native module: ${native}`);
-    requireThat(statFile(archive, relative).unpacked === true, `Native module packed inside asar: ${native}`);
+    requireThat(statFile(archive, asarPath(relative)).unpacked === true, `Native module packed inside asar: ${native}`);
     requireThat(existsSync(`${archive}.unpacked/${relative}`), `Missing unpacked native module: ${native}`);
   }
   if (platform === "darwin") {

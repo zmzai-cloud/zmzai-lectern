@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { stringify } from "yaml";
-import { artifactNames, digest, privatePackagePaths, stableManifest, verifyRelease } from "./release-validation.mjs";
+import { artifactNames, asarPath, digest, privatePackagePaths, stableManifest, verifyRelease } from "./release-validation.mjs";
 
 async function fixture(t, platform = "win32") {
   const dir = mkdtempSync(join(tmpdir(), "lectern-release-test-"));
@@ -71,4 +71,12 @@ test("stable update manifests point at immutable versioned artifacts", async (t)
   const stable = stableManifest(stringify(manifest), "0.5.1");
   assert.equal(stable.path, "v0.5.1/" + names[0]);
   assert.equal(stable.files[0].url, "v0.5.1/" + names[0]);
+});
+
+test("asar query paths use the platform separator", () => {
+  // 回归：win32 上 @electron/asar 按 path.sep 切分查找键，
+  // 正斜杠路径曾导致 ".next/standalone/server.js was not found"（CI 原生 Windows 校验挂）。
+  assert.equal(asarPath(".next/standalone/server.js"), join(".next", "standalone", "server.js"));
+  assert.equal(asarPath("package.json"), "package.json");
+  assert.ok(!asarPath(".next/standalone/server.js").includes("/") || sep === "/");
 });

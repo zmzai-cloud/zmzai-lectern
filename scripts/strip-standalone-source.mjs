@@ -45,12 +45,12 @@ function sha256(p) {
   return createHash("sha256").update(readFileSync(p)).digest("hex");
 }
 
-/** 收集目录下所有文件（相对 strayRoot 的路径）。空目录返回空数组。 */
+/** 收集目录下所有文件（相对 strayRoot 的路径，分隔符统一为 /）。空目录返回空数组。 */
 function walkFiles(dir, base, out) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
     if (e.isDirectory()) walkFiles(p, base, out);
-    else if (e.isFile()) out.push(p.slice(base.length + 1));
+    else if (e.isFile()) out.push(p.slice(base.length + 1).split(sep).join("/"));
   }
 }
 

@@ -41,7 +41,7 @@
     "@tanstack/react-virtual": "^3.14.11",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "@zmzai/agent-framework": "file:vendor/zmzai-agent-framework-0.5.1.tgz",
+    "@zmzai/agent-framework": "file:vendor/zmzai-agent-framework-0.5.2.tgz",
     "@zmzai/theme": "^0.9.10",
     "electron-updater": "6.6.2",
     "lucide-react": "^1.39.0",

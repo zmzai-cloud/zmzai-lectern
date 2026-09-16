@@ -1,7 +1,7 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.5.0.tgz` is the published npm package
-`@zmzai/agent-framework@0.5.0`, vendored here so desktop builds and clean
+`zmzai-agent-framework-0.5.1.tgz` is the published npm package
+`@zmzai/agent-framework@0.5.1`, vendored here so desktop builds and clean
 installs resolve the framework without depending on registry access. The tarball
 is byte-identical to the registry artifact; the framework repository is the
 source of truth and its `main` matches this version.
@@ -36,6 +36,12 @@ Lectern pins the tarball path and its integrity in `pnpm-lock.yaml`.
   release, complete interrupted-event recovery.
 - Windows: terminal prefers `pwsh.exe` / `powershell.exe` with `cmd.exe` as a
   fallback, and PTY, pipe and MCP stdio children are terminated as process trees.
+- Windows terminal exit fix (0.5.1): the PowerShell shells no longer start with
+  `-NoExit`. That flag kept PowerShell alive after the command finished, so the
+  process never exited and every Windows terminal session stayed `running`
+  forever — `terminal_read` never reported an exit code and the packaged smoke
+  ("Terminal did not exit") failed on Windows. The shell spec is now a pure
+  `shellSpecFor` function covered by a unit test.
 
 ## Windows requirements
 

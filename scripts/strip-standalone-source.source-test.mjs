@@ -99,7 +99,7 @@ test("残留内容与仓库源码不一致：不清理、非零退出", () => {
   }
 });
 
-test("盘符伪目录（C:）按疑似泄漏处理", () => {
+test("盘符伪目录（C:）按疑似泄漏处理（仅 unix：Windows 上含冒号的目录名无法创建，本就物化不了）", { skip: process.platform === "win32" }, () => {
   const { root, standalone } = makeFixture();
   try {
     mkdirSync(join(standalone, "C:", "Users"), { recursive: true });

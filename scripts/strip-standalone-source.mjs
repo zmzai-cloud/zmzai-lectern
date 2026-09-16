@@ -16,7 +16,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 const dirIdx = process.argv.indexOf("--dir");
 const standalone =

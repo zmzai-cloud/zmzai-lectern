@@ -60,7 +60,9 @@ test("三类异常条目都被报告，但不影响退出码（物化检查干�
     writeNft(root, [
       join(root, "node_modules", "next", "package.json"),
       join(root, "app", "api", "agents", "route.ts"),
-      "/etc/hosts", // 仓库外（绝对目标，转 dots 形态）
+      // 仓库外：同盘的上级目录目标（跨平台安全——绝对 unix 路径在 win32 会被
+      // relative() 变成盘符相对路径，落进 [drive] 类而不是 [outside]）
+      join(root, "..", "outside-marker.txt"),
     ]);
     // 盘符伪段形态：dots + C:/Users/…（手写，模拟 Next 的 join 缺陷产物）
     const nftFile = join(root, ".next", "server", "app", "api", "agents", "route.js.nft.json");

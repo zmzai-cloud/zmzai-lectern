@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { artifactNames, digest } from "./release-validation.mjs";
@@ -34,8 +34,15 @@ async function upload(t, { fail = "", dry = false, both = false } = {}) {
     if (specifier === 'ali-oss') return { url: ${JSON.stringify(pathToFileURL(mock).href)}, shortCircuit: true };
     return next(specifier, context);
   }`);
+  // Node's CLI resolves loader/entry arguments with a URL-first heuristic: a bare Windows
+  // path (C:\... / D:\...) is read as a "c:"/"d:" URL scheme, an absolute file:// entry gets
+  // mangled while a custom loader is active, and `relative()` cannot cross drives. So the
+  // loader goes in as a file:// URL and the entry is a bootstrap inside cwd that imports the
+  // real uploader — no absolute path is ever handed to the CLI.
+  const bootstrap = join(dir, "bootstrap.mjs");
+  writeFileSync(bootstrap, `await import(${JSON.stringify(new URL("./upload-oss.mjs", import.meta.url).href)});\n`);
   // Whitelist environment fields so local release credentials never enter this process.
-  const result = spawnSync(process.execPath, ["--experimental-loader", loader, fileURLToPath(new URL("./upload-oss.mjs", import.meta.url)), ...(dry ? ["--dry"] : [])], {
+  const result = spawnSync(process.execPath, ["--experimental-loader", pathToFileURL(loader).href, "./bootstrap.mjs", ...(dry ? ["--dry"] : [])], {
     cwd: dir, encoding: "utf8", timeout: 15000,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
       OSS_REGION: "oss-cn-beijing", OSS_BUCKET: "fixture-bucket", OSS_ACCESS_KEY_ID: "test-key", OSS_ACCESS_KEY_SECRET: "test-secret",

@@ -4,6 +4,19 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+/** 读取环境变量（含"是否设置"的语义）。
+ *
+ * 【为什么不用 `process.env.FOO` 直接读】Next 的文件追踪器（@vercel/nft）会在
+ * **构建期**把 `process.env.FOO` 折叠成构建机上的真实值，再拿它去解析
+ * `path.join(process.env.X, "…")` 这类表达式，于是构建机的绝对路径被写进
+ * `.next/server/**\/*.nft.json`。Windows 上表现为往 `.next/standalone` 里拼
+ * `C:\Users\<构建用户>\AppData\…` 这类越界条目（跨盘复制必 ENOENT，同盘复制则
+ * 会把仓库外的文件真的打进安装包——正是历史上 data/ 泄漏的同一机制）。
+ * 经变量名参数间接读取后，追踪器无法在分析期折叠出具体路径，运行时行为不变。 */
+function readEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
 /**
  * 数据目录解析（会话稳定性 P0-①）：
  *
@@ -22,28 +35,28 @@ function platformDataRoot(): string {
   switch (process.platform) {
     case "win32":
       // Electron userData on Windows = %APPDATA%/<productName>
-      return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Lectern");
+      return join(readEnv("APPDATA") ?? join(homedir(), "AppData", "Roaming"), "Lectern");
     case "darwin":
       // Electron userData on macOS = ~/Library/Application Support/<productName>
       return join(homedir(), "Library", "Application Support", "Lectern");
     default:
       // Linux: XDG 规范（Electron userData = $XDG_CONFIG_HOME/<productName>，
       // 数据放 XDG_DATA 侧更合适，lectern 小写命名）
-      return join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "lectern");
+      return join(readEnv("XDG_DATA_HOME") ?? join(homedir(), ".local", "share"), "lectern");
   }
 }
 
 /** 显式覆盖值（迁移脚本、测试、Electron 注入用）；未设置时返回 undefined。 */
 function dataDirOverride(): string | undefined {
-  const raw = process.env.LECTERN_DATA_DIR ?? process.env.HARNESS_DATA_DIR;
+  const raw = readEnv("LECTERN_DATA_DIR") ?? readEnv("HARNESS_DATA_DIR");
   return raw ? resolve(raw) : undefined;
 }
 
 export const dataDir = dataDirOverride() ?? resolve(platformDataRoot(), "data");
 
 export const defaultWorkspaceRoot = resolve(
-  process.env.LECTERN_WORKSPACE ??
-    process.env.HARNESS_WORKSPACE ??
-    process.env.ZMZAI_WORKSPACE ??
+  readEnv("LECTERN_WORKSPACE") ??
+    readEnv("HARNESS_WORKSPACE") ??
+    readEnv("ZMZAI_WORKSPACE") ??
     resolve(process.cwd(), ".workspace"),
 );

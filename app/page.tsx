@@ -21,6 +21,7 @@ import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData }
 import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
 import { deriveTaskPresentation, previewableOf, type SessionStatus } from "@/lib/task-presentation";
+import { readTaskWorkbenchLayout, writeTaskWorkbenchLayout, type WorkbenchTab } from "@/lib/task-layout";
 import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation } from "@/lib/types";
 import { PERMISSION_DOMAIN_OF } from "@/lib/types";
 
@@ -245,9 +246,11 @@ export default function App() {
   const paletteActionsRef = useRef<{ newSession: () => void }>({ newSession: () => undefined });
   // 左侧栏收起/展开（Qoder 同款，持久化）
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOverlayOpen, setSidebarOverlayOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(256);
   const [workbenchWidth, setWorkbenchWidth] = useState(384);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("review");
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [viewportHeight, setViewportHeight] = useState(900);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(260);
@@ -255,9 +258,7 @@ export default function App() {
   const [layoutReady, setLayoutReady] = useState(false);
   useEffect(() => {
     setSidebarWidth(readWidth("lectern:sidebar-width", 256, 200, 420));
-    setWorkbenchWidth(readWidth("lectern:workbench-width", 384, 320, 720));
     setBottomPanelHeight(readWidth("lectern:bottom-panel-height", 260, 160, 640));
-    setWorkbenchOpen(localStorage.getItem("lectern:workbench-open") === "1");
     setBottomPanelOpen(localStorage.getItem("lectern:bottom-panel-open") === "1");
     setViewportWidth(window.innerWidth);
     setViewportHeight(window.innerHeight);
@@ -289,11 +290,28 @@ export default function App() {
   useEffect(() => {
     if (!layoutReady) return;
     localStorage.setItem("lectern:sidebar-width", String(sidebarWidth));
-    localStorage.setItem("lectern:workbench-width", String(workbenchWidth));
-    localStorage.setItem("lectern:workbench-open", workbenchOpen ? "1" : "0");
     localStorage.setItem("lectern:bottom-panel-height", String(bottomPanelHeight));
     localStorage.setItem("lectern:bottom-panel-open", bottomPanelOpen ? "1" : "0");
-  }, [layoutReady, sidebarWidth, workbenchWidth, workbenchOpen, bottomPanelHeight, bottomPanelOpen]);
+  }, [layoutReady, sidebarWidth, bottomPanelHeight, bottomPanelOpen]);
+
+  const layoutOwnerRef = useRef("__draft__");
+  useEffect(() => {
+    if (!layoutReady) return;
+    const owner = activeId ?? "__draft__";
+    const layout = readTaskWorkbenchLayout(owner);
+    layoutOwnerRef.current = owner;
+    setWorkbenchOpen(layout.open);
+    setWorkbenchWidth(layout.width);
+    setWorkbenchTab(layout.tab);
+  }, [activeId, layoutReady]);
+  useEffect(() => {
+    if (!layoutReady) return;
+    writeTaskWorkbenchLayout(layoutOwnerRef.current, {
+      open: workbenchOpen,
+      width: workbenchWidth,
+      tab: workbenchTab,
+    });
+  }, [layoutReady, workbenchOpen, workbenchTab, workbenchWidth]);
   useEffect(() => {
     const syncViewport = () => {
       setViewportWidth(window.innerWidth);
@@ -354,12 +372,31 @@ export default function App() {
       return !v;
     });
   }, []);
+  const compactPanels = viewportWidth < 1180;
   const toggleSidebar = useCallback(() => {
+    if (compactPanels) {
+      setSidebarOverlayOpen((value) => !value);
+      setWorkbenchOpen(false);
+      return;
+    }
     setSidebarOpen((value) => {
       writePref("sidebar", value ? "0" : "1");
       return !value;
     });
-  }, []);
+  }, [compactPanels]);
+  const toggleWorkbench = useCallback(() => {
+    setWorkbenchOpen((value) => !value);
+    if (compactPanels) setSidebarOverlayOpen(false);
+  }, [compactPanels]);
+  const openWorkbench = useCallback((tab: WorkbenchTab) => {
+    setWorkbenchTab(tab);
+    setWorkbenchOpen(true);
+    if (compactPanels) setSidebarOverlayOpen(false);
+  }, [compactPanels]);
+  const openFileInWorkbench = useCallback((path: string, line?: number) => {
+    setOpenFileReq({ path, ts: Date.now(), line });
+    openWorkbench("files");
+  }, [openWorkbench]);
   const toggleBottomPanel = useCallback(() => {
     setBottomPanelOpen((value) => !value);
   }, []);
@@ -518,7 +555,8 @@ export default function App() {
       }
       setActiveId(id);
     }
-  }, [activeId, sessions]);
+    if (viewportWidth < 1180) setSidebarOverlayOpen(false);
+  }, [activeId, sessions, viewportWidth]);
 
   useEffect(() => {
     const projector = projectorRef.current ?? (projectorRef.current = new ChatProjector());
@@ -902,12 +940,13 @@ export default function App() {
   // 项目名由侧栏切换器上抛（§4.2：上下文条要能辨识当前项目）。用回调身份稳定引用，
   // 避免每次渲染都触发 ProjectSwitcher 的 effect。
   const [projectName, setProjectName] = useState<string | null>(null);
+  const sidebarVisible = compactPanels ? sidebarOverlayOpen : sidebarOpen;
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
       <header className="lectern-titlebar flex h-12 shrink-0 items-stretch">
-        <div className="lectern-window-controls flex shrink-0 items-center gap-2 px-3" style={{ width: sidebarOpen ? sidebarWidth + 6 : inElectron && isMac ? 144 : 56 }}>
-          <button type="button" onClick={toggleSidebar} title={sidebarOpen ? "收起会话栏" : "展开会话栏"} aria-label={sidebarOpen ? "收起会话栏" : "展开会话栏"} aria-expanded={sidebarOpen} className="titlebar-button">
+        <div className="lectern-window-controls flex shrink-0 items-center gap-2 px-3" style={{ width: !compactPanels && sidebarOpen ? sidebarWidth + 6 : inElectron && isMac ? 144 : 56 }}>
+          <button type="button" onClick={toggleSidebar} title={sidebarVisible ? "收起会话栏" : "展开会话栏"} aria-label={sidebarVisible ? "收起会话栏" : "展开会话栏"} aria-expanded={sidebarVisible} className="titlebar-button">
             <PanelLeft size={16} strokeWidth={1.55} aria-hidden />
           </button>
         </div>
@@ -942,11 +981,11 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setWorkbenchOpen((value) => !value)}
+              onClick={toggleWorkbench}
               title={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
               aria-label={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
               className={cn(
-                "hidden h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong min-[1180px]:inline-flex",
+                "inline-flex h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
                 workbenchOpen ? "bg-surface-2 text-ink" : "text-ink-3",
               )}
             >
@@ -972,7 +1011,7 @@ export default function App() {
 
       {/* 四区工作台：会话栏 | 对话 | 右侧工作区，底部独立承载终端与后续调试工具。 */}
       <div className="flex min-h-0 flex-1">
-        {sidebarOpen && (
+        {!compactPanels && sidebarOpen && (
         <SessionList
           top={<ProjectSwitcher onActiveChange={setProjectName} />}
           bottom={<AccountBlock />}
@@ -992,7 +1031,7 @@ export default function App() {
           onAbortSession={(id) => void client.abort(id).then(() => client.listSessions().then(ingestSessionList))}
         />
         )}
-        {sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}
+        {!compactPanels && sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* 横向分栏的每一级都必须允许缩到自身内容宽度以下。否则右栏拖宽时，
               这一行会保留对话内容的 min-content 宽度，再被外层 overflow-hidden
@@ -1017,20 +1056,20 @@ export default function App() {
               onContinue={(ctx) => void send(ctx)}
               stalled={stalled}
               onAbort={abort}
-              onOpenFile={(path, line) => setOpenFileReq({ path, ts: Date.now(), line })}
+              onOpenFile={openFileInWorkbench}
               echo={echo}
               wtNotice={wtNotice}
               onRewind={handleRewind}
               permissionMode={permissionMode}
               onCyclePermissionMode={activeId ? cyclePermissionMode : undefined}
             />
-            {workbenchOpen && (
-              <div className="hidden min-[1180px]:contents">
+            {!compactPanels && workbenchOpen && (
+              <>
                 <VerticalSplitter label="调整右侧工作区宽度" value={workbenchWidth} min={320} max={workbenchMax} direction={-1} onReset={() => setWorkbenchWidth(384)} onChange={setWorkbenchWidth} />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} onTabChange={setWorkbenchTab} />
                 </div>
-              </div>
+              </>
             )}
           </div>
           {bottomPanelOpen && <>
@@ -1042,12 +1081,44 @@ export default function App() {
         </div>
       </div>
 
+      {compactPanels && sidebarOverlayOpen && (
+        <div className="panel-scrim" role="presentation" onMouseDown={() => setSidebarOverlayOpen(false)}>
+          <div className="panel-overlay panel-overlay-left" onMouseDown={(event) => event.stopPropagation()}>
+            <SessionList
+              top={<ProjectSwitcher onActiveChange={setProjectName} />}
+              bottom={<AccountBlock />}
+              sessions={sessions}
+              activeId={activeId}
+              activity={backgroundActivity}
+              onNewSession={() => void newSession()}
+              canCreate={!!auth?.loggedIn}
+              isolateNew={isolateNew}
+              width={Math.min(320, viewportWidth)}
+              onToggleIsolateNew={toggleIsolateNew}
+              onSelectSession={selectSession}
+              onRenameSession={(id, title) => void renameSession(id, title)}
+              onDeleteSession={(id) => void deleteSession(id)}
+              onTogglePinned={(id) => void togglePinned(id)}
+              onToggleArchived={(id) => void toggleArchived(id)}
+              onAbortSession={(id) => void client.abort(id).then(() => client.listSessions().then(ingestSessionList))}
+            />
+          </div>
+        </div>
+      )}
+      {compactPanels && workbenchOpen && (
+        <div className="panel-scrim" role="presentation" onMouseDown={() => setWorkbenchOpen(false)}>
+          <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} onTabChange={setWorkbenchTab} />
+          </div>
+        </div>
+      )}
+
       {/* P2-12 命令面板（⌘K 命令 / ⌘P 文件快开 / ⌘⇧F 全文搜索） */}
       {palette && (
         <CommandPalette
           mode={palette}
           commands={commands}
-          onOpenFile={(path, line) => setOpenFileReq({ path, ts: Date.now(), line })}
+          onOpenFile={openFileInWorkbench}
           onSelectSession={selectSession}
           onClose={() => setPalette(null)}
           sessionId={activeId}

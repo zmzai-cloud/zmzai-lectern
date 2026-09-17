@@ -5,6 +5,7 @@ import { Markdown, cn } from "@zmzai/theme";
 
 import { client } from "@/lib/client";
 import { isPreviewable } from "@/lib/task-presentation";
+import type { WorkbenchTab } from "@/lib/task-layout";
 import type { SessionSummary } from "@/lib/types";
 import CanvasPane from "./CanvasPane";
 import FileEditor from "./FileEditor";
@@ -12,7 +13,7 @@ import FileTree from "./FileTree";
 import ReviewPane from "./ReviewPane";
 
 /** 顶部 tab：终端不再单独占位，常驻底部面板。 */
-type Tab = "review" | "files" | "preview";
+type Tab = WorkbenchTab;
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   {
@@ -73,6 +74,8 @@ export default function WorkbenchPanel({
   editedPaths,
   sessionId,
   summary,
+  initialTab = "review",
+  onTabChange,
 }: {
   openRequest?: { path: string; ts: number; line?: number } | null;
   /** 本轮 Agent 触碰过的文件（file.edited 投影，最新在前）——文件 Tab 顶部 chips + Git 高亮。 */
@@ -80,8 +83,10 @@ export default function WorkbenchPanel({
   sessionId?: string | null;
   /** 任务终态小结（session.summary，N5）：透传给 ReviewPane 渲染任务内变更摘要（§V3-1）。 */
   summary?: SessionSummary | null;
+  initialTab?: WorkbenchTab;
+  onTabChange?: (tab: WorkbenchTab) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("review");
+  const [tab, setTabState] = useState<Tab>(initialTab);
   const [fileTabs, setFileTabs] = useState<FileTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [fileView, setFileView] = useState<"source" | "preview">("source");
@@ -98,6 +103,11 @@ export default function WorkbenchPanel({
   // explicitly selected a workbench tab in this task」）。
   const userChoseTab = useRef(false);
   const loadSeq = useRef(0);
+
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    onTabChange?.(next);
+  }, [onTabChange]);
 
   // 同步 canvasPath 到 ref，供 openFile 回调读取最新值而不引入依赖
   useEffect(() => {
@@ -406,7 +416,7 @@ export default function WorkbenchPanel({
   };
 
   return (
-    <div className="wb-region wb-region-edge-l h-full flex-col">
+    <div className="workbench-shell wb-region wb-region-edge-l h-full flex-col">
       {/* 一级 tab 行：underline 风格（accent 内嵌下划线），不再是反色胶囊。
           spec §3.2「不得把常规工具按钮做成胶囊」+ §5 WorkbenchPanel 责任。
           终端不在此行占位，常驻底部 Debug Area。 */}

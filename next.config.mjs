@@ -38,7 +38,15 @@ const nextConfig = {
   // serverExternal：不能被 bundle——framework 内部定位 wasm 资源依赖真实
   // 模块路径；web-tree-sitter 的 emscripten 胶水内部也调 node:module 的
   // createRequire，被 bundle 后 shim 成空壳必炸（R1 repo_map）。
-  serverExternalPackages: ["@zmzai/agent-framework", "web-tree-sitter"],
+  //
+  // 文档解析库（阶段 C）同属这一类：
+  //  - pdfjs-dist 靠真实路径定位 worker / 标准字体 / wasm，被打包即失效；
+  //  - exceljs / mammoth 内含动态 require 与大量非 JS 资产，bundle 后体积与
+  //    解析行为都不可预期；
+  //  - fflate 是纯 JS，但保持 external 可以让它和上面几个一样走正常的
+  //    node_modules 解析，少一条「只有它被内联」的差异。
+  // standalone 产物由 Next 的文件追踪自动带上这些依赖，无需额外配置。
+  serverExternalPackages: ["@zmzai/agent-framework", "web-tree-sitter", "pdfjs-dist", "mammoth", "exceljs", "fflate"],
   // NodeNext 后缀映射：theme 源码直发（.ts/.tsx 以 .js 说明符互引）
   webpack: (config, { isServer }) => {
     config.resolve.extensionAlias = {
@@ -57,7 +65,8 @@ const nextConfig = {
       config.externals.push(/^node:/);
       // framework 与 web-tree-sitter（emscripten 胶水内调 createRequire）一旦被
       // bundle，wasm 资源定位必炸（R1 repo_map），一并 external。
-      config.externals.push("@zmzai/agent-framework", "web-tree-sitter");
+      // 文档解析库同理（见上面 serverExternalPackages 的说明）。
+      config.externals.push("@zmzai/agent-framework", "web-tree-sitter", "pdfjs-dist", "mammoth", "exceljs", "fflate");
     }
     return config;
   },

@@ -65,14 +65,16 @@ afterEach(() => {
 });
 
 describe("POST /api/sessions/[id]/attachments", () => {
-  it("上传 PDF：MIME 由内容嗅探决定，落盘即 ready", async () => {
+  it("上传 PDF：MIME 由内容嗅探决定，返回 processing 交给后台解析", async () => {
     const response = await uploadAttachment(fileRequest(SESSION, pdfBytes(), "contract.pdf", "application/pdf"), params(SESSION));
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; attachment: Record<string, unknown> };
     expect(body.ok).toBe(true);
     expect(body.attachment.filename).toBe("contract.pdf");
     expect(body.attachment.mediaType).toBe("application/pdf");
-    expect(body.attachment.status).toBe("ready");
+    // 阶段 C：PDF 解析要几秒到几十秒，路由**不等它**——状态由后台收敛
+    // （收敛行为与三种失败分类见 extract-queue.test.ts）
+    expect(body.attachment.status).toBe("processing");
     expect(body.attachment.kind).toBe("document");
     expect(body.attachment.attachmentId).toMatch(/^att_/);
     expect(body.attachment.sha256).toMatch(/^[0-9a-f]{64}$/);

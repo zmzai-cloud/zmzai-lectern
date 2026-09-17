@@ -19,7 +19,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync, type ReadStream } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, type ReadStream } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -75,6 +75,11 @@ function nowIso(): string {
 /** content-addressed blob 相对路径：前两位做目录分片，避免单目录堆几十万个文件。 */
 function blobRelativePath(sha256: string): string {
   return join("blobs", sha256.slice(0, 2), sha256);
+}
+
+/** 解析结果的旁挂文件相对路径。与 blob 同样按摘要寻址——同内容只需解析一次。 */
+function extractedRelativePath(sha256: string): string {
+  return join("extracted", sha256.slice(0, 2), `${sha256}.json`);
 }
 
 type Row = {
@@ -168,6 +173,48 @@ export class SqliteAttachmentStore {
     return join(this.blobsDir, blobRelativePath(sha256));
   }
 
+  /**
+   * 解析结果缓存：**旁挂文件**而不是数据库列。
+   *
+   * 【为什么存文件不存库】一份 300 页 PDF 的提取正文可以有几 MB，塞进 SQLite 会让
+   * 每次 `SELECT *`（列表、历史渲染）都可能拖着这份正文走。而它天然是「按文件内容
+   * 寻址」的派生物——同一份文件不管从哪个会话上传都只需要解析一次，所以它跟 blob
+   * 一样按 sha256 命名，并与 blob 同生命周期回收。
+   *
+   * 【为什么不在读取时现场解析】`read_attachment` 是模型随时会调的工具，一次 PDF
+   * 解析要几秒到几十秒。工具调用卡几十秒不只是慢——它会让模型以为工具坏了。
+   */
+  extractedDocumentPath(sha256: string): string {
+    return join(this.blobsDir, extractedRelativePath(sha256));
+  }
+
+  saveExtractedDocument(sha256: string, payload: unknown): void {
+    const path = this.extractedDocumentPath(sha256);
+    mkdirSync(join(this.blobsDir, "extracted", sha256.slice(0, 2)), { recursive: true });
+    writeFileSync(path, JSON.stringify(payload));
+  }
+
+  /** 读缓存载荷。**只负责读**，版本判定交给调用方（它才知道当前适配器版本）。 */
+  loadExtractedDocument(sha256: string): unknown | null {
+    const path = this.extractedDocumentPath(sha256);
+    if (!existsSync(path)) return null;
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as unknown;
+    } catch {
+      // 缓存损坏不是用户能处理的问题：当作没有缓存，下次解析重写
+      return null;
+    }
+  }
+
+  dropExtractedDocument(sha256: string): void {
+    try {
+      const path = this.extractedDocumentPath(sha256);
+      if (existsSync(path)) rmSync(path);
+    } catch {
+      /* 缓存删不掉不影响正确性（版本不符时会重算） */
+    }
+  }
+
   put(input: AttachmentUpload): AttachmentRecord {
     const sha256 = createHash("sha256").update(input.bytes).digest("hex");
     const mediaType = input.sniffedMediaType ?? input.mediaType;
@@ -249,6 +296,17 @@ export class SqliteAttachmentStore {
     return rows.map(toRecord);
   }
 
+  /**
+   * 还停在 `processing` 的记录（恢复扫描用）。
+   *
+   * 跨会话查全库：进程重启后我们不知道是哪个会话留下了半截状态，而「谁留下的」
+   * 对恢复没有意义——重建解析只需要字节与文件名。
+   */
+  listProcessing(): AttachmentRecord[] {
+    const rows = this.db.prepare("SELECT * FROM attachments WHERE status = 'processing' ORDER BY updated_at ASC").all() as Row[];
+    return rows.map(toRecord);
+  }
+
   open(id: string): { record: AttachmentRecord; stream: ReadStream } | null {
     const record = this.get(id);
     if (!record) return null;
@@ -322,7 +380,7 @@ export class SqliteAttachmentStore {
     return all.length;
   }
 
-  /** 只在没有任何元数据行引用该 digest 时删除 blob（去重存储的引用计数）。 */
+  /** 只在没有任何元数据行引用该 digest 时删除 blob 与其解析缓存（去重存储的引用计数）。 */
   private releaseBlobIfUnreferenced(sha256: string): void {
     const row = this.db.prepare("SELECT COUNT(*) AS n FROM attachments WHERE sha256 = ?").get(sha256) as { n: number } | undefined;
     if ((row?.n ?? 0) > 0) return;
@@ -332,6 +390,7 @@ export class SqliteAttachmentStore {
     } catch {
       /* blob 已被清理或权限不足：元数据行已经删掉，不让 GC 失败阻塞调用方 */
     }
+    this.dropExtractedDocument(sha256);
   }
 
   /** 存储统计（体检/测试用）。 */

@@ -8,8 +8,9 @@
 
 import { dataDirFor, getActiveProject } from "@/lib/projects";
 import { resolveSessionOwner } from "@/lib/session-owner";
-import type { AttachmentProvider, InputAttachmentRef } from "@zmzai/agent-framework";
+import { validateExtractedDocument, type AttachmentProvider, type InputAttachmentRef } from "@zmzai/agent-framework";
 
+import { EXTRACTOR_VERSION, type ExtractionCachePayload } from "./extract";
 import { DRAFT_SESSION_ID } from "./limits";
 import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
 
@@ -72,6 +73,29 @@ export function attachmentProviderFor(dataDir: string): AttachmentProvider {
         .list(scope.sessionId)
         .filter((record) => record.status === "ready")
         .map((record) => ({ id: record.id, name: record.filename, kind: record.kind }));
+    },
+    /**
+     * 结构化正文（规格 §10.1）。从**解析缓存**读，不现场解析：
+     * `read_attachment` 是模型随时会调的工具，而一次 PDF 解析要几秒到几十秒——
+     * 卡住的工具调用会让模型以为工具坏了。
+     *
+     * 三种情况返回 null（都表示「这次拿不到结构化正文」）：
+     * 附件不属于该会话、还没解析完/解析失败（无缓存）、缓存是别的适配器版本写的
+     * （适配器改了行为，老结果不再可信）。
+     */
+    async extract(id: string, scope: { sessionId: string }) {
+      const record = store.getScoped(id, scope.sessionId);
+      if (!record || record.status !== "ready") return null;
+      const payload = store.loadExtractedDocument(record.sha256);
+      if (!payload || typeof payload !== "object") return null;
+      const cached = payload as Partial<ExtractionCachePayload>;
+      if (cached.extractorVersion !== EXTRACTOR_VERSION) return null;
+      // 缓存同样是不可信输入（磁盘上的 JSON 可以被改），走同一条校验
+      try {
+        return validateExtractedDocument(cached.document);
+      } catch {
+        return null;
+      }
     },
   };
 }

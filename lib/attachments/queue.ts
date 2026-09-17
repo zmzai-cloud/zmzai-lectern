@@ -40,6 +40,32 @@ export type IngestSource = "picker" | "paste" | "drop";
 
 const SOURCE_LABEL: Record<IngestSource, string> = { picker: "文件选择", paste: "粘贴", drop: "拖放" };
 
+/**
+ * 解析状态的轮询节奏（规格 §7.4：每张卡独立显示解析状态）。
+ *
+ * 起步 600ms、逐步退避到 4s、总预算 2 分钟。三个数字各有理由：间隔太短会让一份
+ * 大 PDF 在解析期间产生几十次无意义请求；太长则「文本附件秒过」这件事看起来像卡住；
+ * 2 分钟是给 300 页 PDF 的天花板——超过它更可能是服务端出了问题，继续等不如报错让
+ * 用户重试（重试会重新入队，不会重复上传）。
+ */
+const POLL_FIRST_MS = 600;
+const POLL_MAX_MS = 4_000;
+const POLL_BUDGET_MS = 120_000;
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function newLocalId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `att-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -70,6 +96,42 @@ export function useComposerAttachments(sessionId: string | null) {
     setItems((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...next } : item)));
   }, []);
 
+  /**
+   * 跟到解析定下来为止。
+   *
+   * 【为什么要考虑「附件被删了」】用户在解析期间点了移除：`discard` 会 abort 这个
+   * signal，`sleep` 抛 AbortError，这里直接把控制权还给 `startUpload` 的 catch——
+   * 它认得 AbortError 并不写错误卡片。用同一个 signal 而不是新开一个，是为了让
+   * 「移除」只有一个终止点。
+   */
+  const followExtraction = useCallback(
+    async (localId: string, attachmentId: string, signal: AbortSignal) => {
+      const started = Date.now();
+      let delay = POLL_FIRST_MS;
+      while (Date.now() - started < POLL_BUDGET_MS) {
+        await sleep(delay, signal);
+        const { attachment } = await client.getAttachment(scopeRef.current, attachmentId);
+        if (attachment.status === "ready") {
+          patch(localId, { status: "ready", progress: 1, error: undefined });
+          return;
+        }
+        if (attachment.status === "error") {
+          patch(localId, {
+            status: "error",
+            error: attachment.error ?? { code: "server", message: "解析失败", retryable: false },
+          });
+          return;
+        }
+        delay = Math.min(Math.round(delay * 1.5), POLL_MAX_MS);
+      }
+      patch(localId, {
+        status: "error",
+        error: { code: "server", message: "解析超时，请重试（不会重复上传）", retryable: true },
+      });
+    },
+    [patch],
+  );
+
   const startUpload = useCallback(
     async (item: ComposerAttachment) => {
       const controller = new AbortController();
@@ -88,16 +150,21 @@ export function useComposerAttachments(sessionId: string | null) {
           status: receipt.status === "ready" ? "ready" : receipt.status === "error" ? "error" : "processing",
           ...(receipt.error ? { error: receipt.error } : {}),
         });
+        // 解析在服务端后台跑（PDF/Office 要几秒到几十秒），上传响应只说明「已收下」。
+        // 不跟到底的话，卡片会永远停在「解析中」而发送按钮永远不可用。
+        if (receipt.status === "processing") {
+          await followExtraction(item.localId, receipt.attachmentId, controller.signal);
+        }
       } catch (error) {
+        // 用户主动移除导致的 abort 不该留下错误卡片（轮询被中止走同一条分支）
+        if ((error as { name?: string })?.name === "AbortError" || (error as UploadFailure)?.code === "aborted") return;
         const failure = error as UploadFailure;
-        // 用户主动移除导致的 abort 不该留下错误卡片
-        if (failure?.code === "aborted") return;
         patch(item.localId, { status: "error", error: toAttachmentError(failure) });
       } finally {
         controllers.current.delete(item.localId);
       }
     },
-    [patch],
+    [patch, followExtraction],
   );
 
   /**

@@ -84,7 +84,52 @@ export function sniffMediaType(bytes: Uint8Array): SniffedMediaType {
 
 export type SniffVerdict =
   | { ok: true; mediaType: string; warning?: string }
-  | { ok: false; code: "unsupported_format" | "corrupted"; message: string };
+  | { ok: false; code: "unsupported_format" | "corrupted" | "password_protected"; message: string };
+
+/** 声明为 OOXML 但内容是 OLE2 的三种格式（它们的加密版本长这样）。 */
+const OOXML_FORMAT_IDS = new Set(["docx", "xlsx", "pptx"]);
+
+/** OLE2 里只在这两种流出现时才说明是**加密**的 OOXML（ECMA-376 加密容器）。 */
+const ENCRYPTION_STREAMS = ["EncryptedPackage", "EncryptionInfo"];
+
+/** OLE2 目录里的名字是 UTF-16LE，所以逐字节比对时每个 ASCII 字符后面跟一个 0x00。 */
+function containsUtf16(bytes: Uint8Array, needle: string): boolean {
+  const probe = bytes.subarray(0, Math.min(bytes.length, 512 * 1024));
+  outer: for (let at = 0; at <= probe.length - needle.length * 2; at += 1) {
+    for (let index = 0; index < needle.length; index += 1) {
+      if (probe[at + index * 2] !== needle.charCodeAt(index) || probe[at + index * 2 + 1] !== 0) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 声称是 OOXML、内容却是 OLE2 复合文档的两种情况。
+ *
+ * 【为什么要区分】它们对用户的下一步完全不同：加密的要「给我未加密的副本」，旧版二进制的
+ * 要「在 Office 里另存为新版格式」。而两者在字节层面都是 OLE2——**唯一的区别是流名**
+ * （加密容器里是 `EncryptedPackage` / `EncryptionInfo`）。§10.3 要求把两类失败分开，
+ * 那么就必须真的去看一眼，而不是含糊地说「格式不符」。
+ *
+ * 【为什么不做完整 OLE2 解析】我们只需要回答「有没有这两个流名」这一件事，扫一段
+ * 有界的字节范围就够了。为一个布尔判断引入完整的复合文档解析器，是把攻击面当零成本。
+ */
+function classifyOleContainer(declaredFormat: AttachmentFormat, bytes: Uint8Array): SniffVerdict {
+  const encrypted = ENCRYPTION_STREAMS.some((stream) => containsUtf16(bytes, stream));
+  if (encrypted) {
+    return {
+      ok: false,
+      code: "password_protected",
+      message: `「${declaredFormat.label}」是受密码保护的文档，无法读取内容。请提供未加密的副本后重新添加。`,
+    };
+  }
+  return {
+    ok: false,
+    code: "unsupported_format",
+    message: `文件内容是旧版二进制 Office 格式（OLE2 容器），并不是 ${declaredFormat.label}。请在 Office 中另存为新版格式后重新添加。`,
+  };
+}
 
 /** 嗅探类型与声明格式是否相容（文本类互通：text / csv / tsv 都是纯文本）。 */
 function compatible(format: AttachmentFormat, sniffed: string): boolean {
@@ -117,6 +162,11 @@ export function verifyContent(declaredFormat: AttachmentFormat, bytes: Uint8Arra
   const sniffed = sniffMediaType(bytes);
   if (sniffed === null) {
     return { ok: false, code: "corrupted", message: "无法识别文件内容（可能已损坏或含不可读字节）" };
+  }
+  // 声明是 docx/xlsx/pptx 但内容是 OLE2：加密副本，或者被改名/另存错了的旧版文件。
+  // 这两种都要给出**具体**原因，而不是笼统的「格式不符」（§10.3）。
+  if (sniffed === "application/x-ole-storage" && OOXML_FORMAT_IDS.has(declaredFormat.id)) {
+    return classifyOleContainer(declaredFormat, bytes);
   }
   if (!compatible(declaredFormat, sniffed)) {
     return {

@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { classifyFile } from "@/lib/attachments/classify";
+import { extractAttachment, resumeStaleExtractions, scheduleExtraction } from "@/lib/attachments/extract/queue";
+import { extractionKindFor } from "@/lib/attachments/extract";
 import { ATTACHMENT_LIMITS, DRAFT_SESSION_ID } from "@/lib/attachments/limits";
 import { attachmentScopeFor } from "@/lib/attachments/scope";
 import { receiptOf } from "@/lib/attachments/store";
@@ -86,22 +88,30 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
     bytes,
   });
 
-  // ⑥ 就绪判定。本期尚无内容提取（阶段 C 接入 PDF/Office/文本解析），因此所有格式
-  //    立即 ready；`extractor === null` 的格式（如旧版 .xls）带上明确 warning，
-  //    避免用户以为 Agent 已经读到内容。阶段 C 会把这条路径改成 processing → ready。
-  const warnings = value.format.extractor === null && value.format.note ? [value.format.note] : [];
-  const ready = scope.store.updateExtraction(record.id, {
-    status: "ready",
-    ...(warnings.length > 0 ? { extraction: { warnings } } : {}),
-  });
+  // ⑥ 解析：便宜路径在请求内做完，重活排后台（规格 §10.3 / §7.4）
+  //
+  // 【为什么分两条路径】文本/CSV 的提取是纯字符串处理（毫秒级），同步做完能让
+  // 「拖进来立刻可发」。PDF/Office 要几秒到几十秒，放请求里会让用户对着没有反馈的
+  // 进度条等、还会占住连接。分界的依据是**实测成本**，不是格式分类本身：
+  // 图片与不解析正文的旧格式（extractor 为 null）也走同步路径，状态立刻定下来。
+  const kind = extractionKindFor(value.name);
+  if (kind === "text" || kind === "csv" || kind === "none") {
+    await extractAttachment(scope.store, record.id);
+  } else {
+    scheduleExtraction(scope.store, record.id);
+  }
+  // 上一轮进程死在中途留下的 processing 记录在这里被重新排队（规格 §14）
+  resumeStaleExtractions(scope.store);
 
-  return NextResponse.json({ ok: true, attachment: receiptOf(ready ?? record) });
+  const settled = scope.store.get(record.id) ?? record;
+  return NextResponse.json({ ok: true, attachment: receiptOf(settled) });
 }
 
 /** GET /api/sessions/:sessionId/attachments — 列出会话附件（草稿恢复与历史卡片共用）。 */
 async function handleGET(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const scope = attachmentScopeFor(id);
+  resumeStaleExtractions(scope.store);
   return NextResponse.json({
     attachments: scope.store.list(scope.sessionId).map(receiptOf),
     scope: scope.sessionId === DRAFT ? "draft" : "session",

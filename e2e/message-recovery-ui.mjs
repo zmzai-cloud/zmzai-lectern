@@ -58,7 +58,14 @@ try {
   const retry = page.getByRole("button", { name: "重试加载历史消息", exact: true });
   for (const [width, height] of [[1440, 900], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    if (width === 390) await page.getByRole("button", { name: "收起会话栏", exact: true }).click();
+    if (width === 390) {
+      // 单视图断点（规格 §7）：侧栏是**默认关闭**的覆盖层，会话才是唯一可见视图。
+      // 开合一次，证明覆盖层不会改变会话里重试入口的位置与可用性。
+      await page.getByRole("button", { name: "展开会话栏", exact: true }).click();
+      await page.locator(".panel-overlay-left").waitFor();
+      await page.getByRole("button", { name: "收起会话栏", exact: true }).click();
+      await page.locator(".panel-overlay-left").waitFor({ state: "detached" });
+    }
     assert.equal(await retry.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const rect = await retry.boundingBox();
@@ -66,7 +73,10 @@ try {
     await page.screenshot({ path: `${output}/initial-error-${width}.png`, animations: "disabled" });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "展开会话栏", exact: true }).click();
+  // 桌面宽度下侧栏默认常驻（规格 §7）：只有它被收起时才需要展开，展开后侧栏方可点选任务。
+  const expandSidebar = page.getByRole("button", { name: "展开会话栏", exact: true });
+  if (await expandSidebar.count()) await expandSidebar.click();
+  await page.locator(".task-sidebar").waitFor();
   initialFails = false;
   await retry.click();
   await page.getByText("A history 49", { exact: true }).waitFor();

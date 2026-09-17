@@ -681,7 +681,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (
-        <details className="chat-read-context mx-auto w-full max-w-[800px] shrink-0 px-6 py-2">
+        <details className="chat-read-context mx-auto w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] shrink-0 px-6 py-2">
           <summary className="cursor-pointer text-xs text-ink-3">已读取 {reads.length} 个文件</summary>
           <div className="flex flex-wrap gap-1 pt-2">
           {reads.map((path) => (
@@ -700,7 +700,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       <div
         className={cn(
-          "messages mx-auto min-h-0 w-full max-w-[800px] flex-1 overflow-y-auto px-6 py-8",
+          // 内容列宽 = --conversation-content-max + 两侧 px-6，让「正文左边界」与
+          // Composer 卡片左边缘落在同一条竖线上（规格 §5.2 单一阅读轴）。
+          "messages mx-auto min-h-0 w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] flex-1 overflow-y-auto px-6 py-8",
           visible.length === 0 ? "flex flex-col" : "",
         )}
         ref={messagesRef}
@@ -771,7 +773,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               // 原位编辑态：气泡变 textarea，保存即回溯重跑（服务端截断该消息之后的历史）
               return (
                 <div key={m.id} data-message-id={m.id} className="flex justify-end">
-                  <div className="w-[85%]">
+                  <div className="chat-user-message w-full">
                     <textarea
                       autoFocus
                       value={editing.text}
@@ -806,7 +808,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             }
             return (
               <div key={m.id} data-message-id={m.id} className="group flex justify-end">
-                <div className="relative max-w-[85%]">
+                <div className="chat-user-message relative">
                   <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
                     {m.skill && (
                       <div className="mb-1.5 flex items-center gap-1.5 text-[0.8125rem] leading-5">

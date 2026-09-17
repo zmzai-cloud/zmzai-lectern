@@ -21,7 +21,27 @@ import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData }
 import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
 import { deriveTaskPresentation, previewableOf, type SessionStatus } from "@/lib/task-presentation";
-import { readTaskWorkbenchLayout, writeTaskWorkbenchLayout, type WorkbenchTab } from "@/lib/task-layout";
+import {
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SPLITTER_STEP,
+  SPLITTER_STEP_LARGE,
+  WORKBENCH_DEFAULT_WIDTH,
+  WORKBENCH_MIN_WIDTH,
+  availableWidthFor,
+  canSplitSideBySide,
+  clampWorkbenchWidth,
+  defaultTaskWorkbenchLayout,
+  layoutModeFor,
+  readLegacyLayout,
+  readTaskWorkbenchLayout,
+  workbenchMaxFor,
+  workbenchPresentationFor,
+  writeTaskWorkbenchLayout,
+  type ActiveOverlay,
+  type TaskWorkbenchLayout,
+  type WorkbenchTab,
+} from "@/lib/task-layout";
 import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation } from "@/lib/types";
 import { PERMISSION_DOMAIN_OF } from "@/lib/types";
 
@@ -57,7 +77,16 @@ function readWidth(key: string, fallback: number, min: number, max: number): num
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
-function VerticalSplitter({ label, value, min, max, direction, onReset, onChange }: { label: string; value: number; min: number; max: number; direction: 1 | -1; onReset?: () => void; onChange: (value: number) => void }) {
+/**
+ * 垂直分隔条（规格 §5.5.2）。
+ *
+ * 拖动期间**只更新宽度变量**，不触碰消息 DOM、滚动锚点或工作台内容；到达边界后
+ * 保持稳定，不回弹、不产生指针漂移（位移始终基于 pointerdown 时的起点值计算）。
+ *
+ * 无障碍：role="separator" + 方向 + 当前值/最小值/最大值，方向键 16px、
+ * Shift 48px、Home/End 到边界、双击复位。
+ */
+function VerticalSplitter({ label, value, min, max, direction, onReset, onChange, onDragChange }: { label: string; value: number; min: number; max: number; direction: 1 | -1; onReset?: () => void; onChange: (value: number) => void; onDragChange?: (dragging: boolean) => void }) {
   const drag = useRef<{ id: number; x: number; value: number } | null>(null);
   // 拖拽中状态只用于视觉反馈（轨道变 accent 实心），不参与尺寸计算。
   const [dragging, setDragging] = useState(false);
@@ -74,6 +103,7 @@ function VerticalSplitter({ label, value, min, max, direction, onReset, onChange
       if (drag.current?.id !== event.pointerId) return;
       drag.current = null;
       setDragging(false);
+      onDragChange?.(false);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
@@ -85,19 +115,33 @@ function VerticalSplitter({ label, value, min, max, direction, onReset, onChange
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
     };
-  }, [apply, direction]);
+  }, [apply, direction, onDragChange]);
+
+  // 组件在拖动中被卸载（切会话/切断点）时也要解除捕获层，否则页面会卡在
+  // 「透明层吃掉所有点击」的状态里。
+  useEffect(() => () => onDragChange?.(false), [onDragChange]);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    // pointer capture 让后续 move 始终路由到本元素（而不是被 iframe/预览区截走），
+    // 是规格 §5.5.2「不因 iframe 捕获鼠标而中断拖动」的第一道保险；
+    // 第二道是页面级的透明捕获层，见 page.tsx 的 splitter-capture。
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* 某些环境下不支持；window 监听仍是主路径 */
+    }
     drag.current = { id: event.pointerId, x: event.clientX, value };
     setDragging(true);
+    onDragChange?.(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
-  return <div role="separator" aria-orientation="vertical" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} tabIndex={0} data-dragging={dragging} title={onReset ? `${label}（双击复位）` : label} onPointerDown={onPointerDown} onDoubleClick={onReset} onKeyDown={(event) => {
-    if (event.key === "ArrowLeft") { event.preventDefault(); apply(value - direction * 16); }
-    if (event.key === "ArrowRight") { event.preventDefault(); apply(value + direction * 16); }
+  return <div role="separator" aria-orientation="vertical" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value)} tabIndex={0} data-dragging={dragging} title={onReset ? `${label}（双击复位，方向键调整，Shift 加速）` : label} onPointerDown={onPointerDown} onDoubleClick={onReset} onKeyDown={(event) => {
+    const step = event.shiftKey ? SPLITTER_STEP_LARGE : SPLITTER_STEP;
+    if (event.key === "ArrowLeft") { event.preventDefault(); apply(value - direction * step); }
+    if (event.key === "ArrowRight") { event.preventDefault(); apply(value + direction * step); }
     if (event.key === "Home") { event.preventDefault(); apply(min); }
     if (event.key === "End") { event.preventDefault(); apply(max); }
   }} className="wb-splitter wb-splitter-v hidden min-[760px]:block">
@@ -233,19 +277,30 @@ export default function App() {
   const paletteActionsRef = useRef<{ newSession: () => void }>({ newSession: () => undefined });
   // 左侧栏收起/展开（Qoder 同款，持久化）
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarOverlayOpen, setSidebarOverlayOpen] = useState(false);
+  // 窄断点下的覆盖层（规格 §7.1 的 ResponsivePresentation）：**不持久化**。
+  // 侧栏与工作台共用它，因此天然互斥；离开窄断点即失效，桌面偏好原样回来。
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [sidebarWidth, setSidebarWidth] = useState(256);
-  const [workbenchWidth, setWorkbenchWidth] = useState(384);
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("review");
-  const [workbenchTabExplicit, setWorkbenchTabExplicit] = useState(false);
+  // 工作台布局：开合 / 宽度 / 标签 / 是否显式选过标签共用一个对象（规格 §7.1 / §9）。
+  // 落盘只在 updateTaskLayout 里**同步**发生，不靠「写回 effect」——切任务时 state
+  // 会晚一个提交才跟上，effect 会把上一个任务的宽度写到新任务名下（§12.3）。
+  const [taskLayout, setTaskLayout] = useState<TaskWorkbenchLayout>(() => defaultTaskWorkbenchLayout());
+  const {
+    open: workbenchOpen,
+    width: workbenchWidth,
+    tab: workbenchTab,
+    tabExplicit: workbenchTabExplicit,
+  } = taskLayout;
+  // 拖动中挂一层透明捕获层（规格 §5.5.2）：预览区里的 iframe 会吞掉 pointermove，
+  // 拖过它时拖动就断了。拖动期间此标志为真，页面顶部渲染 splitter-capture。
+  const [workbenchDragging, setWorkbenchDragging] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [viewportHeight, setViewportHeight] = useState(900);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(260);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   useEffect(() => {
-    setSidebarWidth(readWidth("lectern:sidebar-width", 256, 200, 420));
+    setSidebarWidth(readWidth("lectern:sidebar-width", 256, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH));
     setBottomPanelHeight(readWidth("lectern:bottom-panel-height", 260, 160, 640));
     setBottomPanelOpen(localStorage.getItem("lectern:bottom-panel-open") === "1");
     setViewportWidth(window.innerWidth);
@@ -282,26 +337,64 @@ export default function App() {
     localStorage.setItem("lectern:bottom-panel-open", bottomPanelOpen ? "1" : "0");
   }, [layoutReady, sidebarWidth, bottomPanelHeight, bottomPanelOpen]);
 
-  const layoutOwnerRef = useRef("__draft__");
+  // ── 按任务装载工作台布局（规格 §9 / §12.3）────────────────────────────────
+  // 装载必须与「切任务」落在**同一个提交**里。WorkbenchPanel 只在挂载时读一次
+  // initialTab，晚一个提交再换布局会让新任务的第一帧挂着上一个任务的标签；
+  // 反过来，把当前 state 写到上一个任务的键上则会让任务之间串台。两者都是
+  // 「按任务恢复」的直接违背，所以这里既不用「写回 effect」也不用水合守卫：
+  //   · 装载：owner 变化时在渲染期同步换掉，React 会立刻重跑渲染而不提交中间结果；
+  //   · 落盘：更新时同步写，写谁的键取**已提交**的 activeId。
+  const [layoutOwner, setLayoutOwner] = useState("__draft__");
+  const layoutOwnerNow = activeId ?? "__draft__";
+  /** 布局的最新镜像：事件路径（用户动作 / clamp）读它，避免把四个字段塞进依赖数组。 */
+  const taskLayoutRef = useRef<TaskWorkbenchLayout>(taskLayout);
+  if (layoutReady && layoutOwner !== layoutOwnerNow) {
+    // 纯读：不带 legacy，因此这里不会写入存储（迁移交给下面的 effect）。
+    setLayoutOwner(layoutOwnerNow);
+    setTaskLayout(readTaskWorkbenchLayout(layoutOwnerNow));
+  }
   useEffect(() => {
-    if (!layoutReady) return;
-    const owner = activeId ?? "__draft__";
-    const layout = readTaskWorkbenchLayout(owner);
-    layoutOwnerRef.current = owner;
-    setWorkbenchOpen(layout.open);
-    setWorkbenchWidth(layout.width);
-    setWorkbenchTab(layout.tab);
-    setWorkbenchTabExplicit(layout.tabExplicit);
+    taskLayoutRef.current = taskLayout;
+  }, [taskLayout]);
+
+  /** 用户动作 / clamp 的唯一写入口：更新 state 并**同步**落盘（规格 §9）。 */
+  const updateTaskLayout = useCallback((patch: Partial<TaskWorkbenchLayout>) => {
+    const current = taskLayoutRef.current;
+    const next = { ...current, ...patch };
+    if (
+      next.open === current.open &&
+      next.width === current.width &&
+      next.tab === current.tab &&
+      next.tabExplicit === current.tabExplicit
+    ) {
+      return; // 值没变就不写：clamp 是幂等的，到边界后必须彻底安静
+    }
+    taskLayoutRef.current = next;
+    if (layoutReady) writeTaskWorkbenchLayout(activeId ?? "__draft__", next);
+    setTaskLayout(next);
   }, [activeId, layoutReady]);
+
+  /** 把布局装载进 state（迁移用），**不落盘**。 */
+  const replaceTaskLayout = useCallback((next: TaskWorkbenchLayout) => {
+    taskLayoutRef.current = next;
+    setTaskLayout(next);
+  }, []);
+
+  // 旧版全局宽度只在第一个**真实任务**尚无记录时迁移一次（规格 §9）。渲染期只做
+  // 纯读，把带写入的迁移留在 effect 里；迁移只影响宽度，不会动面板挂载时的标签。
+  const legacyPendingRef = useRef(true);
   useEffect(() => {
-    if (!layoutReady) return;
-    writeTaskWorkbenchLayout(layoutOwnerRef.current, {
-      open: workbenchOpen,
-      width: workbenchWidth,
-      tab: workbenchTab,
-      tabExplicit: workbenchTabExplicit,
-    });
-  }, [layoutReady, workbenchOpen, workbenchTab, workbenchTabExplicit, workbenchWidth]);
+    if (!layoutReady || !activeId || !legacyPendingRef.current) return;
+    legacyPendingRef.current = false;
+    const legacy = readLegacyLayout();
+    if (legacy.width == null && legacy.open == null) return;
+    replaceTaskLayout(readTaskWorkbenchLayout(activeId, legacy));
+  }, [activeId, layoutReady, replaceTaskLayout]);
+
+  // 切任务时收起窄断点覆盖层（规格 §7：选择任务后自动关闭侧栏，把会话交还用户）。
+  useEffect(() => {
+    setActiveOverlay(null);
+  }, [activeId]);
   useEffect(() => {
     const syncViewport = () => {
       setViewportWidth(window.innerWidth);
@@ -311,19 +404,44 @@ export default function App() {
     return () => window.removeEventListener("resize", syncViewport);
   }, []);
 
-  // 两侧宽度不会挤掉中间的可读对话区；窄屏由既有断点隐藏右栏。
-  const sidebarMax = Math.max(200, Math.min(420, viewportWidth - (workbenchOpen ? workbenchWidth : 0) - 436));
-  const workbenchMax = Math.max(320, Math.min(720, viewportWidth - (sidebarOpen ? sidebarWidth : 0) - 436));
+  // ── 布局模式派生（规格 §7 / §5.5.2）─────────────────────────────────────
+  // 持久桌面偏好（sidebarOpen / workbenchOpen / workbenchWidth / workbenchTab）与
+  // 当前断点下的临时呈现严格分离：进入窄断点只改 activeOverlay，绝不回写偏好。
+  // 这样才能满足 §12.12「768–1179px 覆盖层运行，返回 ≥1180px 后恢复已保存的桌面状态」。
+  const layoutMode = layoutModeFor(viewportWidth);
+  const sideBySideCapable = availableWidthFor(viewportWidth, sidebarOpen, sidebarWidth);
+  const workbenchMax = workbenchMaxFor(sideBySideCapable);
+  /** 桌面偏好在该可用宽度下的呈现（§5.5：不够宽就降级为抽屉，而不是挤压会话）。 */
+  const desktopWorkbenchPresentation = workbenchPresentationFor(layoutMode, workbenchOpen, sideBySideCapable);
+  const workbenchSideBySide = desktopWorkbenchPresentation === "side";
+  // 窄断点下工作台可见性只由 activeOverlay 决定；桌面下由（可能降级的）桌面偏好决定。
+  const workbenchDrawer = layoutMode === "desktop"
+    ? desktopWorkbenchPresentation === "drawer"
+    : activeOverlay === "workbench";
+  const workbenchVisible = workbenchSideBySide || workbenchDrawer;
+  const sidebarMax = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportWidth - (workbenchSideBySide ? workbenchWidth : 0) - 436));
   const bottomPanelMax = Math.max(160, viewportHeight - 280);
   useEffect(() => {
     setSidebarWidth((value) => Math.min(value, sidebarMax));
   }, [sidebarMax]);
+  // 视口/侧栏变化时把宽度压回该可用宽度下的合法区间（规格 §5.5.2 的 clamp；
+  // 幂等——到边界后 updateTaskLayout 的等值判断让它彻底安静）。
+  // 只在**真的可能并排**时才压：覆盖层/单视图断点与降级抽屉都不使用这个宽度，
+  // 此时写回等于让平板或窄窗口改掉桌面偏好（规格 §7.1 / §13 明文禁止）。
   useEffect(() => {
-    setWorkbenchWidth((value) => Math.min(value, workbenchMax));
-  }, [workbenchMax]);
+    if (!canSplitSideBySide(sideBySideCapable)) return;
+    const clamped = clampWorkbenchWidth(sideBySideCapable, taskLayout.width);
+    if (clamped !== taskLayout.width) updateTaskLayout({ width: clamped });
+  }, [sideBySideCapable, taskLayout.width, updateTaskLayout]);
   useEffect(() => {
     setBottomPanelHeight((value) => Math.min(value, bottomPanelMax));
   }, [bottomPanelMax]);
+
+  // 覆盖层是「当前断点下的临时呈现」（规格 §7.1），离开窄断点即作废：桌面模式下
+  // 它不参与渲染，但留着它会让下次重新进入 768–1179px 时凭空弹出一个覆盖层。
+  useEffect(() => {
+    if (layoutMode === "desktop") setActiveOverlay(null);
+  }, [layoutMode]);
 
   // 投影快照的 rAF 批处理：同一帧内任意多条事件只触发一次渲染
   const flushProjection = useCallback(() => {
@@ -362,11 +480,14 @@ export default function App() {
       return !v;
     });
   }, []);
-  const compactPanels = viewportWidth < 1180;
+  // 桌面偏好与临时呈现分离（规格 §7.1）：
+  // - 窄断点下开合只写 activeOverlay，不碰 sidebarOpen / workbenchOpen，
+  //   所以从窄窗口恢复到 ≥1180px 时桌面状态原样回来；
+  // - 侧栏与工作台共用同一个 activeOverlay 槽位，天然互斥。
+  const compactPanels = layoutMode !== "desktop";
   const toggleSidebar = useCallback(() => {
     if (compactPanels) {
-      setSidebarOverlayOpen((value) => !value);
-      setWorkbenchOpen(false);
+      setActiveOverlay((value) => (value === "sidebar" ? null : "sidebar"));
       return;
     }
     setSidebarOpen((value) => {
@@ -375,19 +496,34 @@ export default function App() {
     });
   }, [compactPanels]);
   const toggleWorkbench = useCallback(() => {
-    setWorkbenchOpen((value) => !value);
-    if (compactPanels) setSidebarOverlayOpen(false);
-  }, [compactPanels]);
+    if (compactPanels) {
+      setActiveOverlay((value) => (value === "workbench" ? null : "workbench"));
+      return;
+    }
+    updateTaskLayout({ open: !taskLayoutRef.current.open });
+  }, [compactPanels, updateTaskLayout]);
+  /** 打开工作台并切到指定标签。规格 §4.2：这是**唯一**会展开工作台的路径——
+   *  成果生成、状态变化都不能自动展开，因此只能由用户动作触发。
+   *
+   *  窄断点下：只写临时覆盖层与标签（标签是任务级偏好，不是「开合状态」），
+   *  绝不写 `open`——否则平板上的临时开合会覆盖桌面持久偏好（§13）。 */
   const openWorkbench = useCallback((tab: WorkbenchTab) => {
-    setWorkbenchTab(tab);
-    setWorkbenchTabExplicit(true);
-    setWorkbenchOpen(true);
-    if (compactPanels) setSidebarOverlayOpen(false);
-  }, [compactPanels]);
+    updateTaskLayout({ tab, tabExplicit: true });
+    if (compactPanels) {
+      setActiveOverlay("workbench");
+      return;
+    }
+    updateTaskLayout({ open: true });
+  }, [compactPanels, updateTaskLayout]);
   const openFileInWorkbench = useCallback((path: string, line?: number) => {
     setOpenFileReq({ path, ts: Date.now(), line });
     openWorkbench("files");
   }, [openWorkbench]);
+  /** 工作台内切标签：标签与「是否显式选过」都是任务级偏好（规格 §7.1 / §9）。
+   *  并排与抽屉共用同一个处理器，因此两条路径的偏好语义完全一致。 */
+  const handleWorkbenchTabChange = useCallback((tab: WorkbenchTab, explicit: boolean) => {
+    updateTaskLayout(explicit ? { tab, tabExplicit: true } : { tab });
+  }, [updateTaskLayout]);
   const toggleBottomPanel = useCallback(() => {
     setBottomPanelOpen((value) => !value);
   }, []);
@@ -546,7 +682,8 @@ export default function App() {
       }
       setActiveId(id);
     }
-    if (viewportWidth < 1180) setSidebarOverlayOpen(false);
+    // 窄断点：选中任务后自动关闭覆盖层，把会话交还给用户（规格 §7）。
+    if (layoutMode !== "desktop") setActiveOverlay(null);
   }, [activeId, sessions, viewportWidth]);
 
   useEffect(() => {
@@ -931,7 +1068,7 @@ export default function App() {
   // 项目名由侧栏切换器上抛（§4.2：上下文条要能辨识当前项目）。用回调身份稳定引用，
   // 避免每次渲染都触发 ProjectSwitcher 的 effect。
   const [projectName, setProjectName] = useState<string | null>(null);
-  const sidebarVisible = compactPanels ? sidebarOverlayOpen : sidebarOpen;
+  const sidebarVisible = compactPanels ? activeOverlay === "sidebar" : sidebarOpen;
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
@@ -978,11 +1115,12 @@ export default function App() {
             <button
               type="button"
               onClick={toggleWorkbench}
-              title={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
-              aria-label={workbenchOpen ? "收起右侧工作区" : "展开右侧工作区"}
+              title={workbenchVisible ? "收起右侧工作区" : "展开右侧工作区"}
+              aria-label={workbenchVisible ? "收起右侧工作区" : "展开右侧工作区"}
+              aria-expanded={workbenchVisible}
               className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-sm transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
-                workbenchOpen ? "bg-surface-2 text-ink" : "text-ink-3",
+                "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
+                workbenchVisible ? "bg-surface-2 text-ink" : "text-ink-3",
               )}
             >
               <PanelRight size={16} strokeWidth={1.55} aria-hidden="true" />
@@ -1060,11 +1198,20 @@ export default function App() {
               permissionMode={permissionMode}
               onCyclePermissionMode={activeId ? cyclePermissionMode : undefined}
             />
-            {!compactPanels && workbenchOpen && (
+            {workbenchSideBySide && (
               <>
-                <VerticalSplitter label="调整右侧工作区宽度" value={workbenchWidth} min={320} max={workbenchMax} direction={-1} onReset={() => setWorkbenchWidth(384)} onChange={setWorkbenchWidth} />
+                <VerticalSplitter
+                  label="调整右侧工作区宽度"
+                  value={workbenchWidth}
+                  min={WORKBENCH_MIN_WIDTH}
+                  max={workbenchMax}
+                  direction={-1}
+                  onReset={() => updateTaskLayout({ width: WORKBENCH_DEFAULT_WIDTH })}
+                  onChange={(width) => updateTaskLayout({ width })}
+                  onDragChange={setWorkbenchDragging}
+                />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={(tab, explicit) => { setWorkbenchTab(tab); if (explicit) setWorkbenchTabExplicit(true); }} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
                 </div>
               </>
             )}
@@ -1078,8 +1225,8 @@ export default function App() {
         </div>
       </div>
 
-      {compactPanels && sidebarOverlayOpen && (
-        <div className="panel-scrim" role="presentation" onMouseDown={() => setSidebarOverlayOpen(false)}>
+      {compactPanels && activeOverlay === "sidebar" && (
+        <div className="panel-scrim" role="presentation" onMouseDown={() => setActiveOverlay(null)}>
           <div className="panel-overlay panel-overlay-left" onMouseDown={(event) => event.stopPropagation()}>
             <SessionList
               top={<ProjectSwitcher onActiveChange={setProjectName} />}
@@ -1102,13 +1249,20 @@ export default function App() {
           </div>
         </div>
       )}
-      {compactPanels && workbenchOpen && (
-        <div className="panel-scrim" role="presentation" onMouseDown={() => setWorkbenchOpen(false)}>
+      {/* 覆盖式工作台（规格 §5.5）：窄断点下由 activeOverlay 驱动，桌面宽度不足以
+          并排时由桌面偏好降级驱动——绝不以压缩会话可读宽度为代价并排。 */}
+      {workbenchDrawer && (
+        <div className="panel-scrim" role="presentation" onMouseDown={() => (compactPanels ? setActiveOverlay(null) : updateTaskLayout({ open: false }))}>
           <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
-            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={(tab, explicit) => { setWorkbenchTab(tab); if (explicit) setWorkbenchTabExplicit(true); }} />
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
           </div>
         </div>
       )}
+
+      {/* 拖动分隔条期间的透明捕获层（规格 §5.5.2）：预览区里的 iframe 会把
+          pointermove 吃在自己的 document 里，鼠标划过预览时拖动就断了。
+          这一层盖住整个视口，让指针事件始终留在宿主页面，拖动结束即卸载。 */}
+      {workbenchDragging && <div className="splitter-capture" aria-hidden="true" />}
 
       {/* P2-12 命令面板（⌘K 命令 / ⌘P 文件快开 / ⌘⇧F 全文搜索） */}
       {palette && (

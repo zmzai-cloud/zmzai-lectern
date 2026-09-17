@@ -183,11 +183,37 @@ html[data-theme="dark"] {
   padding: 48px 24px 72px;
   text-align: center;
 }
+/* 会话内容列宽：消息区、用户气泡与 Composer 共享同一左右基线。
+   规格 §5.2「消息列与 Composer 使用同一宽度和左右基线，形成稳定的单一阅读轴」
+   + §7.2「会话内容列使用统一的 --conversation-content-max，建议 760–840px」。
+   改这一个值，整条阅读轴一起移动。 */
+:root {
+  --conversation-content-max: 800px;
+}
+
 .chat-user-bubble {
   border: 0;
   border-radius: 12px;
   background: var(--color-surface-2);
   box-shadow: none;
+}
+/* 规格 §7.2：任何消息都必须满足 max-width:100% + overflow-wrap:anywhere，
+   连续 URL、文件路径和无空格文本不能撑破布局。 */
+.chat-user-bubble,
+.chat-text-block,
+.chat-assistant-message {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* 用户消息最大宽度为内容列的 78%（规格 §7.2）；窄屏允许占满可用宽度。 */
+.chat-user-message {
+  max-width: 78%;
+}
+@media (max-width: 640px) {
+  .chat-user-message {
+    max-width: 100%;
+  }
 }
 .chat-assistant-message {
   display: block;
@@ -223,6 +249,16 @@ html[data-theme="dark"] {
 }
 .panel-overlay-left { inset-inline-start: 0; max-width: min(320px, 100vw); border-inline-end: 1px solid var(--color-line); }
 .panel-overlay-right { inset-inline-end: 0; width: min(720px, 100vw); border-inline-start: 1px solid var(--color-line); }
+/* 拖动分隔条期间的透明捕获层（规格 §5.5.2）：预览区里的 iframe 会把 pointermove
+   吃在自己的 document 里，鼠标划过预览时拖动就断了。这一层盖住整个视口，
+   让指针事件始终留在宿主页面；仅拖动期间挂载，拖动结束立即卸载。 */
+.splitter-capture {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: transparent;
+  cursor: col-resize;
+}
 @media (max-width: 767px) {
   .panel-overlay { width: 100vw; max-width: none; }
 }

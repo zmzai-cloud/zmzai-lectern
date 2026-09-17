@@ -652,7 +652,10 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
       )}
 
       {/* 对话编辑器：ChatGPT 式柔和承载面，控制项沉在底部，不抢正文注意力。 */}
-      <div className="chat-composer mx-auto w-full max-w-[752px] bg-surface transition-colors"
+      {/* 宽度与消息列共用同一个 --conversation-content-max，保证左右基线一致
+          （规格 §5.2）。此前这里是固定 752px、消息列 800px，两条轴不重合，
+          切到底部时正文与输入框会明显错位。 */}
+      <div className="chat-composer mx-auto w-full max-w-[var(--conversation-content-max)] bg-surface transition-colors"
         onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
         onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); pickAttachments(e.dataTransfer.files); pickImages([...e.dataTransfer.files].filter((f) => f.type.startsWith("image/"))); }}>
         {/* 图片附件预览 chips */}

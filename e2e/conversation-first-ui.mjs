@@ -26,6 +26,15 @@ const CONVERSATION_CONTENT_MAX = 800;
 const noHorizontalOverflow = page => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
 
 const longCopy = "会话是 Lectern 的主要工作区域。右侧工作台打开后，这段内容仍需保持自然换行、完整可读，并且不能产生页面级横向滚动。".repeat(4);
+/** 已完成工具调用的轻量 part（规格 §5.2）：读完的文件进入「已读 N 个文件」折叠摘要。 */
+const readTool = (messageId, index, path) => ({
+  id: `read-${index}`,
+  messageId,
+  sessionId: "conversation",
+  type: "tool",
+  tool: "read",
+  state: { status: "completed", input: { path }, output: "内容略", title: `读取 ${path}` },
+});
 const transcript = [
   {
     info: { id: "user-1", role: "user", sessionId: "conversation" },
@@ -36,6 +45,16 @@ const transcript = [
     info: { id: "assistant-1", role: "assistant", sessionId: "conversation" },
     messageSeq: 2,
     parts: [{ id: "assistant-text", messageId: "assistant-1", sessionId: "conversation", type: "text", text: `${longCopy}\n\n下一步可以按需打开成果或审查。` }],
+  },
+  {
+    info: { id: "assistant-2", role: "assistant", sessionId: "conversation" },
+    messageSeq: 3,
+    parts: [
+      readTool("assistant-2", 1, "app/page.tsx"),
+      readTool("assistant-2", 2, "lib/task-layout.ts"),
+      readTool("assistant-2", 3, "components/WorkbenchPanel.tsx"),
+      { id: "assistant-2-text", messageId: "assistant-2", sessionId: "conversation", type: "text", text: "已读完这三个文件。" },
+    ],
   },
 ];
 
@@ -61,31 +80,66 @@ try {
     if (path === "/api/skills") return route.fulfill({ json: { skills: [] } });
     if (path === "/api/settings/permissions") return route.fulfill({ json: { permissions: {} } });
     if (path === "/api/projects") return route.fulfill({ json: { projects: [], activeId: "default" } });
+    if (path === "/api/fs/file") return route.fulfill({ json: { path: url.searchParams.get("path") ?? "", size: 24, content: "export const answer = 42;\n" } });
     return route.fulfill({ json: {} });
   });
 
   await page.goto(process.env.LECTERN_TEST_URL || "http://127.0.0.1:3100", { waitUntil: "domcontentloaded" });
   await page.getByText("对话优先验收", { exact: true }).click();
-  await page.locator(".chat-assistant-message").waitFor();
+  await page.locator(".chat-assistant-message").first().waitFor();
 
   // ── 默认状态：工作台收起、状态不重复、运行配置聚合（规格 §4.2 / §12.1/2/6/7）──
   assert.equal(await page.locator(".workbench-shell").count(), 0, "workbench defaults closed");
   assert.equal(await page.locator('[data-task-primary-status="true"]').count(), 1, "one primary task status");
   assert.equal(await page.getByRole("button", { name: "运行配置" }).count(), 1, "runtime controls are consolidated");
 
+  // ── 已读文件折叠为一行摘要、工具过程收拢成轻量折叠行（规格 §5.2 / §12.8）──
+  const readContext = page.locator(".chat-read-context");
+  assert.equal(await readContext.count(), 1, "read files collapse into a single summary row");
+  assert.equal(await readContext.evaluate((element) => element.open), false, "the read summary is collapsed by default");
+  const readSummary = await readContext.locator("summary").innerText();
+  assert.ok(/已读取\s*3\s*个文件/.test(readSummary), readSummary);
+  const toolGroup = page.locator(".zmz-tool-group-trigger");
+  assert.equal(await toolGroup.count(), 1, "completed tool calls collapse into one lightweight row");
+  const toolGroupHeight = (await toolGroup.boundingBox())?.height ?? 0;
+  assert.ok(toolGroupHeight <= 32, `the tool group must stay a compact row: ${toolGroupHeight}`);
+  await readContext.locator("summary").click();
+  await page.locator(".chat-read-context button").first().waitFor();
+  assert.equal(await readContext.locator("button").count(), 3, "expanding the summary reveals the file list");
+  // 明显入口必须打开**正确**标签（规格 §12.2）：点已读文件 → 工作台在「文件」标签并排打开
+  await readContext.locator("button").first().click();
+  await page.locator(".workbench-shell").waitFor();
+  assert.equal(await page.locator("#wb-tab-files").getAttribute("aria-selected"), "true", "a read file opens the files tab");
+  assert.equal(await page.locator(".panel-overlay-right").count(), 0, "the desktop entry opens side by side");
+  await readContext.locator("summary").click();
+  await page.waitForFunction(() => document.querySelector(".chat-read-context")?.open === false);
+  assert.equal(await readContext.locator("button").first().isVisible(), false, "collapsing hides the file list again");
+
   // ── 单一阅读轴：消息正文左边界与 Composer 卡片左边缘重合（规格 §5.2 / §7.2）──
   const axis = await page.evaluate(() => {
     const messages = document.querySelector(".messages");
     const composer = document.querySelector(".chat-composer");
-    if (!messages || !composer) return null;
+    const reads = document.querySelector(".chat-read-context");
+    if (!messages || !composer || !reads) return null;
     const m = messages.getBoundingClientRect();
     const pad = parseFloat(getComputedStyle(messages).paddingLeft);
     const c = composer.getBoundingClientRect();
-    return { messageTextLeft: m.x + pad, messageTextRight: m.right - pad, composerLeft: c.x, composerRight: c.right };
+    const r = reads.getBoundingClientRect();
+    const rPad = parseFloat(getComputedStyle(reads).paddingLeft);
+    return {
+      messageTextLeft: m.x + pad,
+      messageTextRight: m.right - pad,
+      composerLeft: c.x,
+      composerRight: c.right,
+      readLeft: r.x + rPad,
+      readRight: r.right - rPad,
+    };
   });
-  assert.ok(axis, "message column and composer must both exist");
+  assert.ok(axis, "message column, read summary and composer must all exist");
   assert.ok(Math.abs(axis.messageTextLeft - axis.composerLeft) <= 1, JSON.stringify(axis));
   assert.ok(Math.abs(axis.messageTextRight - axis.composerRight) <= 1, JSON.stringify(axis));
+  assert.ok(Math.abs(axis.readLeft - axis.messageTextLeft) <= 1, JSON.stringify(axis));
+  assert.ok(Math.abs(axis.readRight - axis.messageTextRight) <= 1, JSON.stringify(axis));
 
   // ── 圆角令牌（规格 §6.1）────────────────────────────────────────────────
   const radii = await page.evaluate(() => ({
@@ -205,6 +259,24 @@ try {
   const taskRow = page.locator(".task-row").first();
   await taskRow.focus();
   assert.equal(await taskRow.evaluate((element) => element === document.activeElement), true, "task rows are keyboard focusable");
+
+  // ── 字号与触达区（规格 §6.3 / §12.9 / §12.10）────────────────────────────
+  const metrics = await page.evaluate(() => {
+    const box = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+    const fontSize = (selector) => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
+    return {
+      send: box(".chat-primary-action"),
+      titlebar: box(".titlebar-button"),
+      readSummary: fontSize(".chat-read-context summary"),
+      composer: fontSize(".chat-composer textarea"),
+      body: fontSize(".chat-text-block > div:first-child"),
+    };
+  });
+  assert.ok(metrics.send && metrics.send.width >= 32 && metrics.send.height >= 32, `send hit area ${JSON.stringify(metrics.send)}`);
+  assert.ok(metrics.titlebar && metrics.titlebar.width >= 28 && metrics.titlebar.height >= 28, `titlebar hit area ${JSON.stringify(metrics.titlebar)}`);
+  assert.ok(metrics.readSummary >= 12, `supporting text must be >= 12px: ${metrics.readSummary}`);
+  assert.ok(metrics.composer >= 14, `composer type ${metrics.composer}px`);
+  assert.ok(metrics.body >= 14, `conversation body type ${metrics.body}px`);
 
   // ── 视觉验收截图矩阵（规格 §11.1 / §12.16）───────────────────────────────
   // 8 个关键宽度 × 浅/深主题。全部取「会话优先」默认态：桌面收起工作台，窄断点

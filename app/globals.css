@@ -293,12 +293,14 @@ html[data-theme="dark"] {
 .task-row-options button:hover { background: var(--color-surface-2); }
 @media (hover: none) { .task-row-menu { opacity: 1; } }
 .task-context { background: var(--color-bg); }
-.account-block > button { border-radius: 9px; min-height: 44px; }
-.account-menu button, .account-menu a { border-radius: 7px; min-height: 32px; }
+/* 圆角统一到规格 §6.1 的表：结构 0 / 控件 6 / 行·菜单·Popover 8 / Composer·气泡 12。
+   账户区与设置页此前混用 7px、9px 等未定义值，这里一并收敛，避免同一层级出现两种圆角。 */
+.account-block > button { border-radius: 8px; min-height: 44px; }
+.account-menu button, .account-menu a { border-radius: 8px; min-height: 32px; }
 .settings-sidebar nav button { gap: 10px; min-height: 40px; border-radius: 8px; padding-inline: 12px; }
 .settings-section { border-bottom: 1px solid var(--color-line); padding-bottom: 12px; }
 .settings-section:last-child { border-bottom: 0; }
-.settings-page input, .settings-page select { border-radius: 7px; }
+.settings-page input, .settings-page select { border-radius: 6px; }
 .settings-page button:focus-visible, .account-block button:focus-visible, .settings-page a:focus-visible { outline: 2px solid var(--color-ink-3); outline-offset: 2px; }
 @container (max-width: 550px) {
   .composer-root { padding-inline: 12px; }
@@ -376,7 +378,7 @@ html[data-theme="dark"] {
     border-bottom: 1px solid var(--color-line);
   }
 
-  /* ── 一级 tab：underline 风格、3px 圆角，不是胶囊、不用阴影（§3.2/§5）──
+  /* ── 一级 tab：underline 风格、6px 圆角，不是胶囊、不用阴影（§6.1/§5.5）──
    * 选中态用 inset 下划线（accent）而非反色块：层级靠结构而非色块重量。 */
   .wb-tab {
     display: inline-flex;
@@ -403,7 +405,7 @@ html[data-theme="dark"] {
     box-shadow: inset 0 -2px 0 0 var(--color-accent);
   }
 
-  /* ── 图标按钮：28x28 最小触达区（§3.4），3px 圆角非胶囊（§3.2）── */
+  /* ── 图标按钮：28x28 最小触达区（§6.3），6px 圆角非胶囊（§6.1）── */
   .wb-iconbtn {
     display: inline-flex;
     flex: none;
@@ -557,7 +559,7 @@ html.electron[data-platform="darwin"] header:not(.lectern-titlebar) > div:first-
 /* 单层窗口栏：左侧延续侧栏底色，任务标题与内容区对齐。 */
 .lectern-window-controls { background: var(--color-surface); border-right: 1px solid var(--color-line); }
 html.electron[data-platform="darwin"] .lectern-window-controls { padding-left: 100px; }
-.titlebar-button { display: inline-flex; flex: none; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: 7px; color: var(--color-ink-3); }
+.titlebar-button { display: inline-flex; flex: none; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: 6px; color: var(--color-ink-3); }
 .titlebar-button:hover { background: var(--color-surface-3); color: var(--color-ink); }
 .titlebar-button:focus-visible { outline: 2px solid var(--color-ink-3); outline-offset: 2px; }
 .lectern-titlebar-main .task-context { min-height: 0; height: 100%; }

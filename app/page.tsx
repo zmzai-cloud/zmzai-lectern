@@ -994,7 +994,10 @@ export default function App() {
         )}
         {sidebarOpen && <VerticalSplitter label="调整会话栏宽度" value={sidebarWidth} min={200} max={sidebarMax} direction={1} onReset={() => setSidebarWidth(256)} onChange={setSidebarWidth} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex min-h-0 flex-1">
+          {/* 横向分栏的每一级都必须允许缩到自身内容宽度以下。否则右栏拖宽时，
+              这一行会保留对话内容的 min-content 宽度，再被外层 overflow-hidden
+              裁掉，看起来像消息没有随面板宽度重新换行。 */}
+          <div className="flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
             <ChatView
               key={activeId ?? "empty"}
               data={chatData}
@@ -1024,7 +1027,7 @@ export default function App() {
             {workbenchOpen && (
               <div className="hidden min-[1180px]:contents">
                 <VerticalSplitter label="调整右侧工作区宽度" value={workbenchWidth} min={320} max={workbenchMax} direction={-1} onReset={() => setWorkbenchWidth(384)} onChange={setWorkbenchWidth} />
-                <div className="shrink-0" style={{ width: workbenchWidth }}>
+                <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
                   <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} />
                 </div>
               </div>

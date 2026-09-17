@@ -185,7 +185,7 @@ html[data-theme="dark"] {
 }
 .chat-user-bubble {
   border: 0;
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--color-surface-2);
   box-shadow: none;
 }
@@ -197,7 +197,7 @@ html[data-theme="dark"] {
   position: relative;
   margin-bottom: 0;
   border: 1px solid var(--color-line);
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow: var(--shadow-xs);
 }
 .chat-composer:focus-within {
@@ -247,12 +247,13 @@ html[data-theme="dark"] {
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
 .chat-view .markdown-body :not(pre) > code { border: 0; border-radius: 4px; }
 .chat-view .markdown-body table { display: block; max-width: 100%; overflow-x: auto; }
-.chat-view .md-codeblock { border-radius: 10px; }
+.chat-view .md-codeblock { border-radius: 8px; }
 .task-sidebar .task-row { font-weight: 400; }
+.task-sidebar .task-row-active { box-shadow: inset 2px 0 0 var(--color-accent); }
 .task-row-menu { opacity: 0; }
 .task-row:hover .task-row-menu, .task-row:focus-within .task-row-menu, .task-row-menu[open] { opacity: 1; }
 .task-row-menu summary::-webkit-details-marker { display: none; }
-.task-row-options button { width: 100%; height: 32px; gap: 9px; justify-content: flex-start; padding-inline: 8px; border-radius: 5px; background: transparent; font-size: 12px; }
+.task-row-options button { width: 100%; height: 32px; gap: 9px; justify-content: flex-start; padding-inline: 8px; border-radius: 6px; background: transparent; font-size: 12px; }
 .task-row-options button:hover { background: var(--color-surface-2); }
 @media (hover: none) { .task-row-menu { opacity: 1; } }
 .task-context { background: var(--color-bg); }
@@ -278,7 +279,7 @@ html[data-theme="dark"] {
 @media (hover: none) { .chat-copy-actions { opacity: 1; } }
 @media (max-width: 640px) {
   .chat-assistant-avatar { display: none; }
-  .chat-composer { margin-inline: 10px; width: auto; border-radius: 15px; }
+  .chat-composer { margin-inline: 10px; width: auto; border-radius: 12px; }
 }
 /* 底部终端展开时，对话区会变成一条短而珍贵的阅读带；空态优先保留标题和说明，
    不让装饰把真正的下一步挤出视口。 */
@@ -348,7 +349,7 @@ html[data-theme="dark"] {
     align-items: center;
     gap: 4px;
     padding-inline: 10px;
-    border-radius: 3px;
+    border-radius: 6px;
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--color-ink-3);
@@ -362,7 +363,7 @@ html[data-theme="dark"] {
   }
   .wb-tab[aria-selected="true"] {
     color: var(--color-ink);
-    border-radius: 3px 3px 0 0;
+    border-radius: 6px 6px 0 0;
     box-shadow: inset 0 -2px 0 0 var(--color-accent);
   }
 
@@ -374,7 +375,7 @@ html[data-theme="dark"] {
     height: 28px;
     align-items: center;
     justify-content: center;
-    border-radius: 3px;
+    border-radius: 6px;
     color: var(--color-ink-3);
     transition:
       background-color 120ms var(--ease-spring),
@@ -383,6 +384,35 @@ html[data-theme="dark"] {
   .wb-iconbtn:hover {
     background: var(--color-surface-2);
     color: var(--color-ink);
+  }
+
+  .chat-primary-action {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 6px;
+  }
+
+  .run-config-popover {
+    border-radius: 8px;
+  }
+
+  .workbench-shell .rounded-\[3px\] {
+    border-radius: 6px;
+  }
+
+  .workbench-shell .text-\[0\.625rem\] {
+    font-size: 0.75rem;
+    line-height: 1rem;
+  }
+
+  [data-terminal-pane] button {
+    border-radius: 6px;
+  }
+
+  [data-terminal-pane] .text-\[0\.625rem\],
+  [data-terminal-pane] .text-\[0\.6875rem\] {
+    font-size: 0.75rem;
+    line-height: 1rem;
   }
 
   /* ── 空态：说明「这里做什么」，不只是「无数据」（§4.5 戒律）── */

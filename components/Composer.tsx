@@ -70,7 +70,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   const [models, setModels] = useState<ModelsState | null>(null);
   const [skills, setSkills] = useState<SkillOption[]>([]);
   const [skill, setSkill] = useState<SkillOption | null>(null);
-  const [popup, setPopup] = useState<"model" | "skill" | "effort" | null>(null);
+  const [popup, setPopup] = useState<"config" | "model" | "skill" | "effort" | null>(null);
   // 推理力度（N3）：off = 不发字段（默认，对所有模型安全）
   const [effort, setEffort] = useState<ThinkingEffort>("off");
   const [usage, setUsage] = useState<UsageInfo | null>(null);
@@ -454,7 +454,26 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         </div>
       )}
 
-      {/* 弹层：模型选择 / Skill 选择（与输入卡片同宽） */}
+      {popup === "config" && (
+        <div className="run-config-popover absolute bottom-full left-1/2 mb-2 w-full max-w-3xl -translate-x-1/2 overflow-hidden rounded-lg border border-line bg-surface p-1.5 shadow-lg ring-1 ring-line">
+          <div className="px-2 py-2 text-xs font-semibold text-ink-2">运行配置</div>
+          <button type="button" onClick={() => setPopup("model")} className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-xs transition-colors hover:bg-surface-2">
+            <span>模型</span><span className="ml-auto max-w-[65%] truncate font-mono text-ink-3">{modelLabel}</span>
+          </button>
+          <button type="button" onClick={() => setPopup("effort")} className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-xs transition-colors hover:bg-surface-2">
+            <span>推理力度</span><span className="ml-auto font-mono text-ink-3">{effort === "off" ? "默认" : effort}</span>
+          </button>
+          <button type="button" onClick={() => setPopup("skill")} className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-xs transition-colors hover:bg-surface-2">
+            <span>Skill</span><span className="ml-auto max-w-[65%] truncate text-ink-3">{skill?.name ?? "未选择"}</span>
+          </button>
+          {permissionMode && onCyclePermissionMode && (
+            <button type="button" onClick={onCyclePermissionMode} className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-xs transition-colors hover:bg-surface-2">
+              <span>权限</span><span className="ml-auto text-ink-3">{PERM_PILL[permissionMode].label} · 点击切换</span>
+            </button>
+          )}
+        </div>
+      )}
+      {/* 弹层：运行配置的二级选择（与输入卡片同宽） */}
       {popup === "model" && (
         <div className="absolute bottom-full left-1/2 mb-2 max-h-72 w-full max-w-3xl -translate-x-1/2 overflow-y-auto rounded-md border border-line bg-surface p-1.5 shadow-lg ring-1 ring-line">
           <div className="flex items-center justify-between px-2 py-1.5">
@@ -740,11 +759,12 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         <div className="composer-controls flex min-h-10 flex-wrap items-center gap-0.5 px-2.5 pb-1.5">
           <button
             type="button"
-            onClick={() => setPopup((p) => (p === "model" ? null : "model"))}
-            title="选择模型（对本条消息生效）"
+            onClick={() => setPopup((p) => (p === "config" ? null : "config"))}
+            title="模型、推理力度、Skill 与权限"
+            aria-label="运行配置"
             className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[0.6875rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
-              popup === "model" ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+              "run-config-trigger inline-flex min-h-8 max-w-[70%] items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
+              popup ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
             )}
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -752,7 +772,8 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
               <rect x="9" y="9" width="5" height="5" rx="1" />
               <path d="M9 4.5h2.5a2 2 0 0 1 2 2V9M7 11.5H4.5a2 2 0 0 1-2-2V7" strokeLinecap="round" />
             </svg>
-            <span className="max-w-40 truncate font-mono">{modelLabel}</span>
+            <span className="truncate">运行配置</span>
+            <span className="truncate font-mono text-ink-3">{modelLabel} · {effort === "off" ? "默认" : effort}{permissionMode ? ` · ${PERM_PILL[permissionMode].label}` : ""}</span>
             <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -760,60 +781,14 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            title="添加图片（多模态输入）"
+            title="添加附件"
+            aria-label="添加附件"
             className="wb-iconbtn text-ink-3"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
               <path d="M13.5 7.5l-5.8 5.8a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 0 1 3 3l-6 6a1.1 1.1 0 0 1-1.6-1.6l5.3-5.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          <button
-            type="button"
-            onClick={() => setPopup((p) => (p === "skill" ? null : "skill"))}
-            title="注入 Skill"
-            className={cn(
-              "wb-iconbtn transition-colors",
-              popup === "skill" || skill ? "text-ink" : "text-ink-3",
-            )}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <path d="M8 1.5l1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 10.9l-3.7 2.1.8-4.2L2 5.9l4.2-.5L8 1.5z" strokeLinejoin="round" />
-            </svg>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setPopup((p) => (p === "effort" ? null : "effort"))}
-            title={`推理力度（对本条消息生效）${effort !== "off" ? ` · 当前 ${effort}` : ""}`}
-            className={cn(
-              "inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
-              popup === "effort" || effort !== "off" ? "text-ink" : "text-ink-3",
-            )}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <path d="M8 1.5v13M3.5 5.5L8 1.5l4.5 4M3.5 10.5L8 14.5l4.5-4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {effort !== "off" && <span className="font-mono text-[0.625rem]">{effort}</span>}
-          </button>
-
-          {/* 权限胶囊（Codex 基准 ④）：会话级权限模式常驻展示，点击循环切换。 */}
-          {permissionMode && onCyclePermissionMode && (
-            <button
-              type="button"
-              onClick={onCyclePermissionMode}
-              title={`权限模式：${PERM_PILL[permissionMode].label} · 点击切换（下一条消息生效）`}
-              className={cn(
-              "ml-1 inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[0.6875rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong",
-                PERM_PILL[permissionMode].cls,
-              )}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-                <path d="M8 1.8l4.5 2v3.4c0 3-1.9 5.7-4.5 6.9-2.6-1.2-4.5-3.9-4.5-6.9V3.8l4.5-2z" strokeLinejoin="round" />
-              </svg>
-              {PERM_PILL[permissionMode].label}
-            </button>
-          )}
-
           <span className="flex-1" />
 
           {/* 上下文用量 + 压缩 */}
@@ -837,7 +812,8 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
               type="button"
               onClick={onAbort}
               title="中止"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-danger/50 text-danger transition-colors hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+              aria-label="中止"
+              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md border border-danger/50 text-danger transition-colors hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
             >
               <span className="h-2.5 w-2.5 rounded-[2px] bg-danger" />
             </button>
@@ -847,7 +823,8 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
               onClick={submit}
               disabled={!text.trim() && images.length === 0 && attachments.length === 0}
               title="发送（⏎）"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-bg shadow-sm transition-all hover:-translate-y-px hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
+              aria-label="发送"
+              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
             >
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />

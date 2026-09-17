@@ -18,6 +18,26 @@ const EFFORTS = ["off", "minimal", "low", "medium", "high"] as const;
 type Effort = (typeof EFFORTS)[number];
 
 /**
+ * 指纹要读的附件 id 串。
+ *
+ * 【为什么要认两种形状】客户端请求体里是 `attachmentIds`（只给 id），而 workflow
+ * 里存下来的是 runner 的输入，那里叫 `attachmentRefs`（已解析的描述符）。只读
+ * `attachmentIds` 的话，重发时拿到的永远是空数组，与请求体一比对就不相等 →
+ * **带附件的消息只要重发（双击发送、超时重试）就返回 409「requestId 已用于不同的
+ * 消息内容」**，而那条消息其实早就发出去了。用户看到的是一个凭空冒出来的错误。
+ *
+ * 两种形状里 id 的顺序都与请求体一致（`resolveAttachmentRefs` 按序解析），所以
+ * 归一成一串 id 就能正确比较。
+ */
+function attachmentIdList(input: {
+  attachmentIds?: readonly string[];
+  attachmentRefs?: readonly { id: string }[];
+}): readonly string[] {
+  if (input.attachmentIds) return input.attachmentIds;
+  return input.attachmentRefs?.map((ref) => ref.id) ?? [];
+}
+
+/**
  * 幂等指纹。**只含 attachment id，不含文件内容**——旧实现把整份 base64 写进指纹，
  * 一次发送会让 requestId 去重表里多存一份完整文件（规格 2 §18.5）。
  */
@@ -25,12 +45,12 @@ function requestShape(input: {
   text?: string; agent?: string; model?: { providerId: string; modelId: string };
   images?: readonly { url: string; mediaType: string }[]; effort?: string;
   skillId?: string; skill?: { id: string }; references?: readonly string[];
-  attachmentIds?: readonly string[];
+  attachmentIds?: readonly string[]; attachmentRefs?: readonly { id: string }[];
 }, includeModel: boolean) {
   return JSON.stringify({
     text: input.text ?? "",agent: input.agent ?? null,model: includeModel ? input.model ?? null : null,
     images: input.images ?? [],effort: input.effort ?? null,skillId: input.skillId ?? input.skill?.id ?? null,
-    references: input.references ?? [],attachmentIds: input.attachmentIds ?? [],
+    references: input.references ?? [],attachmentIds: attachmentIdList(input),
   });
 }
 

@@ -181,6 +181,24 @@ function check(label, condition, detail) {
 }
 
 try {
+  // ── §18.2 回形针表达「添加文件」，且「引用项目文件」可被发现 ─────────────
+  {
+    resetPlan();
+    const page = await openPage();
+    const paperclip = page.locator('button[aria-label="添加文件"]').first();
+    check("回形针的提示写着「添加文件」", (await paperclip.getAttribute("title")) === "添加文件");
+    // 主按钮直接开选择器（省一次点击）；相邻箭头展开两种入口
+    await page.locator('button[aria-label="更多添加方式"]').click();
+    const menu = page.locator('[role="menu"][aria-label="添加文件"]');
+    await menu.waitFor();
+    const items = await menu.locator('[role="menuitem"]').allInnerTexts();
+    check("菜单里「引用项目文件」与「从电脑选择」并列，不必去别处找", items.join("|").includes("从电脑选择") && items.join("|").includes("引用项目文件"), items.join("|"));
+    // 文件选择器的 accept 来自唯一格式表，不再只写图片
+    const accept = await page.locator('input[type="file"]').getAttribute("accept");
+    check("accept 覆盖 PDF 与 Office 而不只是图片", accept.includes(".pdf") && accept.includes(".docx") && accept.includes(".pptx"), accept);
+    await page.close();
+  }
+
   // ── §18.1 三条入口产出一致的附件卡；§7.5 / §18.4 只有附件也能发送 ──────
   {
     resetPlan();

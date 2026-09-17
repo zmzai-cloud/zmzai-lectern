@@ -76,6 +76,11 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
   if (resolved.missing.length > 0) {
     return NextResponse.json({ error: "原消息的附件已不可用，请重新添加后再发送", code: "not_found" }, { status: 409 });
   }
+  // 未就绪的也要挡住，理由与 prompt 路由一致：`refs` 里只有就绪的那些，放过去
+  // 等于**静默丢掉**这个附件——用户看到的是一条少了一个文件的重发消息，而没有任何提示。
+  if (resolved.notReady.length > 0) {
+    return NextResponse.json({ error: "原消息的附件未就绪，请稍后重试", code: "not_ready" }, { status: 409 });
+  }
   const attachmentRefs = resolved.refs;
   if (!text && images.length === 0 && attachments.length === 0 && attachmentRefs.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });

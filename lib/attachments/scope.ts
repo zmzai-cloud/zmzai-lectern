@@ -35,13 +35,18 @@ export function attachmentScopeFor(sessionId: string): AttachmentScope {
   return { sessionId, projectId: owner.project.id, store: attachmentStoreFor(dataDirFor(owner.project)) };
 }
 
-/** 附件读取器（规格 §9.2）：framework 需要正文时经此回调，framework 自身不碰文件系统。
- *  按项目 dataDir 建一次并复用——同一项目下的 worktree 隔离 runtime 共享同一个 store。 */
+/** 附件读取器（规格 §9.2 / §13）：framework 需要正文时经此回调，framework 自身不碰文件系统。
+ *  按项目 dataDir 建一次并复用——同一项目下的 worktree 隔离 runtime 共享同一个 store。
+ *
+ *  **必须按 scope 校验归属**：一个项目的附件库装的是该项目**所有会话**的附件，
+ *  而 runner 是「一个 project 一个实例、轮流服务多个会话」。只按 id 取（`store.get`）
+ *  就等于让 A 会话的消息能读到 B 会话的文件——HTTP 路径早就用 `getScoped` 挡住了，
+ *  执行路径不能是另一个口子。 */
 export function attachmentProviderFor(dataDir: string): AttachmentProvider {
   const store = attachmentStoreFor(dataDir);
   return {
-    async read(id: string) {
-      const record = store.get(id);
+    async read(id: string, scope: { sessionId: string }) {
+      const record = store.getScoped(id, scope.sessionId);
       if (!record) return null;
       const opened = store.open(id);
       // blob 丢失（外部清理/磁盘损坏）时返回 null：历史消息仍要能重放（规格 §12）
@@ -59,6 +64,14 @@ export function attachmentProviderFor(dataDir: string): AttachmentProvider {
         },
         bytes: Buffer.concat(chunks),
       };
+    },
+    /** 会话内已就绪的附件（供跨附件搜索）。未就绪的不列——搜索一个还没解析完的
+     *  文件只会返回「没找到」，那是在误导模型。 */
+    async list(scope: { sessionId: string }) {
+      return store
+        .list(scope.sessionId)
+        .filter((record) => record.status === "ready")
+        .map((record) => ({ id: record.id, name: record.filename, kind: record.kind }));
     },
   };
 }

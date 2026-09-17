@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { resolve } from "node:path";
 import {
   createAgentRuntime,
+  createAttachmentTools,
   createSqliteSessionStore,
   createSqliteEventLog,
   createMemoryEventLog,
@@ -238,10 +239,17 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       return { title: `已加载 Skill · ${skill.name}`, output: `<skill id="${skill.id}" name="${skill.name}">\n${skill.markdown}\n</skill>`, metadata: { skillId: skill.id } };
     },
   };
+  // 附件读取器既供 runner 注入上下文（规格 2 §9.2），也供附件读取工具回调（§10.2）。
+  // 同一个实例：两条路径的授权判定必须一致，各建一个迟早会分叉。
+  const attachmentProvider = attachmentProviderFor(dir);
   const baseLocalTools = [
     skillTool,
     ...createGitTools({ cwd: wsRoot }),
     ...createTerminalTools(terminalManager(), { workspaceRoot: wsRoot }),
+    // 文档解析器尚未落地时这里返回空数组（不注册只会回「未启用」的工具）；
+    // 适配器接入后 `provider.extract` 存在，read_attachment / search_attachments
+    // 自动出现在工具列表里，无需再改这里。
+    ...createAttachmentTools(attachmentProvider),
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。
@@ -310,7 +318,7 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       leaseStore: sessionStore,
       // 附件正文读取器（规格 2 §9.2）：runner 需要附件内容时回调本项目的附件库。
       // framework 因此不必依赖文件系统，图片/文本附件的注入也无需 data URL 事件。
-      attachments: attachmentProviderFor(dir),
+      attachments: attachmentProvider,
       compaction: {
         enabled: true,
         contextWindow: contextWindowFor(),

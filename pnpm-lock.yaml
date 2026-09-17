@@ -1620,7 +1620,7 @@ packages:
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
   '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.6.0.tgz':
-    resolution: {integrity: sha512-kosOcyJAzcBMPf55NdEF1edbbwHrm91XuF+kCPKfhc46xuYxe2GT1TAeA1NIpNKNsSywtYiyaCSuKf1Jsu3GGA==, tarball: file:vendor/zmzai-agent-framework-0.6.0.tgz}
+    resolution: {integrity: sha512-S/laWEOEgoeNsexqyeNxfWtIwhG7gdYJSMig0z8NN4+WHju9LFBVjsIH5O5g/dGUZbwtPbnVz9UR6kIrWFyHQg==, tarball: file:vendor/zmzai-agent-framework-0.6.0.tgz}
     version: 0.6.0
     hasBin: true
 

@@ -18,6 +18,7 @@ vi.mock("@zmzai/agent-framework", () => ({
   createOpenAiModelProvider: () => ({ getModel: () => ({}) }),
   createGitTools: fixture.gitTools, createTerminalTools: fixture.terminalTools,
   createHostTerminalBackend: vi.fn(), TerminalManager: class {},
+  createAttachmentTools: () => [],
   reclaimExpiredLeases: vi.fn(), listActiveSessions: () => [],
 }));
 vi.mock("./projects", () => ({

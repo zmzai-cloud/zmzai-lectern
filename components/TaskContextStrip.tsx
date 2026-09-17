@@ -153,8 +153,9 @@ export default function TaskContextStrip({
       <span
         role="status"
         aria-label={`任务状态：${presentation.label}。${STATE_DESCRIPTION[presentation.state]}`}
+        data-task-primary-status="true"
         className={cn(
-          "order-2 inline-flex shrink-0 items-center gap-1 py-0.5 text-[0.6875rem] font-medium",
+          "order-2 inline-flex shrink-0 items-center gap-1 py-0.5 text-xs font-medium",
           presentation.state === "idle" && "sr-only",
           style.text,
         )}
@@ -165,19 +166,24 @@ export default function TaskContextStrip({
       </span>
 
       {/* 任务标题：可截断但有 title 兜底；绝不让它消失 */}
-      <span
-        className="min-w-0 truncate text-[0.875rem] font-semibold text-ink"
-        title={projectName ? `${title} · ${projectName}` : title}
-      >
-        {title}
+      <span className="min-w-0">
+        <span
+          className="block truncate text-[0.875rem] font-semibold text-ink"
+          title={projectName ? `${title} · ${projectName}` : title}
+        >
+          {title}
+        </span>
+        {(projectName || meta) && (
+          <span className="hidden min-w-0 truncate text-xs leading-4 text-ink-3 sm:block">
+            {[projectName, meta].filter(Boolean).join(" · ")}
+          </span>
+        )}
       </span>
-
-      {/* 项目名（次级，窄屏先折叠） */}
 
       {/* 操作/完成摘要（更次级，宽屏才显示） */}
       {summary && isRunning && (
         <span
-          className="hidden min-w-0 flex-1 truncate text-[0.6875rem] text-ink-3 lg:block"
+          className="hidden min-w-0 flex-1 truncate text-xs text-ink-3 lg:block"
           title={summary}
         >
           {summary}
@@ -189,7 +195,7 @@ export default function TaskContextStrip({
       {/* 次级失败 badge（§7.6）：失败但产物在时，失败降级为次级信息而非吞掉 */}
       {presentation.failureBadge && (
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-[3px] bg-danger-tint px-1.5 py-0.5 text-[0.625rem] font-medium text-danger"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md bg-danger-tint px-2 py-1 text-xs font-medium text-danger"
           title={presentation.failureBadge.label}
         >
           <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>

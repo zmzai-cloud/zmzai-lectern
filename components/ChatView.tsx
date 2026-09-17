@@ -281,6 +281,7 @@ type Props = {
   onAbort: () => void;
   /** 点击消息内的文件路径（可带行号）→ 产物侧文件 Tab 打开并滚动定位（P1-10/F2 联动）。 */
   onOpenFile: (path: string, line?: number) => void;
+  onOpenArtifact?: () => void;
   /** 历史分页：还有更早消息 + 触顶时回调（page.tsx 分页拉取并 prepend）。 */
   historyState: HistoryState;
   onLoadMore: () => void;
@@ -450,7 +451,7 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -636,7 +637,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {/* 消息区与 Composer 是两个明确的 grid row：上面只能在自身内部滚动，
           下面的 Composer 因此不可能越过 Debug Area。 */}
       <div className="flex min-h-0 flex-col" inert={searchOpen}>
-      {sessionId && <div className="flex h-8 shrink-0 justify-end px-4">
+      {sessionId && <div className="absolute right-4 top-3 z-10">
         <button ref={searchButtonRef} type="button" title="搜索当前会话" aria-label="搜索当前会话" onClick={() => setSearchOpen(true)}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"><Search size={15} /></button>
       </div>}
@@ -680,7 +681,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       )}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (
-        <details className="chat-read-context shrink-0 px-6 py-2">
+        <details className="chat-read-context mx-auto w-full max-w-[800px] shrink-0 px-6 py-2">
           <summary className="cursor-pointer text-xs text-ink-3">已读取 {reads.length} 个文件</summary>
           <div className="flex flex-wrap gap-1 pt-2">
           {reads.map((path) => (
@@ -689,7 +690,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               type="button"
               onClick={() => onOpenFile(path)}
               title={`${path} · 点击在文件 Tab 打开`}
-              className="max-w-44 truncate rounded-[3px] bg-surface-2 px-2 py-0.5 font-mono text-[0.625rem] text-ink-2 transition-colors hover:bg-line hover:text-ink"
+              className="max-w-full truncate rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink-2 transition-colors hover:bg-line hover:text-ink"
             >
               {path}
             </button>
@@ -1011,9 +1012,14 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             不跨轮累积。挂在 SummaryCard 下方，与「总结陈词」一起构成收尾区。 */}
         {summary && !running && summaryArtifacts.length > 0 && (
           <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium text-ink-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-ink-3">
               <span>本轮产物</span>
-              <span className="font-mono text-[0.625rem] text-ink-3">{summaryArtifacts.length}</span>
+              <span className="font-mono text-xs text-ink-3">{summaryArtifacts.length}</span>
+              {onOpenArtifact && (
+                <button type="button" onClick={onOpenArtifact} className="ml-auto rounded-md bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink">
+                  打开成果
+                </button>
+              )}
             </div>
             {summaryArtifacts.map((a) => (
               <ArtifactCard key={a.artifactId} artifact={a} onOpenFile={onOpenFile} />

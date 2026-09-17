@@ -959,6 +959,11 @@ export default function App() {
             meta={modelLabel}
             actions={
               <>
+              {(presentation.state === "review_ready" || presentation.state === "delivered") && (
+                <button type="button" onClick={() => openWorkbench(presentation.state === "delivered" ? "preview" : "review")} className="inline-flex min-h-8 items-center rounded-md bg-surface-2 px-2.5 text-xs font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink">
+                  {presentation.state === "delivered" ? "打开成果" : "打开审查"}
+                </button>
+              )}
               <TaskBarActions
                 connState={connState}
                 isolation={activeIsolation}
@@ -1057,6 +1062,7 @@ export default function App() {
               stalled={stalled}
               onAbort={abort}
               onOpenFile={openFileInWorkbench}
+              onOpenArtifact={() => openWorkbench("preview")}
               echo={echo}
               wtNotice={wtNotice}
               onRewind={handleRewind}
@@ -1125,25 +1131,19 @@ export default function App() {
         />
       )}
 
-      {/* 底部状态栏：低调一行 */}
-      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-surface px-4 text-[0.6875rem] text-ink-3">
-        <span className={`h-1.5 w-1.5 rounded-full ${status === "running" ? "animate-pulse bg-live" : "bg-ink-3"}`} />
-        <span>{statusLabel(status)}</span>
+      <footer className="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-surface px-4 text-xs text-ink-3">
         <button
           type="button"
           onClick={toggleBottomPanel}
           title={bottomPanelOpen ? "收起终端（⌘J / Ctrl+J）" : "打开终端（⌘J / Ctrl+J）"}
           aria-label={bottomPanelOpen ? "收起终端" : "打开终端"}
           aria-keyshortcuts="Meta+J Control+J"
-          className="flex h-5 w-5 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
         >
           <PanelBottom size={14} strokeWidth={1.55} aria-hidden="true" />
         </button>
-        <span className="text-line-strong">·</span>
-        <span className="font-mono">
-          model: {modelLabel}
-          {selectedModel ? "（本会话消息覆盖）" : ""}
-        </span>
+        <span>终端</span>
+        <span className="ml-auto font-mono">⌘J / Ctrl+J</span>
       </footer>
     </div>
   );

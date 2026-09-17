@@ -555,12 +555,12 @@ export default function TerminalPane({
   const activeSess = sessions.find((s) => s.id === activeId) ?? null;
 
   const iconBtn =
-    "flex h-6.5 w-6.5 items-center justify-center rounded-[4px] text-[#b8b8bd] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7797e8]";
+    "flex h-7 w-7 items-center justify-center rounded-md text-[#b8b8bd] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7797e8]";
 
   return (
     <div data-terminal-pane className="flex min-h-0 flex-1 flex-col bg-[#1e1e22] text-[#d4d4d4]">
       <div className="flex h-8 shrink-0 items-center gap-1 border-b border-white/10 px-2">
-        <span className="px-2 text-[0.6875rem] font-semibold tracking-wide text-[#b8b8bd]">终端</span>
+        <span className="px-2 text-xs font-semibold tracking-wide text-[#b8b8bd]">终端</span>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" role="tablist" aria-label="终端">
           {sessions.map((s) => {
             const isActive = s.id === activeId;

@@ -36,7 +36,7 @@ export default function DebugArea({
             title="收起调试区（⌘J / Ctrl+J）"
             aria-label="收起调试区"
             aria-keyshortcuts="Meta+J Control+J"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-[#b8b8bd] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7797e8]"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#b8b8bd] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7797e8]"
           >
             <svg
               width="14"

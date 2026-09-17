@@ -153,7 +153,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
                 }
               }}
               placeholder="搜索会话…"
-              className="h-9 min-w-0 flex-1 rounded-sm border border-line bg-bg px-3 text-[0.8125rem] text-ink outline-none placeholder:text-ink-3 focus:border-ink"
+              className="h-9 min-w-0 flex-1 rounded-md border border-line bg-bg px-3 text-[0.8125rem] text-ink outline-none placeholder:text-ink-3 focus:border-ink"
             />
           ) : (
             <button
@@ -181,7 +181,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               }
               aria-pressed={isolateNew}
               className={cn(
-                "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm transition-colors",
+                "flex h-9 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
                 isolateNew
                   ? "bg-accent text-accent-ink"
                   : "text-ink-3 hover:bg-surface-2 hover:text-ink",
@@ -203,7 +203,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
               if (searchOpen) setQuery("");
             }}
             className={cn(
-              "flex h-9 w-8 shrink-0 items-center justify-center rounded-sm transition-colors",
+              "flex h-9 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
               searchOpen
                 ? "bg-surface-2 text-ink"
                 : "text-ink-3 hover:bg-surface-2 hover:text-ink",
@@ -249,7 +249,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
                       title={GROUP_LABEL[g.key]}
                       aria-expanded={g.key === "archived" ? archivedOpen : undefined}
                       className={cn(
-                        "flex w-full items-center gap-1 px-2 py-1 text-left text-[0.625rem] font-semibold tracking-wide text-ink-3",
+                        "flex w-full items-center gap-1 px-2 py-1 text-left text-xs font-semibold tracking-wide text-ink-3",
                         g.key === "archived" ? "transition-colors hover:text-ink" : "cursor-default",
                       )}
                     >
@@ -269,7 +269,7 @@ export default function SessionList({ sessions, activeId, top, bottom, onNewSess
                         </svg>
                       )}
                       <span>{GROUP_LABEL[g.key]}</span>
-                      <span className="font-mono text-[0.625rem] text-ink-3/70">{g.items.length}</span>
+                      <span className="font-mono text-xs text-ink-3/70">{g.items.length}</span>
                     </button>
                     {!collapsed && g.items.map(renderRow)}
                   </section>
@@ -332,7 +332,7 @@ function SessionRow({
       }}
       className={cn(
         "task-row group relative mb-1 block w-full cursor-pointer rounded-lg py-2.5 pl-3 pr-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ink-3",
-        active ? "bg-surface-3" : "hover:bg-surface-2",
+        active ? "task-row-active bg-surface-3" : "hover:bg-surface-2",
       )}
     >
       {/* 活跃行标记：一条左侧竖线 + selected 背景。不再叠加 shadow/ring（§4.3）。 */}
@@ -351,7 +351,7 @@ function SessionRow({
             }
           }}
           onBlur={onEndRename}
-          className="h-6 w-full rounded-sm border border-line bg-bg px-1.5 text-[0.8125rem] text-ink outline-none focus:border-ink"
+          className="h-6 w-full rounded-md border border-line bg-bg px-1.5 text-[0.8125rem] text-ink outline-none focus:border-ink"
         />
       ) : (
         <div className="flex items-baseline justify-between gap-2">
@@ -376,12 +376,12 @@ function SessionRow({
               </span>
             )}
           </span>
-          <span className="shrink-0 font-mono text-[0.625rem] text-ink-3 group-hover:invisible">
+          <span className="shrink-0 font-mono text-xs text-ink-3 group-hover:invisible">
             {timeLabel(s.time.updated ?? s.time.created)}
           </span>
         </div>
       )}
-      {!["completed", "idle"].includes(outcome) && <div className="mt-1 flex items-center gap-1.5 truncate text-[0.6875rem] text-ink-3">
+      {!["completed", "idle"].includes(outcome) && <div className="mt-1 flex items-center gap-1.5 truncate text-xs text-ink-3">
         {/* 状态：点形状 + 可读文字 + title（三重表达，颜色只是辅助） */}
         <span title={style.label} className={cn("h-1.5 w-1.5 shrink-0 rounded-full", style.dot)} />
         <span className={cn("shrink-0", style.text)}>{style.label}</span>

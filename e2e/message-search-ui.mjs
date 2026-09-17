@@ -43,7 +43,11 @@ try {
   });
   await page.goto(process.env.LECTERN_TEST_URL || "http://127.0.0.1:3104", { waitUntil: "domcontentloaded" });
   await page.getByText("Search acceptance", { exact: true }).click();
-  await page.getByText("Searchable message 10000", { exact: true }).waitFor();
+  await page.getByText("Searchable message 9951", { exact: true }).waitFor().catch(async (error) => {
+    await page.screenshot({ path: `${output}/load-failure.png`, animations: "disabled" });
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`${error.message}\n${body.slice(0, 3000)}`);
+  });
   await page.locator(".messages").evaluate(el => { el.scrollTop = 100; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
   await page.waitForTimeout(300);
   const scrollTop = await page.locator(".messages").evaluate(el => el.scrollTop);
@@ -66,7 +70,6 @@ try {
   assert.equal(contextCount, 3);
   for (const [width, height] of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    if (width === 390) await page.getByRole("button", { name: "收起会话栏", exact: true }).click();
     const rect = await input.boundingBox();
     assert.ok(rect && rect.width > 60 && rect.x >= 0 && rect.x + rect.width <= width);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

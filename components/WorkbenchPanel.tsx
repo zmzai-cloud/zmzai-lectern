@@ -75,6 +75,7 @@ export default function WorkbenchPanel({
   sessionId,
   summary,
   initialTab = "review",
+  initialTabExplicit = false,
   onTabChange,
 }: {
   openRequest?: { path: string; ts: number; line?: number } | null;
@@ -84,7 +85,8 @@ export default function WorkbenchPanel({
   /** 任务终态小结（session.summary，N5）：透传给 ReviewPane 渲染任务内变更摘要（§V3-1）。 */
   summary?: SessionSummary | null;
   initialTab?: WorkbenchTab;
-  onTabChange?: (tab: WorkbenchTab) => void;
+  initialTabExplicit?: boolean;
+  onTabChange?: (tab: WorkbenchTab, explicit: boolean) => void;
 }) {
   const [tab, setTabState] = useState<Tab>(initialTab);
   const [fileTabs, setFileTabs] = useState<FileTab[]>([]);
@@ -101,12 +103,12 @@ export default function WorkbenchPanel({
   // 与 suppressedPreviewPath 的区别：后者只抑制「同一条产物路径」的重复推荐，
   // 前者一旦为真，本任务内所有自动推荐都停手（§7.4 / §7.5「if the user has not
   // explicitly selected a workbench tab in this task」）。
-  const userChoseTab = useRef(false);
+  const userChoseTab = useRef(initialTabExplicit);
   const loadSeq = useRef(0);
 
-  const setTab = useCallback((next: Tab) => {
+  const setTab = useCallback((next: Tab, explicit = false) => {
     setTabState(next);
-    onTabChange?.(next);
+    onTabChange?.(next, explicit);
   }, [onTabChange]);
 
   // 同步 canvasPath 到 ref，供 openFile 回调读取最新值而不引入依赖
@@ -162,7 +164,7 @@ export default function WorkbenchPanel({
     const seq = ++loadSeq.current;
     // 用户主动打开文件（消息内路径点击 / 文件树 / ⌘P）→ 视为显式选择
     userChoseTab.current = true;
-    setTab("files");
+    setTab("files", true);
     setFileView(isMarkdown(path) && !line ? "preview" : "source");
     setAnchorLine(line);
     setActivePath(path);
@@ -236,7 +238,7 @@ export default function WorkbenchPanel({
     if (t !== "preview" && tab === "preview" && canvasPath) {
       suppressedPreviewPath.current = canvasPath;
     }
-    setTab(t);
+    setTab(t, true);
   };
 
   const activeIsHtml = activeFile ? isPreviewable(activeFile.path) : false;

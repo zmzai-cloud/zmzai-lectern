@@ -20,22 +20,22 @@ describe("task workbench layout", () => {
   });
 
   it("keeps workbench layout isolated per task", () => {
-    writeTaskWorkbenchLayout("a", { open: true, width: 520, tab: "preview" });
-    writeTaskWorkbenchLayout("b", { open: false, width: 384, tab: "review" });
+    writeTaskWorkbenchLayout("a", { open: true, width: 520, tab: "preview", tabExplicit: true });
+    writeTaskWorkbenchLayout("b", { open: false, width: 384, tab: "review", tabExplicit: false });
 
-    expect(readTaskWorkbenchLayout("a")).toEqual({ open: true, width: 520, tab: "preview" });
-    expect(readTaskWorkbenchLayout("b")).toEqual({ open: false, width: 384, tab: "review" });
+    expect(readTaskWorkbenchLayout("a")).toEqual({ open: true, width: 520, tab: "preview", tabExplicit: true });
+    expect(readTaskWorkbenchLayout("b")).toEqual({ open: false, width: 384, tab: "review", tabExplicit: false });
   });
 
   it("falls back and clamps malformed preferences", () => {
     localStorage.setItem("lectern:task-layout:bad", JSON.stringify({ open: "yes", width: 9999, tab: "terminal" }));
 
-    expect(readTaskWorkbenchLayout("bad")).toEqual({ open: false, width: 720, tab: "review" });
+    expect(readTaskWorkbenchLayout("bad")).toEqual({ open: false, width: 720, tab: "review", tabExplicit: false });
   });
 
   it("uses a closed default when storage is unavailable", () => {
     vi.stubGlobal("localStorage", undefined);
 
-    expect(readTaskWorkbenchLayout("missing")).toEqual({ open: false, width: 384, tab: "review" });
+    expect(readTaskWorkbenchLayout("missing")).toEqual({ open: false, width: 384, tab: "review", tabExplicit: false });
   });
 });

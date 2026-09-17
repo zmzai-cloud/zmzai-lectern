@@ -25,19 +25,6 @@ import { readTaskWorkbenchLayout, writeTaskWorkbenchLayout, type WorkbenchTab } 
 import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation } from "@/lib/types";
 import { PERMISSION_DOMAIN_OF } from "@/lib/types";
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case "running":
-      return "运行中";
-    case "waiting_permission":
-      return "等待授权";
-    case "waiting_input":
-      return "等待输入";
-    default:
-      return "空闲";
-  }
-}
-
 /** 把 UI 会话状态映射为状态机域的 SessionStatus（state-driven spec §6）。
  *  会话状态流里没有终态（只有 running / waiting_* / 空），终态取自
  *  chatData.summary.kind（framework session.summary 事件的 kind）。 */
@@ -251,6 +238,7 @@ export default function App() {
   const [workbenchWidth, setWorkbenchWidth] = useState(384);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("review");
+  const [workbenchTabExplicit, setWorkbenchTabExplicit] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [viewportHeight, setViewportHeight] = useState(900);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(260);
@@ -303,6 +291,7 @@ export default function App() {
     setWorkbenchOpen(layout.open);
     setWorkbenchWidth(layout.width);
     setWorkbenchTab(layout.tab);
+    setWorkbenchTabExplicit(layout.tabExplicit);
   }, [activeId, layoutReady]);
   useEffect(() => {
     if (!layoutReady) return;
@@ -310,8 +299,9 @@ export default function App() {
       open: workbenchOpen,
       width: workbenchWidth,
       tab: workbenchTab,
+      tabExplicit: workbenchTabExplicit,
     });
-  }, [layoutReady, workbenchOpen, workbenchTab, workbenchWidth]);
+  }, [layoutReady, workbenchOpen, workbenchTab, workbenchTabExplicit, workbenchWidth]);
   useEffect(() => {
     const syncViewport = () => {
       setViewportWidth(window.innerWidth);
@@ -390,6 +380,7 @@ export default function App() {
   }, [compactPanels]);
   const openWorkbench = useCallback((tab: WorkbenchTab) => {
     setWorkbenchTab(tab);
+    setWorkbenchTabExplicit(true);
     setWorkbenchOpen(true);
     if (compactPanels) setSidebarOverlayOpen(false);
   }, [compactPanels]);
@@ -1073,7 +1064,7 @@ export default function App() {
               <>
                 <VerticalSplitter label="调整右侧工作区宽度" value={workbenchWidth} min={320} max={workbenchMax} direction={-1} onReset={() => setWorkbenchWidth(384)} onChange={setWorkbenchWidth} />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} onTabChange={setWorkbenchTab} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={(tab, explicit) => { setWorkbenchTab(tab); if (explicit) setWorkbenchTabExplicit(true); }} />
                 </div>
               </>
             )}
@@ -1114,7 +1105,7 @@ export default function App() {
       {compactPanels && workbenchOpen && (
         <div className="panel-scrim" role="presentation" onMouseDown={() => setWorkbenchOpen(false)}>
           <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
-            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} onTabChange={setWorkbenchTab} />
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={(tab, explicit) => { setWorkbenchTab(tab); if (explicit) setWorkbenchTabExplicit(true); }} />
           </div>
         </div>
       )}

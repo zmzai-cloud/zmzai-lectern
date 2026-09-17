@@ -21,6 +21,7 @@
     "test:release": "node --test scripts/release-validation.test.mjs scripts/signing-preflight.test.mjs scripts/upload-oss.source-test.mjs scripts/strip-standalone-source.source-test.mjs scripts/check-standalone-clean.source-test.mjs electron/updater.source-test.cjs electron/web-server.source-test.cjs",
     "test:packaged": "node e2e/packaged-smoke.mjs",
     "test:task-groups-ui": "node e2e/task-groups-ui.mjs",
+    "test:conversation-ui": "node e2e/conversation-first-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",
     "build:mac": "bash scripts/build-mac.sh",
     "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",

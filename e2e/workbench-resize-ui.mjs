@@ -11,7 +11,7 @@ try {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.addInitScript(() => {
-    localStorage.setItem("lectern:task-layout:resize", JSON.stringify({ open: true, width: 384, tab: "review" }));
+    localStorage.setItem("lectern:task-layout:resize", JSON.stringify({ open: true, width: 384, tab: "review", tabExplicit: true }));
     window.EventSource = class { close() {} };
   });
 

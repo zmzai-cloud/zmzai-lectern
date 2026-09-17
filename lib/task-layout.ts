@@ -4,12 +4,14 @@ export type TaskWorkbenchLayout = {
   open: boolean;
   width: number;
   tab: WorkbenchTab;
+  tabExplicit: boolean;
 };
 
 const DEFAULT_LAYOUT: TaskWorkbenchLayout = {
   open: false,
   width: 384,
   tab: "review",
+  tabExplicit: false,
 };
 
 const MIN_WORKBENCH_WIDTH = 320;
@@ -45,6 +47,7 @@ export function readTaskWorkbenchLayout(taskId: string): TaskWorkbenchLayout {
       open: typeof value.open === "boolean" ? value.open : false,
       width: Math.min(MAX_WORKBENCH_WIDTH, Math.max(MIN_WORKBENCH_WIDTH, width)),
       tab: validTab(value.tab),
+      tabExplicit: typeof value.tabExplicit === "boolean" ? value.tabExplicit : false,
     };
   } catch {
     return { ...DEFAULT_LAYOUT };
@@ -59,6 +62,7 @@ export function writeTaskWorkbenchLayout(taskId: string, layout: TaskWorkbenchLa
       open: layout.open,
       width: Math.min(MAX_WORKBENCH_WIDTH, Math.max(MIN_WORKBENCH_WIDTH, layout.width)),
       tab: validTab(layout.tab),
+      tabExplicit: layout.tabExplicit,
     }));
   } catch {
     // Layout preferences are optional and must never block the workspace.

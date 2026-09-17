@@ -42,8 +42,9 @@ import {
   type TaskWorkbenchLayout,
   type WorkbenchTab,
 } from "@/lib/task-layout";
-import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation } from "@/lib/types";
+import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation, InputAttachmentRef } from "@/lib/types";
 import { PERMISSION_DOMAIN_OF } from "@/lib/types";
+import type { ComposerSendInput } from "@/components/Composer";
 
 /** 把 UI 会话状态映射为状态机域的 SessionStatus（state-driven spec §6）。
  *  会话状态流里没有终态（只有 running / waiting_* / 空），终态取自
@@ -248,8 +249,17 @@ export default function App() {
   const readingHistoryRef = useRef(false);
   const sendIdentityRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
   const sessionCreationIdentityRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
-  // 乐观回显：send 时暂存本条用户消息，切会话后作废
-  const [echo, setEcho] = useState<{ text: string; images: { url: string; mediaType: string }[]; skill?: { id: string; name: string }; references?: string[] } | null>(null);
+  // 乐观回显：send 时暂存本条用户消息，切会话后作废。
+  // attachments 走描述符（规格 2 §12「optimistic echo 必须包含 attachment receipt」）：
+  // 卡片立刻画出文件名/类型/大小，不必等 SSE。
+  const [echo, setEcho] = useState<{
+    text: string;
+    images: { url: string; mediaType: string }[];
+    skill?: { id: string; name: string };
+    references?: string[];
+    attachments?: InputAttachmentRef[];
+    sessionId?: string;
+  } | null>(null);
   const [status, setStatus] = useState<string>("idle");
   const [pending, setPending] = useState<PermissionRequest | null>(null);
   // 后台会话动态（P2-15 续）：id → 结束态；点击会话清除
@@ -892,42 +902,70 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newSession]);
 
+  /**
+   * 发送一条消息（规格 2 §7.5）。
+   *
+   * 【对象参数】附件描述符替换了 data URL，位置参数已经排到第 6 个；对象参数让
+   * 「只有附件没有文字」这种组合是显式的，也不会再把 skill 和 references 传反。
+   *
+   * 【幂等指纹只含 attachment id】旧实现把整份 base64 也塞进指纹，一次发送就在
+   * requestId 去重表里多存一份完整文件（规格 §18.5）。附件内容现在只在存储里。
+   */
   const send = useCallback(
-    async (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[], attachments?: { name: string; mediaType: string; data: string; size: number }[]) => {
-      if (!text.trim() && !images?.length && !attachments?.length) return;
+    async ({ text, attachmentRefs, effort, skill, references }: ComposerSendInput) => {
+      const refs = attachmentRefs ?? [];
+      if (!text.trim() && refs.length === 0) return;
+      const attachmentIds = refs.map((ref) => ref.id);
       // 无会话时自动建（composer 不再强制先选会话）
       let sid = activeId;
       if (!sid) {
         if (!auth?.loggedIn) throw new Error("请先登录后发送附件或消息");
-        const fingerprint = JSON.stringify({ activeAgent,isolateNew,text,images,effort,skillId: skill?.id,references,attachments });
+        const fingerprint = JSON.stringify({ activeAgent, isolateNew, text, effort, skillId: skill?.id, references, attachmentIds });
         const retained = sessionCreationIdentityRef.current;
         const requestId = retained?.fingerprint === fingerprint
           ? retained.requestId
           : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        sessionCreationIdentityRef.current = { fingerprint,requestId };
-        const s = await client.createSession(activeAgent, undefined, isolateNew,requestId);
+        sessionCreationIdentityRef.current = { fingerprint, requestId };
+        const s = await client.createSession(activeAgent, undefined, isolateNew, requestId);
         if (sessionCreationIdentityRef.current?.requestId === requestId) sessionCreationIdentityRef.current = null;
         setSessions((prev) => [s, ...prev]);
         setActiveId(s.id);
         setActiveIsolation(s.isolation ?? { enabled: false });
         sid = s.id;
       }
-      // 乐观回显：发送瞬间显示用户气泡，真实 message.updated 到达后自动让位
-      setEcho({ text, images: images ?? [], ...(skill ? { skill } : {}), ...(references?.length ? { references } : {}) });
+      // 乐观回显：发送瞬间显示用户气泡，真实 message.updated 到达后按 attachment id
+      // 对齐替换（规格 §12）。带上 sid——附件卡片要靠它取元数据与原始文件。
+      setEcho({
+        text,
+        images: [],
+        ...(skill ? { skill } : {}),
+        ...(references?.length ? { references } : {}),
+        ...(refs.length ? { attachments: refs } : {}),
+        sessionId: sid,
+      });
       // P1-9 任务前自动快照（git 仓库且有变更时才落 commit；失败不阻塞发送）
-      void client.checkpointCreate(`任务前快照 · ${text.trim().slice(0, 30) || "图片任务"}`, sid).catch(() => undefined);
+      void client.checkpointCreate(`任务前快照 · ${text.trim().slice(0, 30) || "附件任务"}`, sid).catch(() => undefined);
       // per-prompt 模型/推理力度覆盖：composer 选了则随本条消息下发，否则跟随代理默认
       try {
-        const fingerprint = JSON.stringify({ sid,text,activeAgent,model: selectedModel,images,effort,skillId: skill?.id,references,attachments });
+        const fingerprint = JSON.stringify({ sid,text,activeAgent,model: selectedModel,effort,skillId: skill?.id,references,attachmentIds });
         const retained = sendIdentityRef.current;
         const requestId = retained?.fingerprint === fingerprint
           ? retained.requestId
           : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         sendIdentityRef.current = { fingerprint,requestId };
-        await client.prompt(sid, text, activeAgent, selectedModel ?? undefined, images, effort, skill?.id, references, attachments, requestId);
+        await client.prompt(sid, {
+          text,
+          agent: activeAgent,
+          model: selectedModel ?? undefined,
+          effort,
+          skillId: skill?.id,
+          references,
+          attachmentIds,
+          requestId,
+        });
         if (sendIdentityRef.current?.requestId === requestId) sendIdentityRef.current = null;
       } catch (error) {
-        setEcho(null); // 发送失败：撤回乐观气泡，错误经其它途径提示
+        setEcho(null); // 发送失败：撤回乐观气泡；文字与附件由 Composer 保留，重试不重复上传
         throw error;
       }
       // prompt 可能排队返回，刷新标题等元数据；AI 摘要标题异步落库，延迟再刷一次
@@ -1187,7 +1225,7 @@ export default function App() {
               onSelectModel={setSelectedModel}
               onSend={send}
               onReply={reply}
-              onContinue={(ctx) => void send(ctx)}
+              onContinue={(ctx) => void send({ text: ctx, attachmentRefs: [] })}
               stalled={stalled}
               onAbort={abort}
               onOpenFile={openFileInWorkbench}

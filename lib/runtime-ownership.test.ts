@@ -1,4 +1,10 @@
+import { createRequire } from "node:module";
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
+
+// Vite 的内置模块枚举不含 node:sqlite（与 lib/session-owner.test.ts 同一约定）。
+// lib/runtime 现在经 ./attachments/scope 间接加载附件库（规格 2 §9.2），
+// 不 mock 会在收集阶段就 "Failed to load url sqlite"。
+vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
 
 const fixture = vi.hoisted(() => ({
   active: { id: "a", path: "/workspace/a" },
@@ -23,6 +29,9 @@ vi.mock("./projects", () => ({
 }));
 vi.mock("./session-owner", () => ({ resolveSessionOwner: fixture.resolve, assertWorkspaceAvailable: vi.fn() }));
 vi.mock("./worktree", () => ({ worktreeForSession: () => null }));
+// 附件库要真开一个 SQLite 库文件，而本用例的 dataDir 是假的 `/data/a`。
+// 这里测的是「工具根是否跟着活动项目定格」，与附件存储无关，直接替身即可。
+vi.mock("./attachments/scope", () => ({ attachmentProviderFor: () => ({ read: async () => null }) }));
 vi.mock("./settings", () => ({ authHeaders: () => ({}), ollamaBase: () => null, getFailoverEndpoints: () => [] }));
 vi.mock("./relay", () => ({ relayBase: () => "https://relay.invalid" }));
 vi.mock("./mcp-config", () => ({ loadMcpConfig: () => ({ entries: [], errors: [], sources: [] }) }));

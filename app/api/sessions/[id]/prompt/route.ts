@@ -6,7 +6,8 @@ import { sessionRuntime, workspaceRootForSession } from "@/lib/runtime";
 import { withRequestCookie } from "@/lib/request-cookie";
 import { generateSessionTitle } from "@/lib/session-title";
 import { loadSkill } from "@/lib/skills";
-import { validateAttachments } from "@zmzai/agent-framework";
+import { attachmentScopeFor, resolveAttachmentRefs } from "@/lib/attachments/scope";
+import { MAX_ATTACHMENT_REFS } from "@zmzai/agent-framework";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -16,20 +17,25 @@ export const runtime = "nodejs";
 const EFFORTS = ["off", "minimal", "low", "medium", "high"] as const;
 type Effort = (typeof EFFORTS)[number];
 
+/**
+ * 幂等指纹。**只含 attachment id，不含文件内容**——旧实现把整份 base64 写进指纹，
+ * 一次发送会让 requestId 去重表里多存一份完整文件（规格 2 §18.5）。
+ */
 function requestShape(input: {
   text?: string; agent?: string; model?: { providerId: string; modelId: string };
   images?: readonly { url: string; mediaType: string }[]; effort?: string;
   skillId?: string; skill?: { id: string }; references?: readonly string[];
-  attachments?: readonly { name: string; mediaType: string; data: string; size: number }[];
+  attachmentIds?: readonly string[];
 }, includeModel: boolean) {
   return JSON.stringify({
     text: input.text ?? "",agent: input.agent ?? null,model: includeModel ? input.model ?? null : null,
     images: input.images ?? [],effort: input.effort ?? null,skillId: input.skillId ?? input.skill?.id ?? null,
-    references: input.references ?? [],attachments: input.attachments ?? [],
+    references: input.references ?? [],attachmentIds: input.attachmentIds ?? [],
   });
 }
 
-/** 发送提示词：进入 agent-framework runner，推理经 relay（cookie 透传）。 */
+/** 发送提示词：进入 agent-framework runner，推理经 relay（cookie 透传）。
+ *  附件只收 id（规格 2 §9.1），内容由附件存储持有并绑定到本条用户消息。 */
 async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as {
@@ -41,7 +47,7 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
     skillId?: string;
     references?: string[];
     requestId?: string;
-    attachments?: { name?: string; mediaType?: string; data?: string; size?: number }[];
+    attachmentIds?: string[];
   } | null;
   const text = body?.text?.trim() ?? "";
   const effort = (EFFORTS as readonly string[]).includes(body?.effort ?? "") ? (body?.effort as Effort) : undefined;
@@ -53,14 +59,20 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
     throw new WorkflowError("INVALID_INPUT", "非法 requestId", 422);
   }
   const requestId = body?.requestId ?? randomUUID();
-  let attachments;
-  try {
-    attachments = validateAttachments(body?.attachments);
-  } catch (error) {
-    rethrowWorkflowError(error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "附件不合法" }, { status: 422 });
+
+  // 附件 id → 描述符。归属校验在这里做（规格 §9.1 / §19：不接受任意 id）。
+  const attachmentIds = [...new Set((body?.attachmentIds ?? []).filter((value): value is string => typeof value === "string" && value.length > 0))].slice(0, MAX_ATTACHMENT_REFS);
+  const scope = attachmentScopeFor(id);
+  const resolved = resolveAttachmentRefs(scope, attachmentIds);
+  if (resolved.missing.length > 0) {
+    return NextResponse.json({ error: "附件不存在、不属于该会话或已被清理，请重新添加", code: "not_found" }, { status: 422 });
   }
-  if (!text && images.length === 0 && attachments.length === 0) {
+  if (resolved.notReady.length > 0) {
+    return NextResponse.json({ error: "还有附件未就绪，请等待解析完成或重试失败的附件", code: "not_ready" }, { status: 409 });
+  }
+  const attachmentRefs = resolved.refs;
+
+  if (!text && images.length === 0 && attachmentRefs.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });
   }
 
@@ -69,7 +81,7 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
   const runtime = sessionRuntime(id);
   const prior = await runtime.store.workflow?.findPrompt(id,requestId);
   if (prior) {
-    const incoming = { text,agent: body?.agent,model: body?.model,images,attachments,effort,skillId: body?.skillId,references };
+    const incoming = { text,agent: body?.agent,model: body?.model,images,effort,skillId: body?.skillId,references,attachmentIds };
     if (requestShape(incoming,body?.model !== undefined) !== requestShape(prior.input,body?.model !== undefined)) {
       throw new WorkflowError("CONFLICT","requestId 已用于不同的消息内容",409);
     }
@@ -83,11 +95,12 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
   // 自动标题（两段式）：①先落占位标题（首条消息摘要，立即生效不叫「新会话」）；
   // ②prompt 发出后异步调 LLM 生成 AI 摘要标题覆盖（见 lib/session-title.ts）。
   // 生成失败保留占位；用户已手动改名则不覆盖。
+  // file-only 消息用文件名做标题种子，但正文不插入任何伪文字（规格 2 §7.5）。
   let autoTitleSeed: string | null = null;
   try {
     const ses = await runtime.store.getSession(id);
     if (ses && (!ses.title || ses.title === "新会话")) {
-      const seed = text || (images.length ? "[图片消息]" : attachments.length ? `[文件：${attachments[0].name}]` : "");
+      const seed = text || (attachmentRefs.length ? attachmentRefs[0]!.name : images.length ? "[图片消息]" : "");
       if (seed) {
         autoTitleSeed = seed.replace(/\s+/g, " ").slice(0, 30);
         await runtime.store.updateSession(id, { title: autoTitleSeed });
@@ -99,8 +112,14 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
 
   try {
     const result = await withRequestCookie(cookieHeader, () =>
-      runtime.runner.prompt(id, { requestId, text, agent: body?.agent, model, images, attachments, ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
+      runtime.runner.prompt(id, { requestId, text, agent: body?.agent, model, images, ...(attachmentRefs.length ? { attachmentRefs } : {}), ...(effort ? { effort } : {}), ...(references.length ? { references } : {}), ...(selected ? { skill: { id: selected.id, name: selected.name, digest: selected.digest } } : {}) }),
     );
+    // 绑定：附件从「草稿」变成「已发送历史」，同时清除 TTL（规格 §9.2）。
+    // 绑定失败不阻塞发送——消息已经落地，附件最多按草稿 TTL 被清理，
+    // 而历史卡片对「blob 不可用」已有降级表现（规格 §12）。
+    if (result.userMessageId) {
+      for (const ref of attachmentRefs) scope.store.bind(ref.id, result.userMessageId, id);
+    }
     // AI 摘要标题：后台生成不阻塞响应；仅当标题仍是占位时覆盖。
     // 显式带上本轮实际模型：runner 会在 runLoop 回写 session.model，但
     // 生成是异步的，传参不依赖回写时序，且 prompt 未落库时更可靠。

@@ -6,6 +6,7 @@ import { isSessionActive, notifyEventLogListeners } from "@zmzai/agent-framework
 import { resolveModel, sessionCookieName } from "@/lib/relay";
 import { sessionRuntime } from "@/lib/runtime";
 import { withRequestCookie } from "@/lib/request-cookie";
+import { attachmentScopeFor, resolveAttachmentRefs } from "@/lib/attachments/scope";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,11 +62,22 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
     .filter((p) => p.type === "image")
     .map((p) => ({ url: p.url, mediaType: p.mediaType }));
   const text = body?.text?.trim() || originalText;
-  const attachments = target.parts.filter((p) => p.type === "file" && p.url.startsWith("data:")).map((p) => {
-    if (p.type !== "file") throw new Error("Invalid attachment");
-    return { name: p.filename, mediaType: p.mime, data: p.url, size: Buffer.from(p.url.slice(p.url.indexOf(",") + 1), "base64").length };
+  // 旧链路历史：data URL part 原样透传（否则升级后无法重发老消息）
+  const attachments = target.parts.flatMap((p) => {
+    if (p.type !== "file") return [];
+    const url = p.url;
+    if (typeof url !== "string" || !url.startsWith("data:")) return [];
+    return [{ name: p.filename, mediaType: p.mime, data: url, size: Buffer.from(url.slice(url.indexOf(",") + 1), "base64").length }];
   });
-  if (!text && images.length === 0 && attachments.length === 0) {
+  // 新链路：**复用** attachment id，不重新上传（规格 2 §11）。这里再次确认附件仍存在且
+  // 就绪——截断与重发之间用户可能已经删过会话数据，带着失效 id 重发只会得到一条空消息。
+  const scope = attachmentScopeFor(id);
+  const resolved = resolveAttachmentRefs(scope, target.parts.flatMap((p) => (p.type === "file" && p.attachmentId ? [p.attachmentId] : [])));
+  if (resolved.missing.length > 0) {
+    return NextResponse.json({ error: "原消息的附件已不可用，请重新添加后再发送", code: "not_found" }, { status: 409 });
+  }
+  const attachmentRefs = resolved.refs;
+  if (!text && images.length === 0 && attachments.length === 0 && attachmentRefs.length === 0) {
     return NextResponse.json({ error: "消息不能为空" }, { status: 400 });
   }
 
@@ -84,17 +96,23 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
     const cookie = request.cookies.get(sessionCookieName)?.value;
     const cookieHeader = cookie ? `${sessionCookieName}=${cookie}` : null;
     const model = await resolveModel(target.info.agent, cookieHeader);
-    await withRequestCookie(cookieHeader, () =>
+    const result = await withRequestCookie(cookieHeader, () =>
       runtime.runner.prompt(id, {
         text,
         agent: target.info.agent,
         model,
         attachments,
+        ...(attachmentRefs.length ? { attachmentRefs } : {}),
         ...(images.length > 0 ? { images } : {}),
         ...(selectedSkill ? { skill: selectedSkill } : {}),
         ...(references?.length ? { references } : {}),
       }),
     );
+    // 重新绑定到新的用户消息：旧消息已随截断删除，不重绑的话附件会一直指向
+    // 一条不存在的消息，既不会被清理也不会跟新的历史卡片对上。
+    if (result.userMessageId) {
+      for (const ref of attachmentRefs) scope.store.bind(ref.id, result.userMessageId, id);
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     rethrowWorkflowError(e);

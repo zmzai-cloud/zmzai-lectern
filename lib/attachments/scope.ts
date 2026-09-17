@@ -8,6 +8,7 @@
 
 import { dataDirFor, getActiveProject } from "@/lib/projects";
 import { resolveSessionOwner } from "@/lib/session-owner";
+import type { AttachmentProvider, InputAttachmentRef } from "@zmzai/agent-framework";
 
 import { DRAFT_SESSION_ID } from "./limits";
 import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
@@ -32,4 +33,70 @@ export function attachmentScopeFor(sessionId: string): AttachmentScope {
   }
   const owner = resolveSessionOwner(sessionId);
   return { sessionId, projectId: owner.project.id, store: attachmentStoreFor(dataDirFor(owner.project)) };
+}
+
+/** 附件读取器（规格 §9.2）：framework 需要正文时经此回调，framework 自身不碰文件系统。
+ *  按项目 dataDir 建一次并复用——同一项目下的 worktree 隔离 runtime 共享同一个 store。 */
+export function attachmentProviderFor(dataDir: string): AttachmentProvider {
+  const store = attachmentStoreFor(dataDir);
+  return {
+    async read(id: string) {
+      const record = store.get(id);
+      if (!record) return null;
+      const opened = store.open(id);
+      // blob 丢失（外部清理/磁盘损坏）时返回 null：历史消息仍要能重放（规格 §12）
+      if (!opened) return null;
+      const chunks: Buffer[] = [];
+      for await (const chunk of opened.stream) chunks.push(chunk as Buffer);
+      return {
+        ref: {
+          id: record.id,
+          name: record.filename,
+          mediaType: record.mediaType,
+          size: record.size,
+          sha256: record.sha256,
+          kind: record.kind,
+        },
+        bytes: Buffer.concat(chunks),
+      };
+    },
+  };
+}
+
+export type ResolvedAttachmentRefs = {
+  refs: InputAttachmentRef[];
+  /** 不存在或不属于该会话的 id：客户端可能带了别的会话/已被清理的附件。 */
+  missing: string[];
+  /** 存在但尚未就绪（解析中/失败）的 id：发送必须被拒绝，否则消息里会挂个空附件。 */
+  notReady: string[];
+};
+
+/**
+ * 把客户端给的 attachment id 解析成描述符（规格 §9.1 / §17.2.2）。
+ * 逐一经 `getScoped` 校验归属——**不接受任意 id**，这是附件越权的唯一关口。
+ */
+export function resolveAttachmentRefs(scope: AttachmentScope, ids: readonly string[]): ResolvedAttachmentRefs {
+  const refs: InputAttachmentRef[] = [];
+  const missing: string[] = [];
+  const notReady: string[] = [];
+  for (const id of ids) {
+    const record = scope.store.getScoped(id, scope.sessionId);
+    if (!record) {
+      missing.push(id);
+      continue;
+    }
+    if (record.status !== "ready") {
+      notReady.push(id);
+      continue;
+    }
+    refs.push({
+      id: record.id,
+      name: record.filename,
+      mediaType: record.mediaType,
+      size: record.size,
+      sha256: record.sha256,
+      kind: record.kind,
+    });
+  }
+  return { refs, missing, notReady };
 }

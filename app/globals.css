@@ -231,6 +231,12 @@ html[data-theme="dark"] {
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-selected-strong) 18%, transparent);
 }
 
+/* 待发附件卡片（规格 2 §7.4）：状态不只靠颜色——组件里每种状态都带图标与文字，
+   这里的底色只是第二重提示。失败用 danger tint 分层，不加边框（去线原则）。 */
+.attachment-card[data-status="error"] {
+  background: var(--color-danger-tint);
+}
+
 .chat-view { container-type: inline-size; }
 .panel-scrim {
   position: fixed;

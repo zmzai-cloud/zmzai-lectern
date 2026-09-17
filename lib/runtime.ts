@@ -27,6 +27,7 @@ import {
   type ToolContext,
 } from "@zmzai/agent-framework";
 import { currentCookieHeader } from "./request-cookie";
+import { attachmentProviderFor } from "./attachments/scope";
 import { authHeaders, ollamaBase, getFailoverEndpoints } from "./settings";
 import { capsFor } from "./model-caps";
 import { relayBase } from "./relay";
@@ -307,6 +308,9 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       // 租约接线（P0-③）：runner 起 run 盖章、结束清除；崩溃/重启后由
       // registerLeaseRecovery 的扫描循环收尾过期租约
       leaseStore: sessionStore,
+      // 附件正文读取器（规格 2 §9.2）：runner 需要附件内容时回调本项目的附件库。
+      // framework 因此不必依赖文件系统，图片/文本附件的注入也无需 data URL 事件。
+      attachments: attachmentProviderFor(dir),
       compaction: {
         enabled: true,
         contextWindow: contextWindowFor(),

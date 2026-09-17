@@ -4,9 +4,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Textarea, cn } from "@zmzai/theme";
 
+import { ComposerAttachmentList } from "@/components/AttachmentCards";
 import { client } from "@/lib/client";
+import { acceptAttribute } from "@/lib/attachments/limits";
+import { useComposerAttachments } from "@/lib/attachments/queue";
 import type { PermissionMode } from "@/lib/permission-mode";
-import type { ModelRef, ModelsState, SkillOption, ThinkingEffort, TreeNode, UsageInfo } from "@/lib/types";
+import type { InputAttachmentRef, ModelRef, ModelsState, SkillOption, ThinkingEffort, TreeNode, UsageInfo } from "@/lib/types";
+
+/**
+ * 一次发送的完整输入（规格 2 §7.5）。
+ *
+ * 【为什么改成对象】原来 onSend 是 6 个位置参数，末两位是 references 和附件；
+ * 附件换成描述符后参数只会更多，调用点把 skill 和 references 传反是迟早的事。
+ * 对象参数也让「只有附件没有文字」这种组合读起来是显式的。
+ */
+export type ComposerSendInput = {
+  text: string;
+  /** **已就绪**的附件描述符（规格 2 §11）。只有 id 与元数据，内容不在请求里。 */
+  attachmentRefs: InputAttachmentRef[];
+  effort?: ThinkingEffort;
+  skill?: { id: string; name: string };
+  /** @ 引用的工作区路径。与本地附件是两种产品语义，不混用同一个字段。 */
+  references?: string[];
+};
 
 /** token 数缩写：1234 → 1.2k */
 function fmtTokens(n: number): string {
@@ -44,7 +64,7 @@ type Props = {
   running: boolean;
   selectedModel: ModelRef | null;
   onSelectModel: (m: ModelRef | null) => void;
-  onSend: (text: string, images?: { url: string; mediaType: string }[], effort?: ThinkingEffort, skill?: { id: string; name: string }, references?: string[], attachments?: { name: string; mediaType: string; data: string; size: number }[]) => void | Promise<void>;
+  onSend: (input: ComposerSendInput) => void | Promise<void>;
   onAbort: () => void;
   /** 会话级权限模式（Codex 基准 ④）：胶囊常驻展示，点击循环切换。 */
   permissionMode?: PermissionMode;
@@ -75,11 +95,13 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   const [effort, setEffort] = useState<ThinkingEffort>("off");
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [compacting, setCompacting] = useState(false);
-  // 图片附件（P2-11）：data URL 随 prompt 下发，framework 多模态输入；
-  // imgNotice：选图/粘贴被拒的短暂提示（超限、非图片）
-  const [images, setImages] = useState<{ url: string; mediaType: string; name: string }[]>([]);
-  const [attachments, setAttachments] = useState<{ name: string; mediaType: string; data: string; size: number }[]>([]);
-  const [imgNotice, setImgNotice] = useState<string | null>(null);
+  // 附件（规格 2 §8）：选择 / 粘贴 / 拖放三条路径共用同一个队列 hook。
+  // 删除历史上「图片一套 data URL、普通附件一套 data URL」的两份平行状态——
+  // 那是三种入口行为分叉的根源，也是 base64 进 prompt JSON 的来源。
+  const attachments = useComposerAttachments(sessionId);
+  // 回形针菜单与拖放高亮：纯呈现状态，不落任何持久化。
+  const [attachMenu, setAttachMenu] = useState(false);
+  const [dropping, setDropping] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -191,13 +213,16 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
 
   // 弹层点击外部关闭
   useEffect(() => {
-    if (!popup) return;
+    if (!popup && !attachMenu) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setPopup(null);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setPopup(null);
+        setAttachMenu(false);
+      }
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [popup]);
+  }, [popup, attachMenu]);
 
   // 模型维度平铺：relay /v1/models 已按调用者身份过滤
   // （个人 key → allowedModels 子集；登录会话 → 全部），直接用它而非渠道分组视图
@@ -310,85 +335,141 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
 
   const submit = useCallback(async () => {
     const body = text.trim();
-    // 无会话也可发送（page.send 会自动建会话）
-    if (!body && images.length === 0 && attachments.length === 0) return;
-    if (images.length > 0 && VISION_UNSAFE.test(currentModelId)) {
-      setImgNotice(`${currentModelId} 不支持图片输入，请点击底部模型名切换（如 gpt-5.6-*）`);
+    const attachmentRefs = attachments.readyRefs;
+    // 无会话也可发送（page.send 会自动建会话）；只有附件、没有文字也是合法消息
+    if (!body && attachmentRefs.length === 0) return;
+    // 附件未就绪就不发：不发半个包，也不静默丢掉未就绪的附件（规格 §7.5 / §18.8）
+    if (attachments.blockedReason) {
+      attachments.notify(attachments.blockedReason);
       return;
     }
-    const full = body;
+    // 已知不支持视觉输入的模型：图片会让上游直接 400，表现为会话「卡住」，发送前拦。
+    if (attachments.items.some((item) => item.kind === "image") && VISION_UNSAFE.test(currentModelId)) {
+      attachments.notify(`${currentModelId} 不支持图片输入，请点击底部模型名切换（如 gpt-5.6-*）`);
+      return;
+    }
     // @ 引用的文件收集为上下文提示（agent 有 fs 工具，按路径自行读取）
-    const refs = [...body.matchAll(/(^|\s)@([^\s@]+)/g)].map((m) => m[2]);
-    try { await onSend(
-      full,
-      images.map((im) => ({ url: im.url, mediaType: im.mediaType })),
-      effort === "off" ? undefined : effort,
-      skill ? { id: skill.id, name: skill.name } : undefined,
-      [...new Set(refs)],
-      attachments,
-    );
-    } catch (error) { setImgNotice(error instanceof Error ? error.message : "发送失败，附件已保留"); return; }
+    const references = [...new Set([...body.matchAll(/(^|\s)@([^\s@]+)/g)].map((m) => m[2]))];
+    try {
+      await onSend({
+        text: body,
+        attachmentRefs,
+        ...(effort !== "off" ? { effort } : {}),
+        ...(skill ? { skill: { id: skill.id, name: skill.name } } : {}),
+        ...(references.length ? { references } : {}),
+      });
+    } catch (error) {
+      // 发送失败时文字、附件与引用**完整保留**（规格 §7.5 / §18.9）：附件队列不动，
+      // 服务端附件也还没绑定消息，重试复用同一批 id —— 不会重复上传。
+      attachments.notify(error instanceof Error ? error.message : "发送失败，文字与附件已保留");
+      return;
+    }
     setText("");
     setSkill(null);
     setAtQuery(null);
-    setImages([]);
-    setAttachments([]);
-  }, [text, sessionId, skill, onSend, images, attachments, effort, currentModelId]);
+    // 只有 API 接受消息后才清空附件（此时服务端已绑定，不能再删文件）
+    attachments.clear();
+  }, [text, skill, onSend, attachments, effort, currentModelId]);
 
-  const pickAttachments = useCallback((input: FileList | File[] | null) => {
-    if (!input) return;
-    for (const file of [...input].slice(0, 5)) {
-      if (file.type.startsWith("image/")) continue;
-      if (file.size > 512 * 1024) { setImgNotice(`「${file.name}」超过 512KB`); continue; }
-      if (!/\.(md|mdx|txt|json|ya?ml|csv|log|xml|html?|css|js|jsx|ts|tsx|py|go|rs|java|c|cpp|h|sh)$/i.test(file.name) && !file.type.startsWith("text/")) { setImgNotice(`暂不支持「${file.name}」的格式`); continue; }
-      const reader = new FileReader();
-      reader.onload = () => setAttachments((prev) => prev.length >= 5 || prev.some((item) => item.name === file.name) ? prev : [...prev, { name: file.name, mediaType: "text/plain", data: String(reader.result ?? ""), size: file.size }]);
-      reader.onerror = () => setImgNotice(`「${file.name}」读取失败`);
-      reader.readAsDataURL(new Blob([file], { type: "text/plain" }));
-    }
-  }, []);
-
-  /** 本地选图 → data URL（限 4MB/张，最多 4 张）。被拒时给短暂提示（不再静默丢）。 */
-  const pickImages = useCallback((files: FileList | File[] | null) => {
-    if (!files) return;
-    const list = [...files];
-    let skipped = 0;
-    for (const file of list.slice(0, 4)) {
-      if (!file.type.startsWith("image/")) { skipped += 1; continue; }
-      if (file.size > 4 * 1024 * 1024) {
-        setImgNotice(`「${file.name}」超过 4MB，未添加`);
-        continue;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        setImages((prev) =>
-          prev.length >= 4 || prev.some((p) => p.url === reader.result)
-            ? prev
-            : [...prev, { url: String(reader.result), mediaType: file.type, name: file.name }],
-        );
-      };
-      reader.readAsDataURL(file);
-    }
-    if (skipped > 0) setImgNotice(`${skipped} 个非图片文件未添加`);
-  }, []);
-
-  // 粘贴图片：剪贴板里的图片文件直接进附件（与选图同一 4MB/张限制）
-  const onPaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
-      if (files.length === 0) return; // 纯文本粘贴走默认行为
-      e.preventDefault();
-      pickImages(files);
+  /** 在光标处插入文本：受控 textarea 里被 preventDefault 的粘贴必须手动补回。 */
+  const insertAtCaret = useCallback(
+    (snippet: string) => {
+      const el = textareaRef.current;
+      const caret = el?.selectionStart ?? text.length;
+      const end = el?.selectionEnd ?? caret;
+      const next = text.slice(0, caret) + snippet + text.slice(end);
+      const pos = caret + snippet.length;
+      onTextChange(next, pos);
+      requestAnimationFrame(() => el?.setSelectionRange(pos, pos));
     },
-    [pickImages],
+    [text, onTextChange],
   );
 
-  // 提示自动消失
-  useEffect(() => {
-    if (!imgNotice) return;
-    const t = setTimeout(() => setImgNotice(null), 4000);
-    return () => clearTimeout(t);
-  }, [imgNotice]);
+  /**
+   * 粘贴（规格 2 §7.2）。
+   *
+   * 同时读 `clipboardData.items` 与 `files`：从 Finder / 资源管理器复制文件时，
+   * 落到哪一处随平台而异，只认一处会漏（历史实现只筛 `image/*`，PDF 和 Word 直接丢）。
+   * 有文件但不拦截 textarea 默认粘贴会连纯文本一起吞掉，所以这里拦截后自己补文本。
+   */
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const fileItems = [...(e.clipboardData?.items ?? [])].filter((item) => item.kind === "file");
+      const fromItems = fileItems.map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+      const seen = new Set<string>();
+      const files: File[] = [];
+      for (const file of [...fromItems, ...(e.clipboardData?.files ?? [])]) {
+        // items 与 files 常指向同一批文件；按「名+尺寸」去重，避免同一文件进两次
+        const key = `${file.name}:${file.size}:${file.type}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        files.push(file);
+      }
+      if (files.length === 0) {
+        // 剪贴板里确实有「文件」类条目却一个都读不出来：明确告知，不静默忽略
+        if (fileItems.length > 0) attachments.notify("剪贴板里的文件无法读取，请改用拖放或文件选择");
+        return; // 纯文本粘贴完全沿用 textarea 默认行为
+      }
+      e.preventDefault();
+      attachments.ingestFiles(files, "paste");
+      // 文件和文本同时存在时保留文本，避免丢掉用户的说明性文字；
+      // 但 Finder 复制文件常把文件名塞进 text/plain，那种就别当说明粘进来。
+      const pasted = (e.clipboardData?.getData("text/plain") ?? "").trim();
+      const isJustFilename = files.some((file) => pasted === file.name || pasted.endsWith(`/${file.name}`));
+      if (pasted && !isJustFilename) insertAtCaret(pasted);
+    },
+    [attachments, insertAtCaret],
+  );
+
+  // 拖放（规格 §7.3）：dragover 必须 preventDefault 才是「可放下」，
+  // 同时阻止浏览器把窗口导航到本地文件（不给默认行为留口子）。
+  const onDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDropping(true);
+  }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // 子元素之间移动也会触发 dragleave，只在真正离开 Composer 时收起高亮
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDropping(false);
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDropping(false);
+      const files = [...(e.dataTransfer?.files ?? [])];
+      if (files.length === 0) {
+        if (e.dataTransfer?.types.includes("Files")) attachments.notify("拖入的内容里没有可读取的文件");
+        return;
+      }
+      attachments.ingestFiles(files, "drop");
+    },
+    [attachments],
+  );
+
+  /**
+   * 「引用项目文件」（规格 §7.1）：与输入 `@` 打开的是同一个工作区选择器，
+   * 这里把 `@` 插到光标处并立刻弹出浮层——不另造一套引用 UI。
+   */
+  const openProjectPicker = useCallback(() => {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    // 光标前若不是空白，@ 不会被 parseAtQuery 认成引用起点，补一个空格
+    const pad = before.length === 0 || /\s$/.test(before) ? "" : " ";
+    const pos = caret + pad.length + 1;
+    setAttachMenu(false);
+    setText(`${before}${pad}@${text.slice(caret)}`);
+    setSlashQuery(null);
+    setAtQuery("");
+    requestAnimationFrame(() => {
+      el?.setSelectionRange(pos, pos);
+      el?.focus();
+    });
+  }, [text]);
 
   const compact = useCallback(async () => {
     if (!sessionId || compacting) return;
@@ -655,29 +736,24 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
       {/* 宽度与消息列共用同一个 --conversation-content-max，保证左右基线一致
           （规格 §5.2）。此前这里是固定 752px、消息列 800px，两条轴不重合，
           切到底部时正文与输入框会明显错位。 */}
-      <div className="chat-composer mx-auto w-full max-w-[var(--conversation-content-max)] bg-surface transition-colors"
-        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
-        onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); pickAttachments(e.dataTransfer.files); pickImages([...e.dataTransfer.files].filter((f) => f.type.startsWith("image/"))); }}>
-        {/* 图片附件预览 chips */}
-        {images.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
-            {images.map((im, i) => (
-              <span key={i} className="group relative inline-flex items-center">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={im.url} alt={im.name} className="h-12 w-12 rounded-sm border border-line object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
-                  title="移除图片"
-                  className="absolute -right-1 -top-1 hidden h-4 w-4 items-center justify-center rounded-full bg-ink text-[8px] text-bg group-hover:flex"
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
+      <div
+        className={cn(
+          "chat-composer mx-auto w-full max-w-[var(--conversation-content-max)] bg-surface transition-colors",
+          dropping && "bg-surface-2",
+        )}
+        data-dropping={dropping || undefined}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        {/* 拖放目标提示：只在拖动文件时出现，不占常态版式 */}
+        {dropping && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl text-xs font-medium text-ink-2 ring-2 ring-inset ring-selected-strong">
+            松开即可添加文件
           </div>
         )}
-        {attachments.length > 0 && <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">{attachments.map((file) => <span key={file.name} className="inline-flex max-w-64 items-center gap-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"><span className="truncate">{file.name}</span><button type="button" title="移除文件" onClick={() => setAttachments((prev) => prev.filter((item) => item.name !== file.name))}>×</button></span>)}</div>}
+        {/* 待发附件：选择、粘贴、拖放三条路径产出的都是同一批卡片（规格 §7.4） */}
+        <ComposerAttachmentList items={attachments.items} onRemove={attachments.remove} onRetry={attachments.retry} />
         {skill && (
           <div className="flex items-center gap-1 px-3 pt-2.5">
             <span className="inline-flex max-w-64 items-center gap-1 rounded-[3px] bg-accent/15 px-2 py-0.5 text-[0.6875rem] font-medium text-accent-strong">
@@ -744,18 +820,35 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
           aria-label="消息"
           placeholder="描述任务，或继续提问…"
         />
-        {/* 选图/粘贴/发图拦截的短暂提示（4s 自动消失） */}
-        {imgNotice && <p className="px-3.5 pb-1 text-xs text-warning">{imgNotice}</p>}
-        {/* 图片选择（隐藏 input，回形针触发） */}
+        {/* 附件被拒 / 发送被拦的提示（4s 自动消失，也可立刻关掉） */}
+        {attachments.notice && (
+          <div className="flex items-start gap-1 px-3.5 pb-1">
+            <p role="status" className="min-w-0 flex-1 text-xs leading-5 text-warning">
+              {attachments.notice}
+            </p>
+            <button
+              type="button"
+              onClick={attachments.dismissNotice}
+              title="关闭提示"
+              aria-label="关闭提示"
+              className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-sm text-ink-3 transition-colors hover:text-ink"
+            >
+              <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {/* 文件选择（隐藏 input，回形针触发）。accept 由唯一格式表生成，与前端早期
+            校验、服务端最终校验同源——不再手写一份扩展名列表（规格 §4 / §7.1）。 */}
         <input
           ref={fileRef}
           type="file"
-          accept="image/*,.md,.mdx,.txt,.json,.yaml,.yml,.csv,.log,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.go,.rs,.java,.c,.cpp,.h,.sh,text/*"
+          accept={acceptAttribute()}
           multiple
           className="hidden"
           onChange={(e) => {
-            pickImages([...(e.target.files ?? [])].filter((f) => f.type.startsWith("image/")));
-            pickAttachments(e.target.files);
+            attachments.ingestFiles(e.target.files, "picker");
             e.target.value = "";
           }}
         />
@@ -781,17 +874,74 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
               <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            title="添加附件"
-            aria-label="添加附件"
-            className="wb-iconbtn text-ink-3"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <path d="M13.5 7.5l-5.8 5.8a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 0 1 3 3l-6 6a1.1 1.1 0 0 1-1.6-1.6l5.3-5.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {/* 回形针（规格 §7.1）：主按钮直接开本地文件选择器（省一次点击），
+              相邻箭头展开两种入口——「引用项目文件」必须可被发现，藏在别处等于没有。 */}
+          <div className="relative flex items-center">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              title="添加文件"
+              aria-label="添加文件"
+              className="wb-iconbtn text-ink-3"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <path d="M13.5 7.5l-5.8 5.8a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 0 1 3 3l-6 6a1.1 1.1 0 0 1-1.6-1.6l5.3-5.3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAttachMenu((open) => !open)}
+              title="更多添加方式"
+              aria-label="更多添加方式"
+              aria-haspopup="menu"
+              aria-expanded={attachMenu}
+              className={cn("wb-iconbtn -ml-0.5 w-4 text-ink-3", attachMenu && "bg-surface-2 text-ink")}
+            >
+              <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {attachMenu && (
+              <div
+                role="menu"
+                aria-label="添加文件"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setAttachMenu(false);
+                  }
+                }}
+                className="absolute bottom-full left-0 z-20 mb-1.5 w-44 rounded-md border border-line bg-surface p-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAttachMenu(false);
+                    fileRef.current?.click();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-ink transition-colors hover:bg-surface-3"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+                    <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+                    <path d="M1.5 7h13" />
+                  </svg>
+                  从电脑选择
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={openProjectPicker}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-ink transition-colors hover:bg-surface-3"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+                    <path d="M1.5 4.5A1.5 1.5 0 0 1 3 3h3l1.5 2h5.5A1.5 1.5 0 0 1 14.5 6.5v5A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5v-7z" />
+                  </svg>
+                  引用项目文件
+                </button>
+              </div>
+            )}
+          </div>
           <span className="flex-1" />
 
           {/* 上下文用量 + 压缩 */}
@@ -810,6 +960,10 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             </button>
           )}
 
+          {/* 附件未就绪时把原因写在按钮旁边，而不是只塞进 tooltip（规格 §7.5） */}
+          {!running && attachments.blockedReason && (
+            <span className="mr-1.5 hidden text-[0.6875rem] text-ink-3 sm:inline">{attachments.blockedReason}</span>
+          )}
           {running ? (
             <button
               type="button"
@@ -824,8 +978,10 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             <button
               type="button"
               onClick={submit}
-              disabled={!text.trim() && images.length === 0 && attachments.length === 0}
-              title="发送（⏎）"
+              // 有失败附件时不允许发送（用户需重试或移除），上传中也不允许——
+              // 否则会发出一个缺少附件的消息，而用户以为文件已经带上了。
+              disabled={(!text.trim() && attachments.readyRefs.length === 0) || attachments.blockedReason !== null}
+              title={attachments.blockedReason ?? "发送（⏎）"}
               aria-label="发送"
               className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
             >

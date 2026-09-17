@@ -8,8 +8,9 @@ import type { ConnectionState } from "@/lib/client";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
-import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
-import Composer from "./Composer";
+import type { InputAttachmentRef, ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
+import Composer, { type ComposerSendInput } from "./Composer";
+import { MessageAttachmentCard } from "./AttachmentCards";
 import DiffView, { diffStat } from "./DiffView";
 import SessionMessageSearch from "./SessionMessageSearch";
 
@@ -241,7 +242,8 @@ function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part
       return <SubtaskCard part={part} activity={subagent} />;
     }
     case "file":
-      return <div className="text-xs text-ink-2">产物文件：{part.filename}</div>;
+      // 用户随消息发送的附件（规格 2 §12）：持久卡片，不是「产物文件」。
+      return <MessageAttachmentCard part={part} />;
     case "image":
       // 多模态图片输入（P2-11）：用户随消息上传的图片直接内联展示
       return part.url ? (
@@ -271,7 +273,7 @@ type Props = {
   connState: ConnectionState;
   selectedModel: ModelRef | null;
   onSelectModel: (m: ModelRef | null) => void;
-  onSend: (t: string) => void;
+  onSend: (input: ComposerSendInput) => void;
   onReply: (r: "once" | "always" | "reject", feedback?: string) => void;
   /** 续跑：中断后带断点上下文（已完成步骤/改过文件/最后一步/错误摘要）继续，
    *  而非裸发「继续」二字——让模型真正接上断点。 */
@@ -288,8 +290,19 @@ type Props = {
   onLoadNewer: () => void;
   onLoadLatest: () => void;
   onReadingHistory: (reading: boolean) => void;
-  /** 乐观回显：发送瞬间的用户消息（真实 message.updated 到达后自动让位）。 */
-  echo: { text: string; images: { url: string; mediaType: string }[]; skill?: { id: string; name: string }; references?: string[] } | null;
+  /**
+   * 乐观回显：发送瞬间的用户消息（真实 message.updated 到达后自动让位）。
+   * `attachments` 与 `images` 是两种历史来源——图片是旧链路的内联 data URL，
+   * 附件是新链路的描述符（只有 id 与元数据）。
+   */
+  echo: {
+    text: string;
+    images: { url: string; mediaType: string }[];
+    skill?: { id: string; name: string };
+    references?: string[];
+    attachments?: InputAttachmentRef[];
+    sessionId?: string;
+  } | null;
   /** 隔离操作结果横幅（page.tsx 持有，8s 自动消退）。 */
   wtNotice?: { kind: "ok" | "error"; text: string } | null;
   /** 回溯重发：编辑某条用户消息并从此重跑（page.tsx 调 API，截断 + 重跑由服务端完成）。 */
@@ -457,8 +470,15 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
   const visible = useMemo(() => {
     if (!echo) return messages;
+    const echoIds = new Set((echo.attachments ?? []).map((ref) => ref.id));
+    // 有附件时按 attachment id 对齐：file-only 消息的文本是空的，按文本匹配会撞上
+    // 更早的无文本消息，把回显误判成「已到达」而整条消失（规格 §12）。
     const echoed = messages.find(
-      (m) => m.role === "user" && m.parts.map((p) => (p.part.type === "text" ? p.part.text : "")).join("") === echo.text,
+      (m) =>
+        m.role === "user" &&
+        (echoIds.size > 0
+          ? m.parts.some((p) => p.part.type === "file" && p.part.attachmentId && echoIds.has(p.part.attachmentId))
+          : Boolean(echo.text) && m.parts.map((p) => (p.part.type === "text" ? p.part.text : "")).join("") === echo.text),
     );
     // SSE 的真实消息抵达会取代乐观回显。若旧 runner / 短暂版本切换未带回
     // skill 元数据，把本次发送时已知的选择合并进去，避免 skill 前缀闪现后消失。
@@ -474,6 +494,21 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       ...(echo.references?.length ? { references: echo.references } : {}),
       parts: [
         ...echo.images.map((im, i) => ({ part: { id: `__echo_img_${i}`, type: "image", url: im.url, mediaType: im.mediaType, messageId: "__echo__", sessionId: "" } as Part })),
+        // 附件用描述符形状回显：卡片立刻可画（名字/大小/类型），摘要由卡片自己取。
+        ...(echo.attachments ?? []).map((ref, i) => ({
+          part: {
+            id: `__echo_att_${i}`,
+            type: "file",
+            mime: ref.mediaType,
+            filename: ref.name,
+            attachmentId: ref.id,
+            size: ref.size,
+            kind: ref.kind,
+            status: "ready",
+            messageId: "__echo__",
+            sessionId: echo.sessionId ?? "",
+          } as Part,
+        })),
         ...(echo.text ? [{ part: { id: "__echo_text", type: "text", text: echo.text, messageId: "__echo__", sessionId: "" } as Part }] : []),
       ],
     };
@@ -1006,7 +1041,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               return items;
             })()}
             onFollowUp={() =>
-              onSend(`基于上面的任务总结，请继续完成你建议的下一步工作，直接开始执行。\n\n（上一轮总结：${summary.text}）`)
+              onSend({ text: `基于上面的任务总结，请继续完成你建议的下一步工作，直接开始执行。\n\n（上一轮总结：${summary.text}）`, attachmentRefs: [] })
             }
           />
         )}

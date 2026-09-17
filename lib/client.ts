@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AttachmentReceipt,
   AuthStatus,
   CommandRunView,
   DeliveryAttempt,
@@ -63,6 +64,56 @@ const send = (method: string, path: string, body?: unknown) =>
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+/** 上传失败的统一错误形状：带上传接口返回的 code，便于 UI 决定是否可重试（规格 §14）。 */
+export type UploadFailure = Error & { status?: number; code?: string };
+
+/**
+ * 单文件上传走 XHR 而不是 fetch：`fetch` 至今没有上传进度事件，而附件卡必须显示
+ * 上传进度（规格 §7.4）。这里只用到 `upload.onprogress` 与 `abort()` 两个能力。
+ */
+function uploadFile(
+  sessionId: string,
+  file: File,
+  options: { signal?: AbortSignal; onProgress?: (ratio: number) => void } = {},
+): Promise<AttachmentReceipt> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/sessions/${encodeURIComponent(sessionId)}/attachments`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) options.onProgress?.(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      // 注意：这里必须用具名类型而不是 `as typeof parsed`——后者会取到赋值点已被
+      // 收窄成 null 的类型，把整个响应体变成 never，编译期就再也读不出字段。
+      type UploadResponse = { attachment?: AttachmentReceipt; error?: string; code?: string };
+      let parsed: UploadResponse | null = null;
+      try {
+        parsed = JSON.parse(xhr.responseText) as UploadResponse;
+      } catch {
+        parsed = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && parsed?.attachment) {
+        resolve(parsed.attachment);
+        return;
+      }
+      reject(Object.assign(new Error(parsed?.error ?? `上传失败（${xhr.status}）`), { status: xhr.status, code: parsed?.code ?? "server" }));
+    };
+    xhr.ontimeout = () => reject(Object.assign(new Error("上传超时"), { code: "network" }));
+    xhr.onabort = () => reject(Object.assign(new Error("上传已取消"), { code: "aborted" }));
+    const abort = () => xhr.abort();
+    options.signal?.addEventListener("abort", abort);
+    const cleanup = () => options.signal?.removeEventListener("abort", abort);
+    xhr.onloadend = cleanup;
+    xhr.onerror = () => {
+      cleanup();
+      reject(Object.assign(new Error("网络中断，上传失败"), { code: "network" }));
+    };
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
+  });
+}
 
 export const client = {
   authStatus: () => fetch("/api/auth/status").then((r) => j<AuthStatus>(r)),
@@ -130,18 +181,54 @@ export const client = {
     fetch(`/api/sessions/${sessionId}/messages?view=window&limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`, { signal })
       .then((r) => j<import("./session-history").HistoryPage>(r)),
 
+  /**
+   * 发送提示词。附件只传 **id**（规格 2 §9.1）：文件内容早已落在附件存储里，
+   * 不再随 prompt JSON 传 base64——旧做法会让 1MB 文件变成 1.33MB 文本写进事件与消息 part。
+   * 参数改为对象是刻意的：原先是 10 个位置参数，加一个字段就要动所有调用点。
+   */
   prompt: (
     sessionId: string,
-    text: string,
-    agent?: string,
-    model?: ModelRef,
-    images?: { url: string; mediaType: string }[],
-    effort?: ThinkingEffort,
-    skillId?: string,
-    references?: string[],
-    attachments?: { name: string; mediaType: string; data: string; size: number }[],
-    requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  ) => post(`/api/sessions/${sessionId}/prompt`, { text, agent, model, images, effort, skillId, references, attachments, requestId }).then((r) => j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition: "started" | "queued" }>(r)),
+    input: {
+      text: string;
+      agent?: string;
+      model?: ModelRef;
+      effort?: ThinkingEffort;
+      skillId?: string;
+      references?: string[];
+      attachmentIds?: string[];
+      requestId?: string;
+    },
+  ) => {
+    const requestId = input.requestId ?? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return post(`/api/sessions/${sessionId}/prompt`, { ...input, requestId }).then((r) =>
+      j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition: "started" | "queued" }>(r),
+    );
+  },
+
+  // ===== 附件（规格 2 §9.1）=====
+
+  /** 上传单个附件（multipart）。sessionId 传 `__draft__` 表示尚未建会话。 */
+  uploadAttachment: (sessionId: string, file: File, options?: { signal?: AbortSignal; onProgress?: (ratio: number) => void }) =>
+    uploadFile(sessionId, file, options),
+
+  listAttachments: (sessionId: string) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`).then((r) =>
+      j<{ attachments: AttachmentReceipt[]; scope: "session" | "draft" }>(r),
+    ),
+
+  getAttachment: (sessionId: string, attachmentId: string) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`).then((r) =>
+      j<{ attachment: AttachmentReceipt; availability: boolean }>(r),
+    ),
+
+  deleteAttachment: (sessionId: string, attachmentId: string) =>
+    send("DELETE", `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`).then((r) =>
+      j<{ ok: boolean }>(r),
+    ),
+
+  /** 原始文件 URL。默认 inline（图片/PDF 就地预览），`download` 强制下载。 */
+  attachmentUrl: (sessionId: string, attachmentId: string, options?: { download?: boolean }) =>
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}?raw=1${options?.download ? "&download=1" : ""}`,
 
   replyPermission: (
     sessionId: string,

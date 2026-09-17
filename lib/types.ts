@@ -1,5 +1,20 @@
 // 与 @zmzai/agent-framework 事件契约对应的本地类型（UI 层不直接依赖引擎包）
 
+import type { AttachmentKind } from "./attachments/limits";
+
+/** 附件类型统一从 lib/types 出口（规格 2 §15.1），避免组件到处 deep import。 */
+export type {
+  AttachmentError,
+  AttachmentErrorCode,
+  AttachmentReceipt,
+  AttachmentStatus,
+  ComposerAttachment,
+  ComposerAttachmentStatus,
+  InputAttachmentRef,
+  WorkspaceReference,
+} from "./attachments/types";
+export type { AttachmentKind, AttachmentFormat } from "./attachments/limits";
+
 export type ModelRef = { providerId: string; modelId: string };
 export type ReadState = { lastReadMessageSeq: number; latestMessageSeq: number; unreadCount: number; historyRevision: number };
 
@@ -58,16 +73,35 @@ export type ToolState =
   | { status: "completed"; input: unknown; output: string; title: string; time: { start: string; end: string }; metadata?: Record<string, unknown> }
   | { status: "error"; input: unknown; error: string; time: { start: string; end: string }; metadata?: Record<string, unknown> };
 
+/** 文件 part（规格 2 §11）。新链路只写 `attachmentId` 等描述符，**不再写 data URL**；
+ *  `url` 仅为读历史遗留消息保留，因此是可选的——消费方必须先判 url 再判 attachmentId。 */
+export type FilePart = {
+  id: string;
+  type: "file";
+  mime: string;
+  filename: string;
+  messageId: string;
+  sessionId: string;
+  /** 旧链路遗留：`data:` 开头的内联内容。新消息不再产生。 */
+  url?: string;
+  /** 新链路：附件 id，配合 attachmentId 取原始文件。 */
+  attachmentId?: string;
+  size?: number;
+  kind?: AttachmentKind;
+  status?: "processing" | "ready" | "error";
+};
+
 export type Part =
   | { id: string; type: "text"; text: string; messageId: string; sessionId: string }
   | { id: string; type: "reasoning"; text: string; messageId: string; sessionId: string }
   | { id: string; type: "tool"; callId: string; tool: string; state: ToolState; messageId: string; sessionId: string }
   | { id: string; type: "subtask"; prompt: string; description: string; agent: string; childSessionId: string; messageId: string; sessionId: string }
-  | { id: string; type: "file"; mime: string; filename: string; url: string; messageId: string; sessionId: string }
+  | FilePart
   | { id: string; type: "image"; url: string; mediaType: string; messageId: string; sessionId: string }
   | { id: string; type: "compaction"; summary: string; messageId: string; sessionId: string };
 
-/** 独立于用户文本的输入附件契约（v1）。data 为 data URL，供 relay/framework 消费。 */
+/** 旧链路输入附件契约（v1，data URL）。仅为兼容仍在传 base64 的调用方保留；
+ *  新链路用 `attachmentIds`（规格 2 §9.1）。 */
 export type InputAttachment = { name: string; mediaType: string; data: string; size: number };
 
 export type PermissionRequest = {

@@ -38,6 +38,8 @@ export type AttachmentError = {
 export type ComposerAttachment = {
   localId: string;
   attachmentId?: string;
+  /** 服务端回执里的摘要；上传成功后由回执填入，供发送时构造描述符。 */
+  sha256?: string;
   file: File;
   name: string;
   mediaType: string;

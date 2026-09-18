@@ -1,0 +1,121 @@
+name: UI end-to-end
+
+# 这些用例此前只在本机手动跑过：没有 workflow 覆盖 app/ 与 components/，
+# 于是「改了界面但没人跑 E2E」不会在 CI 里显形。这个 workflow 补上那一段。
+#
+# 与 desktop-release-check.yml 的分工：那边管打包产物（asar、安装器、更新器、
+# 跨盘启动），跑在 macOS 与 Windows 上；这边管渲染层的行为，跑在 Linux 上——
+# 浏览器 E2E 全部用 page.route 打桩 API，不依赖 Electron，Linux 更快更便宜。
+# `pnpm test` 不在这里重复跑（desktop-release-check 已在两个平台上跑过）。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # 各脚本默认端口不同（3100/3101/3102/3104），那是为了本机并行跑互不干扰。
+      # CI 里统一指到同一个 server。
+      LECTERN_TEST_URL: http://127.0.0.1:3100
+      LECTERN_DATA_DIR: ${{ runner.temp }}/lectern-e2e/data
+      LECTERN_WORKSPACE: ${{ runner.temp }}/lectern-e2e/workspace
+      LECTERN_UI_OUTPUT: test-results
+      # next build 会吃光 Node 的默认堆上限（本机实测 OOM：Ineffective mark-compacts near
+      # heap limit，堆停在 4GB）。runner 的内存更小、默认上限按内存推导会更低，必须显式抬高。
+      NODE_OPTIONS: --max-old-space-size=6144
+      # 脚本默认 channel 是 chrome（本机用系统 Chrome）。runner 镜像已预装 Chrome，
+      # 这里保持默认即可；若哪天镜像移除，改成 chromium 并补 playwright install。
+      PLAYWRIGHT_CHANNEL: chrome
+    steps:
+      - uses: actions/checkout@v5
+      # pnpm 版本来自 package.json 的 packageManager；这里再指定一次会让
+      # action-setup 直接拒绝启动（Multiple versions of pnpm specified）。
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - name: Start web server
+        run: |
+          mkdir -p "$LECTERN_DATA_DIR" "$LECTERN_WORKSPACE"
+          nohup pnpm start > "$RUNNER_TEMP/web.log" 2>&1 &
+          for _ in $(seq 1 90); do
+            if curl -sf -o /dev/null "$LECTERN_TEST_URL"; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::web server 未就绪"
+          cat "$RUNNER_TEMP/web.log"
+          exit 1
+      - run: pnpm test:conversation-ui
+      - run: pnpm test:workbench-ui
+      - run: pnpm test:task-groups-ui
+      - run: pnpm test:attachments-ui
+      - run: pnpm test:message-search-ui
+      - run: pnpm test:message-recovery-ui
+      - name: Preserve UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-browser
+          path: |
+            test-results/
+            ${{ runner.temp }}/web.log
+          if-no-files-found: warn
+
+  clipboard-native:
+    # 原生剪贴板只能在有真实 GUI 会话与系统剪贴板的 macOS 上验证。
+    # Windows Explorer 一侧仍未覆盖——不要因为这个 job 绿了就声称跨平台已验证。
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      LECTERN_TEST_URL: http://127.0.0.1:3100
+      LECTERN_DATA_DIR: ${{ runner.temp }}/lectern-e2e/data
+      LECTERN_WORKSPACE: ${{ runner.temp }}/lectern-e2e/workspace
+      LECTERN_UI_OUTPUT: test-results
+      # 同 browser job：next build 需要高于默认的堆上限。
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Start web server
+        run: |
+          mkdir -p "$LECTERN_DATA_DIR" "$LECTERN_WORKSPACE"
+          nohup pnpm start > "$RUNNER_TEMP/web.log" 2>&1 &
+          for _ in $(seq 1 90); do
+            if curl -sf -o /dev/null "$LECTERN_TEST_URL"; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::web server 未就绪"
+          cat "$RUNNER_TEMP/web.log"
+          exit 1
+      - run: pnpm test:clipboard-native
+      - name: Preserve clipboard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-clipboard-native
+          path: |
+            test-results/
+            ${{ runner.temp }}/web.log
+          if-no-files-found: warn

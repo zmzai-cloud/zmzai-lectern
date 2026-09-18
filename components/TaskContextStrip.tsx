@@ -8,6 +8,7 @@ import type {
   IconKind,
   TaskPresentation,
   TaskPresentationState,
+  TaskPresentationView,
 } from "@/lib/task-presentation";
 
 /**
@@ -36,6 +37,16 @@ type Props = {
   summary?: string | null;
   /** 次级元数据，如模型名（可选，窄屏优先折叠）。 */
   meta?: string | null;
+  /**
+   * 当前持久任务的呈现模型（规格 3 §15.2）。
+   *
+   * 【为什么给它，而 presentation.state 已经够画一个状态点】`presentation`
+   * 回答的是「这条会话看起来处于什么状态」，粒度是会话级的六态；任务层能回答
+   * 更具体的问题——在等**什么**（授权 / 补充信息 / 登录）、做到第几步。用户扫
+   * 一眼就能判断要不要回来处理，而不必点进会话看。没有任务（历史会话）时
+   * 传 null，条的行为与改造前一致。
+   */
+  task?: TaskPresentationView | null;
   /**
    * 右侧动作区（连接态、隔离副本、自治档位等）。
    *
@@ -139,10 +150,15 @@ export default function TaskContextStrip({
   projectName,
   summary,
   meta,
+  task,
   actions,
 }: Props) {
   const style = STATE_STYLE[presentation.state];
   const isRunning = presentation.state === "running";
+  // 有任务时用任务层的文案（「等待授权」比「需输入」说得清）与进度；
+  // 没有任务就退回会话级六态的文案。
+  const label = task?.label ?? presentation.label;
+  const description = task ? `任务状态：${label}${task.progress ? `，已完成 ${task.progress.done}/${task.progress.total} 步` : ""}` : STATE_DESCRIPTION[presentation.state];
 
   return (
     // 整条不是 live region：任务标题/摘要每次切会话都会变，整条播报太吵。
@@ -152,18 +168,27 @@ export default function TaskContextStrip({
       {/* 主状态徽标：图标 + 文字（形状与文字都不折叠，颜色只是辅助） */}
       <span
         role="status"
-        aria-label={`任务状态：${presentation.label}。${STATE_DESCRIPTION[presentation.state]}`}
+        aria-label={description}
         data-task-primary-status="true"
+        data-task-status={task?.status}
         className={cn(
           "order-2 inline-flex shrink-0 items-center gap-1 py-0.5 text-xs font-medium",
           presentation.state === "idle" && "sr-only",
           style.text,
         )}
-        title={STATE_DESCRIPTION[presentation.state]}
+        title={description}
       >
         <IconGlyph kind={presentation.icon} pulse={isRunning} />
-        {presentation.label}
+        {label}
       </span>
+
+      {/* 任务进度（规格 §14.1「2/5 已完成」）。只在真有步骤时出现——
+          显示一个恒为 0/0 的进度条比不显示更糟。 */}
+      {task?.progress && (
+        <span className="order-2 shrink-0 font-mono text-[0.6875rem] text-ink-3" data-task-progress>
+          {task.progress.done}/{task.progress.total}
+        </span>
+      )}
 
       {/* 任务标题：可截断但有 title 兜底；绝不让它消失 */}
       <span className="min-w-0">

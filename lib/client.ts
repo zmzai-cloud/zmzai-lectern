@@ -29,6 +29,8 @@ import type {
   TranscriptMessage,
   TreeNode,
   UsageInfo,
+  PromptDisposition,
+  TaskRecordView,
 } from "./types";
 import type { PermissionMode } from "./permission-mode";
 
@@ -200,10 +202,27 @@ export const client = {
     },
   ) => {
     const requestId = input.requestId ?? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // disposition 描述这条消息与任务的关系（规格 3 §12）：开新任务 / 并入当前
+    // 任务 / 恢复等待中的任务 / 排队。UI 只用它做提示与队列态，不再用它推任务状态。
     return post(`/api/sessions/${sessionId}/prompt`, { ...input, requestId }).then((r) =>
-      j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition: "started" | "queued" }>(r),
+      j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition?: PromptDisposition; taskId?: string }>(r),
     );
   },
+
+  // ===== 持续任务（规格 3 §13.2）=====
+
+  /** 读当前任务：活跃优先，无活跃时回退最近一个终态任务。 */
+  getTask: (sessionId: string) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/task`).then((r) =>
+      j<{ task: TaskRecordView | null; supported: boolean }>(r),
+    ),
+
+  /** 用户核对完后放行任务（§13.2 的 `resume`）。
+   *  **不发消息**——这是同一条指令的继续，不是新的一轮对话（§11.2）。 */
+  resumeTask: (sessionId: string) =>
+    post(`/api/sessions/${encodeURIComponent(sessionId)}/task`, { action: "resume" }).then((r) =>
+      j<{ ok: boolean; resumed: boolean }>(r),
+    ),
 
   // ===== 附件（规格 2 §9.1）=====
 

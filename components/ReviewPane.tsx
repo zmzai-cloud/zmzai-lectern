@@ -6,7 +6,8 @@ import { Button, cn } from "@zmzai/theme";
 import { client } from "@/lib/client";
 import DiffView from "./DiffView";
 import DeliveryReview from "./DeliveryReview";
-import type { DiffFile, GitDiff, SessionSummary } from "@/lib/types";
+import type { DiffFile, GitDiff, SessionSummary, TaskRecordView } from "@/lib/types";
+import { presentTask } from "@/lib/task-presentation";
 
 type Checkpoint = { hash: string; time: string; subject: string; checkpoint: boolean };
 
@@ -53,14 +54,18 @@ function FileRow({
 export default function ReviewPane({
   editedPaths = [],
   sessionId,
-  /** 任务终态小结（session.summary，N5）：渲染为审查页的任务内变更摘要（§V3-1）。 */
+  /** 本轮小结（session.summary，N5）：渲染为该轮的变更摘要（§V3-1）。 */
   summary = null,
+  /** 当前持久任务（规格 3 §15.2）：审查页要能回答「这些改动属于哪个目标、
+   *  那个目标交付了没有」——只看 diff 是看不出来的。 */
+  task = null,
   /** 跳到「文件」Tab 的路线（§4.5：审查必须给出到 Files 的路线，但不内嵌完整文件树）。 */
   onOpenFiles,
 }: {
   editedPaths?: string[];
   sessionId?: string | null;
   summary?: SessionSummary | null;
+  task?: TaskRecordView | null;
   onOpenFiles?: () => void;
 }) {
   const [data, setData] = useState<GitDiff | null>(null);
@@ -252,7 +257,25 @@ export default function ReviewPane({
         </div>
       )}
 
-      {/* §V3-1：任务内变更摘要（有终态小结时）。失败/中断也保留，作为可追溯的次级信息（§7.5）。 */}
+      {/* 任务交付状态（规格 3 §15.2）：审查页最容易犯的错是把「有一批改动」
+          当成「目标达成」。这一行把目标本身和它的交付状态摆出来，让审查的人
+          知道自己在审的是「一个已完成目标的结果」还是「半途的中间态」。 */}
+      {task && (
+        <div className="shrink-0 bg-surface-2/40 px-3 py-2" data-review-task-status={task.status}>
+          <div className="flex items-center gap-2">
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", task.status === "delivered" ? "bg-success" : task.status === "failed" ? "bg-danger" : task.status === "blocked" || task.status.startsWith("waiting_") ? "bg-warning" : "bg-live")} />
+            <span className="shrink-0 text-[0.625rem] font-semibold uppercase tracking-wider text-ink-2">{presentTask(task).label}</span>
+            <span className="min-w-0 truncate text-[0.6875rem] leading-4 text-ink-2" title={task.goal}>
+              {task.goal}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* §V3-1：本轮变更摘要（有终态小结时）。失败/中断也保留，作为可追溯的次级信息（§7.5）。
+          规格 3 §15.2 要求这里区分「本轮结束」与「任务交付」：`summary` 说的是前者，
+          所以文案只说「本轮」；任务是否真的交付由上方 task 行说明。旧文案把
+          kind === "completed" 写成「已完成」，把一个运行的结束读成了整个任务的完成。 */}
       {!selected && summary && (
         <div className="shrink-0 bg-surface-2/40 px-3 py-2">
           <div className="flex items-center gap-2">
@@ -261,8 +284,9 @@ export default function ReviewPane({
                 "shrink-0 text-[0.625rem] font-semibold uppercase tracking-wider",
                 summary.kind === "error" ? "text-danger" : summary.kind === "aborted" ? "text-warning" : "text-ink-3",
               )}
+              data-attempt-summary-label
             >
-              {summary.kind === "error" ? "已失败" : summary.kind === "aborted" ? "已中断" : "已完成"}
+              {summary.kind === "error" ? "本轮出错" : summary.kind === "aborted" ? "本轮中断" : "本轮已结束"}
             </span>
             {summary.meta && (
               <span className="shrink-0 font-mono text-[0.625rem] text-ink-3">

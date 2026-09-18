@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { sessionRuntime } from "@/lib/runtime";
 import { resolveSessionOwner } from "@/lib/session-owner";
+import { toTaskView } from "@/lib/task-presentation";
 import { WorkflowError } from "@/lib/workflow-error";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,11 @@ async function handleGET(request: NextRequest, ctx: { params: Promise<{ id: stri
         readState: snapshot.readState,
         stateEvents: snapshot.stateEvents,
         runs: snapshot.runs,
+        // 当前任务契约（规格 3 §13.3）：断线重连后 UI 不必回放全部 task 事件
+        // 就能知道「任务做到哪了」。无任务时显式给 null（而不是省略字段）——
+        // 省略会让「服务端说没有任务」和「这个版本的接口还没有这个字段」
+        // 无法区分，客户端只能猜。
+        task: snapshot.task ? toTaskView(snapshot.task) : null,
       });
     } catch (error) {
       if (error instanceof Error && error.message === "HISTORY_REVISION_CONFLICT") throw new WorkflowError("CONFLICT","历史已发生回溯，请重新加载",409,true);

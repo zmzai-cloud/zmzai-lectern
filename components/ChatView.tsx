@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useSessionReadState } from "@/lib/use-session-read-state";
 import { Markdown, PermissionCard, Reasoning, ToolCard, ToolGroup, cn } from "@zmzai/theme";
+import { TaskDeliveryCard, TaskProgressCard } from "./TaskStatus";
+import type { TaskActionId, TaskPresentationView } from "@/lib/task-presentation";
 import { ArrowDown, LoaderCircle, RotateCw, Search } from "lucide-react";
 
 import type { ConnectionState } from "@/lib/client";
@@ -23,23 +25,27 @@ type UiMessage = import("@/lib/chat-projector").UiMessage;
 function diagnoseError(name: string, message: string): { cause: string; hint: string } | null {
   const n = (name || "").toLowerCase();
   const m = (message || "").toLowerCase();
+  // 【建议文案不得指向已不存在的控件】这几条文案原来都写着「点『继续』」，
+  // 而规格 3 §19 已经把那个按钮连同它背后的合成消息一起删掉了——留着这些
+  // 提示，等于让用户去找一个不在那里的按钮。现在一律指向真实存在的通路：
+  // 框架自己在同一任务里退避重试，或用户在输入框里补一句（§12 的 steering）。
   if (n.includes("streamidletimeout") || (m.includes("无响应") && m.includes("中止"))) {
-    return { cause: "上游长时间无响应，模型可能卡住或不支持该输入（如非视觉模型收到图片）", hint: "点「继续」续跑；若反复超时，换个模型或简化输入" };
+    return { cause: "上游长时间无响应，模型可能卡住或不支持该输入（如非视觉模型收到图片）", hint: "换个模型或简化输入后重发；任务还没做完时框架会在同一任务里自己接着跑" };
   }
   if (n.includes("leaseexpired") || m.includes("服务重启")) {
-    return { cause: "服务在运行期间重启，会话上下文已保留但本次运行被打断", hint: "点「继续」即可在同一会话接续，无需重做" };
+    return { cause: "服务在运行期间重启，会话上下文已保留但本次运行被打断", hint: "任务会自动恢复，不必重做" };
   }
   if (/\b429\b/.test(m) || m.includes("rate limit") || m.includes("too many requests")) {
-    return { cause: "触发上游限流（429），请求太频繁", hint: "稍等片刻再点「继续」，系统会退避重试" };
+    return { cause: "触发上游限流（429），请求太频繁", hint: "稍等片刻，框架会在同一任务里退避重试" };
   }
   if (/\b50[234]\b/.test(m) || m.includes("bad gateway") || m.includes("service unavailable") || m.includes("internal server error")) {
     return { cause: "上游服务暂时不可用（5xx 网关/服务端错误）", hint: "稍后重试；若持续出现，检查模型服务状态" };
   }
   if (m.includes("timeout") || m.includes("etimedout") || m.includes("socket hang up") || m.includes("econnreset") || m.includes("terminated")) {
-    return { cause: "网络连接中断或请求超时", hint: "检查网络后点「继续」重试；弱网下可缩短任务" };
+    return { cause: "网络连接中断或请求超时", hint: "检查网络；框架会在同一任务里退避重试，弱网下可缩短任务" };
   }
   if (n.includes("aborted") || m.includes("已取消") || m.includes("cancelled")) {
-    return { cause: "任务被手动中止", hint: "可直接点「继续」接着上次断点跑" };
+    return { cause: "任务被手动中止", hint: "需要继续时，在下方输入框里补一句说明即可" };
   }
   return null;
 }
@@ -275,9 +281,12 @@ type Props = {
   onSelectModel: (m: ModelRef | null) => void;
   onSend: (input: ComposerSendInput) => void;
   onReply: (r: "once" | "always" | "reject", feedback?: string) => void;
-  /** 续跑：中断后带断点上下文（已完成步骤/改过文件/最后一步/错误摘要）继续，
-   *  而非裸发「继续」二字——让模型真正接上断点。 */
-  onContinue: (ctx: string) => void;
+  /** 任务呈现模型（规格 3 §14）。**由 page.tsx 统一派生**：同一份状态要同时
+   *  驱动这里、上下文条和会话列表，各自算一遍必然会漂移。 */
+  taskView?: TaskPresentationView | null;
+  /** 任务动作（授权并继续 / 补充信息 / 选择方案 / 检查后重试 / 停止任务）。
+   *  具体做什么由 page.tsx 决定——滚动到授权卡、聚焦输入框、或调 resume。 */
+  onTaskAction?: (action: TaskActionId) => void;
   /** N6 卡住检测：运行中超过阈值无新事件（可能卡在长工具调用/上游无响应）。 */
   stalled?: boolean;
   onAbort: () => void;
@@ -359,15 +368,21 @@ function TodoCard({ todos }: { todos: TodoItem[] }) {
 }
 
 
-/** 任务终态小结卡（N5）：run 收尾的 AI 一句总结 + 结构化统计。
- *  让「一个 call tool 结束」有了明确收尾——完成/中断/失败三种终态都有落点。
- *  N6：总结里的「下一步建议」从文字升级为可执行——点击按钮直接续跑；
- *      并附「执行轨迹」可展开时间线（这轮跑了哪些工具、各花多久）。 */
+/** 本轮小结卡（N5）：**一次 Attempt 运行**收尾的 AI 一句总结 + 结构化统计。
+ *
+ *  【它现在说的是「本轮」而不是「任务」】旧实现把 `kind: "completed"` 渲染成
+ *  「任务完成」，可它只证明这一轮模型正常结束了——剩余步骤还在时，这句话就是
+ *  在骗用户（规格 §3.2）。所以：① 文案改成「本轮已结束」，任务级的完成判定
+ *  交给 `TaskDeliveryCard`（只认 task.delivered）；② 通用「继续下一步」按钮
+ *  连同它发出的合成用户消息一起删除（§14.2 / §19）——任务由框架自己接着跑，
+ *  轮次之间不再需要用户做任何事。
+ *
+ *  默认折叠：一轮结束不再是需要用户注意的事件，它只是轨迹上的一条记录。 */
 type TimelineItem = { tool: string; title?: string; status: string; durationMs: number | null };
 
-function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummary; onFollowUp?: () => void; timeline?: TimelineItem[] }) {
+function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?: TimelineItem[] }) {
   const kind = summary.kind;
-  const label = kind === "completed" ? "任务完成" : kind === "aborted" ? "任务中断" : "任务失败";
+  const label = kind === "completed" ? "本轮已结束" : kind === "aborted" ? "本轮被中断" : "本轮出错";
   const dot = kind === "completed" ? "bg-success" : kind === "aborted" ? "bg-warning" : "bg-danger";
   const meta = summary.meta;
   const parts: string[] = [];
@@ -378,7 +393,7 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
   }
   const [showTimeline, setShowTimeline] = useState(false);
   return (
-    <details className="chat-task-summary" open={kind !== "completed"}>
+    <details className="chat-task-summary" open={kind !== "completed"} data-attempt-summary>
       <summary className="cursor-pointer py-2 text-xs text-ink-2">{label}{parts.length ? ` · ${parts.join(" · ")}` : ""}</summary>
       <div>
       <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
@@ -388,18 +403,8 @@ function SummaryCard({ summary, onFollowUp, timeline }: { summary: SessionSummar
         {parts.length > 0 && <span className="font-mono text-[0.625rem] text-ink-3">{parts.join(" · ")}</span>}
       </div>
       <div className="px-3 py-2.5 text-[0.8125rem] leading-[1.6] text-ink">{summary.text}</div>
-      {(kind === "completed" && onFollowUp) || (timeline && timeline.length > 0) ? (
+      {timeline && timeline.length > 0 ? (
         <div className="flex items-center gap-1 px-3 pb-2 pt-1">
-          {kind === "completed" && onFollowUp && (
-            <button
-              type="button"
-              onClick={onFollowUp}
-              title="基于这条总结，继续完成建议的下一步"
-              className="rounded-pill bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink"
-            >
-              继续下一步 →
-            </button>
-          )}
           {timeline && timeline.length > 0 && (
             <button
               type="button"
@@ -464,8 +469,8 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, onContinue, stalled, onAbort, onOpenFile, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
-  const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint } = data;
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
+  const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint, task, taskAttempts } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
   const visible = useMemo(() => {
@@ -528,25 +533,6 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     }
     return null;
   }, [visible, running]);
-  // 续跑断点上下文：从中断前的已投影数据拼出「进行到哪」的显式描述，
-  // 让「继续」不再裸发二字——模型能明确知道自己已做/未做的部分。
-  const buildContinueContext = useMemo(() => {
-    return (m: UiMessage): string => {
-      const done = todos?.filter((t) => t.status === "completed").length ?? 0;
-      const total = todos?.length ?? 0;
-      const toolParts = m.parts.map((p) => p.part).filter((p): p is Extract<Part, { type: "tool" }> => p.type === "tool");
-      const lastTool = toolParts[toolParts.length - 1]?.tool;
-      const errName = m.error?.name ?? "";
-      const errMsg = m.error?.message ?? "";
-      const lines: string[] = ["（续跑提示：上一次任务中断了，请接着完成，不要从头重做。）"];
-      if (total > 0) lines.push(`- 已完成的步骤：${done}/${total}`);
-      if (lastTool) lines.push(`- 中断前最后一步工具调用：${lastTool}`);
-      if (editedPaths.length > 0) lines.push(`- 已经改动过的文件：${editedPaths.slice(0, 5).join("、")}${editedPaths.length > 5 ? ` 等 ${editedPaths.length} 个` : ""}`);
-      if (errName) lines.push(`- 中断原因：${errName}${errMsg ? `（${errMsg}）` : ""}`);
-      lines.push("请基于以上进度继续，直接开始未完成的部分。");
-      return lines.join("\n");
-    };
-  }, [todos, editedPaths]);
   // 断线时长：从进入非 connected 状态开始计时，恢复即清零（横幅展示「已断 Xs」）
   const [downSince, setDownSince] = useState<number | null>(null);
   const [downSeconds, setDownSeconds] = useState(0);
@@ -966,7 +952,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                                 {typeof checkpoint.elapsedMs === "number" ? ` · ${(checkpoint.elapsedMs / 1000).toFixed(0)}s` : ""}
                               </span>
                             )}
-                            <span className="text-ink-3">点「继续」在同一会话续跑</span>
+                            <span className="text-ink-3">任务未交付时，下方任务卡会给出下一步动作；也可以直接在输入框里补一句接着做</span>
                           </>
                         );
                       })()}
@@ -974,30 +960,10 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                   )}
                 </div>
               )}
-              {/* P1 一键继续：最后一条 assistant 消息带错误且会话已空闲 → 错误卡下方出「继续」chip。
-                  续跑会带上断点上下文（进度/改过文件/最后一步/原因），模型能接上而非从头发散。 */}
-              {m.error && isAssistant && idx === visible.length - 1 && !running && !pending && (
-                <div className="pt-0.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // N6 幂等提示：上次已改过文件，续跑可能重复操作 → 先确认
-                      const ctx = buildContinueContext(m);
-                      if (editedPaths.length > 0) {
-                        if (window.confirm(`上次已改动 ${editedPaths.length} 个文件。继续会在这些改动基础上接着做，不会自动回滚。是否继续？`)) {
-                          onContinue(ctx);
-                        }
-                      } else {
-                        onContinue(ctx);
-                      }
-                    }}
-                    title="带断点上下文在同一会话继续（进度、已改文件、最后一步）"
-                    className="rounded-pill bg-surface px-3 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink"
-                  >
-                    继续
-                  </button>
-                </div>
-              )}
+              {/* P1 的「继续」chip 已删除（规格 3 §19）：它发的是前端拼出来的伪用户
+                  消息，而任务目标/验收条件/剩余步骤全靠从上下文猜——多轮或压缩之后
+                  必然漂移。上游抖动现在由框架自己在同一任务里退避重试，直到任务层
+                  给出 blocked/failed；用户该做什么由下方任务卡的动作按钮表达。 */}
               {lastActive && (
                 <div className="flex items-center gap-2 pt-0.5 text-[0.6875rem] text-live">
                   <span className="streaming-caret" />
@@ -1016,9 +982,14 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         })}
         </div>
         {historyState.hasNewer && <button type="button" disabled={historyState.loading} className="my-3 w-full text-xs text-ink-3 disabled:opacity-40" onClick={() => { captureAnchor(); onLoadNewer(); }}>加载更新消息</button>}
-        {/* 任务终态小结（N5）：run 收尾的 AI 一句总结，挂在消息流末尾。
-            只在非 running 时显示——running 时 summary 尚未生成（终态才发）。
-            N6：总结卡带「继续下一步」按钮 + 可展开「执行轨迹」时间线。 */}
+        {/* 任务区（规格 3 §14.1）。三件事按状态各就各位：
+            · 交付卡 —— 只在 task.delivered 后出现，是「任务完成」的唯一落点；
+            · 进度卡 —— 任务在推进或等用户时出现（含 blocker 与对应动作）；
+            · 本轮小结 —— 一次 Attempt 的收尾，折叠进轨迹，不再是醒目的完成卡。 */}
+        {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
+        {task && taskView && !taskView.completed && taskView.status !== "failed" && taskView.status !== "cancelled" && (
+          <TaskProgressCard task={task} view={taskView} attempts={taskAttempts} onAction={(action) => onTaskAction?.(action)} />
+        )}
         {summary && !running && (
           <SummaryCard
             summary={summary}
@@ -1040,9 +1011,6 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               }
               return items;
             })()}
-            onFollowUp={() =>
-              onSend({ text: `基于上面的任务总结，请继续完成你建议的下一步工作，直接开始执行。\n\n（上一轮总结：${summary.text}）`, attachmentRefs: [] })
-            }
           />
         )}
         {/* 本轮产物卡片：只展示 summary 对应的这一轮 run 的产物（summaryArtifacts），
@@ -1064,10 +1032,14 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           </div>
         )}
         {pending && (
-          <PermissionCard
-            request={{ id: pending.id, permission: pending.permission, patterns: pending.patterns, metadata: pending.metadata }}
-            onReply={(reply, feedback) => onReply(reply, feedback)}
-          />
+          // 锚点供任务动作「授权并继续」定位（规格 §14.2）。PermissionCard 来自
+          // @zmzai/theme，不给它加 props——包一层就够，也避免把宿主的责任压给主题包。
+          <div data-permission-card>
+            <PermissionCard
+              request={{ id: pending.id, permission: pending.permission, patterns: pending.patterns, metadata: pending.metadata }}
+              onReply={(reply, feedback) => onReply(reply, feedback)}
+            />
+          </div>
         )}
       </div>
       </div>

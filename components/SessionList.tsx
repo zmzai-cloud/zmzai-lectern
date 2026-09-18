@@ -5,6 +5,7 @@ import { cn } from "@zmzai/theme";
 import { usePlatform } from "@/lib/use-platform";
 import type { SessionListItem } from "@/lib/types";
 import { groupTasks, unreadTaskCount, type TaskGroup } from "@/lib/task-groups";
+import { presentTask, sessionListOutcome } from "@/lib/task-presentation";
 
 function timeLabel(iso?: string): string {
   if (!iso) return "";
@@ -41,10 +42,11 @@ const OUTCOME: Record<string, { label: string; dot: string; text: string; tint: 
   idle: { label: "空闲", dot: "bg-ink-3", text: "text-ink-3", tint: "bg-surface-2" },
 };
 
+/** 列表条目的状态键。规则本体在 `lib/task-presentation.ts` 的
+ *  `sessionListOutcome`（规格 3 §15.2 / §18.3）——放那里是为了能被单测钉住，
+ *  见 `lib/task-execution.test.ts` 的「session 列表不得把有标题当完成」。 */
 function outcomeOf(s: SessionListItem): string {
-  if (s.awaitingPermission) return "awaiting";
-  if (s.running) return "running";
-  return s.lastOutcome ?? (s.title ? "completed" : "idle");
+  return sessionListOutcome(s);
 }
 
 /** 后台动态（未读）的终态文案。key 是 kind 字符串，因此显式声明索引签名。 */
@@ -316,7 +318,10 @@ function SessionRow({
   onDelete: (id: string) => void;
 }) {
   const outcome = outcomeOf(s);
-  const style = OUTCOME[outcome] ?? OUTCOME.idle!;
+  const base = OUTCOME[outcome] ?? OUTCOME.idle!;
+  // 有任务时用任务层的具体文案（「等待授权」而不是笼统的「待确认」）——
+  // 扫列表的人靠这一格决定要不要切过去，说得越具体越省事。
+  const style = s.task ? { ...base, label: presentTask(s.task).label } : base;
   // 后台动态（未读）：终态文案本身就是「小型可读标识」（§4.3），用 tint 底色表达
   // 「还没看」，不再用一个无意义的「新」字胶囊占位。
   const bgLabel = bgActivity ? BG_LABEL[bgActivity.kind] ?? "已结束" : "";

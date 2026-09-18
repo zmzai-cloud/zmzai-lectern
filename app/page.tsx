@@ -20,7 +20,7 @@ import { detectPermissionMode, PERMISSION_MODES, type PermissionMode } from "@/l
 import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData } from "@/lib/chat-projector";
 import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
-import { deriveTaskPresentation, previewableOf, type SessionStatus } from "@/lib/task-presentation";
+import { deriveTaskPresentation, isTaskActive, presentTask, previewableOf, sessionStatusFor, taskNotice, type SessionStatus, type TaskActionId } from "@/lib/task-presentation";
 import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -42,20 +42,9 @@ import {
   type TaskWorkbenchLayout,
   type WorkbenchTab,
 } from "@/lib/task-layout";
-import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation, InputAttachmentRef } from "@/lib/types";
+import type { SessionInfo, SessionListItem, PermissionRequest, PermissionSettings, LecternEvent, ModelRef, ThinkingEffort, AuthStatus, SessionIsolation, InputAttachmentRef, TaskRecordView } from "@/lib/types";
 import { PERMISSION_DOMAIN_OF } from "@/lib/types";
 import type { ComposerSendInput } from "@/components/Composer";
-
-/** 把 UI 会话状态映射为状态机域的 SessionStatus（state-driven spec §6）。
- *  会话状态流里没有终态（只有 running / waiting_* / 空），终态取自
- *  chatData.summary.kind（framework session.summary 事件的 kind）。 */
-function toSessionStatus(status: string, summaryKind?: string | null): SessionStatus {
-  if (status === "running") return "running";
-  if (status === "waiting_permission" || status === "waiting_input") return "waiting";
-  if (summaryKind === "error") return "failed";
-  if (summaryKind === "completed") return "completed";
-  return "idle";
-}
 
 /** 任务标题：首条用户消息的首行；无消息时回退「新任务」（§4.2 任务标题不为空）。 */
 function taskTitleOf(data: ChatViewData): string {
@@ -783,6 +772,10 @@ export default function App() {
           projector.reset();
           setPending(null);
           setStatus("idle");
+          // 快照里的任务契约先落地，再折事件：事件只带增量（blocked 只有 blocker、
+          // delivered 只有 result），没有这一步，页面刚打开时任务条会是空的，
+          // 直到下一条事件到达才补上——用户看到的是「任务凭空出现」。
+          projector.adoptTask(page.task ?? null);
           for (const ev of transcriptToEvents(page.messages)) projector.ingest(ev);
           for (const ev of page.stateEvents ?? []) {
             // Restoring an approval must not silently repeat an external reply.
@@ -833,29 +826,76 @@ export default function App() {
     return () => window.removeEventListener("lectern:read-state", update);
   }, []);
 
-  // P2-14 任务完成通知：running → idle 时——后台窗口弹系统通知；前台弹页内 toast
-  // （不再只在隐藏时提示，盯着的用户也有明确「完成了」的落点）。两者都触发。
-  const prevStatusRef = useRef(status);
+  // 任务的呈现模型：状态文案、进度、按钮、是否算完成，全部来自这一个纯函数
+  // （规格 §15.2）。toast、通知、标题、列表勾选也都读它的 `completed`。
+  //
+  // 【为什么声明得这么靠前】下面的任务通知 effect 要读 `taskView.label`。
+  // 通知文案与进度卡上的状态文案必须**来自同一个 label**，否则会出现「卡片上
+  // 写着『等待授权』、系统通知里写着『任务等待中』」这类不一致。所以它必须排在
+  // 第一个消费它的 effect 之前——函数的声明位置要跟着它的最早使用点走。
+  const taskView = useMemo(() => (chatData.task ? presentTask(chatData.task) : null), [chatData.task]);
+
+  // 任务通知（规格 §14.3）。改造要点：**`running → idle` 不再触发任何「完成」提示**。
+  //
+  // 旧逻辑把「这一轮运行结束」（status 变 idle）当成「任务完成」。可 status
+  // 回到 idle 的时刻里，任务完全可能还有一半步骤没做完、或者正卡在等授权上
+  // ——那时弹出一句「任务已完成」，用户会以为自己可以走了。规格 §14.3 因此把
+  // 完成通知的触发点限定为 `task.delivered`，并给 blocked / failed 各自的通知。
+  //
+  // 「哪条状态发什么」这件事全在 `taskNotice` 这个纯函数里（§17.2 第 3 条要求
+  // 它能被单测钉住）。这个 effect 只剩三件事：幂等、读 DOM（`document.title` /
+  // `document.hidden`）、调通知通道。规则与副作用分开之后，规则就不会随着
+  // 这里有几条分支而漂移。
+  //
+  // 幂等：`activeTaskSeen` 记住「这条任务我们亲眼看着它跑过」，`notifiedTask`
+  // 记住「这条任务的这个终态已经通知过」。两者一起挡住两类误报——打开一个
+  // 早就完成的旧会话不该再弹一次，界面重渲染也不该重复弹。
+  const activeTaskSeenRef = useRef<string | null>(null);
+  const notifiedTaskRef = useRef<string | null>(null);
   useEffect(() => {
-    const prev = prevStatusRef.current;
-    prevStatusRef.current = status;
-    if (prev === "running" && status === "idle") {
-      document.title = "✓ 任务完成 — Lectern";
-      // 前台 toast：轻提示，4s 自动消退
-      setDoneToast("任务已完成");
-      setTimeout(() => setDoneToast(null), 4000);
-      const bridge = window.lecternNative;
-      if (document.hidden && bridge?.notifyTaskDone) {
-        bridge.notifyTaskDone();
-      } else if (document.hidden && "Notification" in window && Notification.permission === "granted") {
-        new Notification("Lectern", { body: "任务已完成，回来看看结果" });
-      }
-      // N6 完成提示音：短促双音 beep，只在后台窗口时播放——前台已弹 toast，避免打扰。
-      if (document.hidden) playDoneChime();
-    } else if (status === "running") {
+    const task = chatData.task;
+    if (!task) {
+      activeTaskSeenRef.current = null;
       document.title = "Lectern";
+      return;
     }
-  }, [status]);
+    if (!isTaskActive(task.status)) activeTaskSeenRef.current = task.id;
+    const notice = taskNotice(task);
+    if (!notice) {
+      // 中间态（queued/running/recovering/verifying）与 cancelled 都走这里：
+      // 它们不发通知，唯一要做的是把标题恢复成常态。
+      document.title = "Lectern";
+      return;
+    }
+    // 非活跃态：只有「看着它跑过」的那条任务才通知。打开历史会话时
+    // activeTaskSeen 里没有它，于是安静地展示结果，不打扰。
+    if (activeTaskSeenRef.current !== task.id) return;
+    const key = `${task.id}:${task.status}`;
+    if (notifiedTaskRef.current === key) return;
+    notifiedTaskRef.current = key;
+
+    document.title = notice.title;
+    setDoneToast(notice.toast);
+    setTimeout(() => setDoneToast(null), notice.toastMs);
+
+    const osNotify = (body: string | null) => {
+      if (!body) return;
+      if (!document.hidden) return;
+      if ("Notification" in window && Notification.permission === "granted") new Notification("Lectern", { body });
+    };
+    const bridge = window.lecternNative;
+    if (notice.bridgeDone) {
+      if (bridge?.notifyTaskDone) {
+        if (document.hidden) bridge.notifyTaskDone();
+      } else osNotify(notice.os);
+      // N6 完成提示音：短促双音 beep，只在后台窗口时播放——前台已弹 toast，避免打扰。
+      if (notice.chime && document.hidden) playDoneChime();
+    } else {
+      osNotify(notice.os);
+    }
+    // 依赖刻意取 id + status 两个字符串（而不是 chatData.task 对象）：投影器每帧
+    // 产出新对象，按对象比较会让这个 effect 每帧重跑一遍。
+  }, [chatData.task?.id, chatData.task?.status]);
 
   // P2-15 多会话并行状态：轮询刷新运行态点（兜底——运行态主链路是 SSE
   // session.status）。前台 10s，页面隐藏降到 60s 省电省请求。
@@ -1082,7 +1122,7 @@ export default function App() {
     () =>
       deriveTaskPresentation({
         sessionId: activeId,
-        sessionStatus: toSessionStatus(status, chatData.summary?.kind),
+        sessionStatus: sessionStatusFor(status, chatData.task),
         permissionRequest: pending
           ? { id: pending.id, permission: pending.permission }
           : null,
@@ -1090,15 +1130,55 @@ export default function App() {
         previewablePaths,
         explicitWorkbenchTab: null,
         explicitDebugTab: null,
+        ...(taskView ? { task: taskView } : {}),
       }),
     [
       activeId,
       status,
-      chatData.summary?.kind,
+      chatData.task,
+      taskView,
       chatData.editedPaths,
       previewablePaths,
       pending,
     ],
+  );
+
+  /** 任务动作 → 具体界面行为（规格 §14.2）。
+   *
+   *  五个动作里**只有「检查后重试」会打后端**：授权、补充信息、选择方案这三件
+   *  事，用户都要在前面的某个地方做点动作（点授权卡、在输入框打字），而系统会
+   *  在那件事发生时自己接着跑；把它们也走一次 resume 会造出两条同时推进任务的
+   *  路径。所以前三个动作全部是「把人送到该做那件事的地方」——这也是为什么
+   *  「授权并继续」不是删掉那个按钮、而是给它一个真实可期的行为。 */
+  const handleTaskAction = useCallback(
+    (action: TaskActionId) => {
+      if (!activeId) return;
+      if (action === "stop") {
+        void client.abort(activeId).catch(() => undefined);
+        return;
+      }
+      if (action === "authorize") {
+        const card = document.querySelector<HTMLElement>("[data-permission-card]");
+        card?.scrollIntoView({ block: "center", behavior: "smooth" });
+        // 授权卡是唯一的授权入口；滚进视野后再把焦点交给第一个按钮，
+        // 键盘用户不必自己再找一遍。
+        requestAnimationFrame(() => card?.querySelector<HTMLElement>("button")?.focus());
+        return;
+      }
+      if (action === "supply_input" || action === "choose") {
+        document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
+        return;
+      }
+      // recheck：用户核对完外部状态后放行任务。**不发消息**（规格 §11.2）——
+      // 这是同一条指令的继续，不是新的一轮对话。
+      void client
+        .resumeTask(activeId)
+        .then((result) => {
+          if (!result.resumed) setDoneToast("任务已不在等待状态，无需继续");
+        })
+        .catch(() => setDoneToast("继续失败，请重试"));
+    },
+    [activeId],
   );
 
   const taskTitle = useMemo(() => taskTitleOf(chatData), [chatData]);
@@ -1121,8 +1201,11 @@ export default function App() {
             presentation={presentation}
             title={taskTitle}
             projectName={projectName}
+            /* 上下文条的「操作摘要」只讲一次运行的进展；任务级的进展另有
+               `task` 通道（进度、等待原因），两者不混在一格里。 */
             summary={chatData.summary?.text ?? null}
             meta={modelLabel}
+            task={taskView}
             actions={
               <>
               {(presentation.state === "review_ready" || presentation.state === "delivered") && (
@@ -1225,7 +1308,8 @@ export default function App() {
               onSelectModel={setSelectedModel}
               onSend={send}
               onReply={reply}
-              onContinue={(ctx) => void send({ text: ctx, attachmentRefs: [] })}
+              taskView={taskView}
+              onTaskAction={handleTaskAction}
               stalled={stalled}
               onAbort={abort}
               onOpenFile={openFileInWorkbench}
@@ -1249,7 +1333,7 @@ export default function App() {
                   onDragChange={setWorkbenchDragging}
                 />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
                 </div>
               </>
             )}
@@ -1292,7 +1376,7 @@ export default function App() {
       {workbenchDrawer && (
         <div className="panel-scrim" role="presentation" onMouseDown={() => (compactPanels ? setActiveOverlay(null) : updateTaskLayout({ open: false }))}>
           <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
-            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
           </div>
         </div>
       )}

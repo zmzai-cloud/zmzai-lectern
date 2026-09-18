@@ -8,7 +8,20 @@ import { withWorkflowErrors, WorkflowError } from "@/lib/workflow-error";
 import { getActiveProject, listProjects, projectStore } from "@/lib/projects";
 import { createWorktree, worktreeForSession } from "@/lib/worktree";
 import type { SessionListItem } from "@/lib/types";
+import { toTaskView } from "@/lib/task-presentation";
 import { createHash, randomUUID } from "node:crypto";
+
+/** 列表条目的任务态（规格 3 §15.2：会话列表从 task lifecycle 显示运行、等待、
+ *  阻塞与完成，而不是从 summary 反推）。
+ *
+ *  活跃任务优先，没有则取最近一个终态任务——后者是「这条会话上次做到哪了」，
+ *  用户扫列表时最需要的信息。取不到（旧库 / 未启用任务层）时返回 null，列表
+ *  退回原来的运行态点，不会因此少画一行。 */
+async function taskViewFor(store: { task?: { getActiveTask(id: string): Promise<unknown>; getLatestTask(id: string): Promise<unknown> } }, sessionId: string) {
+  if (!store.task) return null;
+  const record = ((await store.task.getActiveTask(sessionId).catch(() => null)) ?? (await store.task.getLatestTask(sessionId).catch(() => null))) as Parameters<typeof toTaskView>[0] | null;
+  return record ? toTaskView(record) : null;
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,7 +46,7 @@ export async function GET(request: NextRequest) {
             ? await (store as unknown as { countMessagesBySession: () => Promise<Map<string, number>> }).countMessagesBySession()
             : new Map<string, number>();
           for (const s of sessions) {
-            merged.push({ ...s, readState: await store.getReadState?.(s.id), running: isSessionActive(s.id), awaitingPermission: isSessionAwaitingPermission(s.id), messageCount: counts.get(s.id) ?? 0, projectId: project.id, projectName: project.name });
+            merged.push({ ...s, readState: await store.getReadState?.(s.id), running: isSessionActive(s.id), awaitingPermission: isSessionAwaitingPermission(s.id), messageCount: counts.get(s.id) ?? 0, task: await taskViewFor(store, s.id), projectId: project.id, projectName: project.name });
           }
         } catch {
           /* 单项目库异常不影响整体列表 */
@@ -49,7 +62,7 @@ export async function GET(request: NextRequest) {
     ? await (runtime.store as unknown as { countMessagesBySession: () => Promise<Map<string, number>> }).countMessagesBySession()
     : new Map<string, number>();
   // 附带运行态（P2-15 多会话并行状态点）：runner 的 activeRuns 内存表
-  const withStatus = await Promise.all(sessions.map(async (s) => ({ ...s, readState: await runtime.store.getReadState?.(s.id), projectId: project.id, projectName: project.name, running: isSessionActive(s.id), awaitingPermission: isSessionAwaitingPermission(s.id), messageCount: counts.get(s.id) ?? 0 })));
+  const withStatus = await Promise.all(sessions.map(async (s) => ({ ...s, readState: await runtime.store.getReadState?.(s.id), projectId: project.id, projectName: project.name, running: isSessionActive(s.id), awaitingPermission: isSessionAwaitingPermission(s.id), messageCount: counts.get(s.id) ?? 0, task: await taskViewFor(runtime.store, s.id) })));
   return NextResponse.json(withStatus);
 }
 

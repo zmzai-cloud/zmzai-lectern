@@ -37,8 +37,13 @@ export type SessionInfo = {
   running?: boolean;
   /** HITL 待确认：run 挂起等待人工授权（isSessionAwaitingPermission）。 */
   awaitingPermission?: boolean;
-  /** 最近一次 run 的终态（N5）：completed/aborted/error，会话列表三态用。 */
+  /** 最近一次 run 的终态（N5）：completed/aborted/error。
+   *  **只描述一次运行**——列表的「完成」判定已改由 `task.status` 驱动
+   *  （规格 3 §14.3 / §18.3），这里保留是给执行轨迹与历史会话用。 */
   lastOutcome?: "completed" | "aborted" | "error";
+  /** 当前（或最近一次）持久任务。列表与上下文条的任务态一律读它，
+   *  不再从 summary 反推（规格 3 §15.2）。 */
+  task?: TaskRecordView | null;
   /** 消息数（N6，GET /api/sessions 附带，批量 GROUP BY 填充）。 */
   messageCount?: number;
   readState?: ReadState;
@@ -135,6 +140,81 @@ export type Artifact = {
   previewUrl?: string;
   createdAt: number;
 };
+
+// ===== 持续任务（规格 3）=====
+
+/** 任务生命周期。与 framework `TaskLifecycleStatus` 逐字对齐——UI 不做二次抽象，
+ *  因为「在等授权」和「在等用户补信息」要给的是两个不同的按钮（规格 §14.2）。 */
+export type TaskLifecycleStatus =
+  | "queued"
+  | "running"
+  | "recovering"
+  | "waiting_permission"
+  | "waiting_input"
+  | "waiting_external"
+  | "verifying"
+  | "delivered"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+
+export type TaskStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "cancelled";
+export type TaskCriterionStatus = "pending" | "passed" | "failed" | "not_applicable";
+
+export type TaskStepView = { id: string; title: string; status: TaskStepStatus; order: number };
+export type TaskCriterionView = { id: string; description: string; required: boolean; status: TaskCriterionStatus };
+
+/** 阻塞原因。`resumable` 决定给不给「检查后重试」——一个不可恢复的阻塞
+ *  摆出一个可点的重试按钮，比不给按钮更糟。 */
+export type TaskBlockerView = {
+  kind: "permission" | "input" | "choice" | "external_auth" | "unsafe_replay" | "budget" | "no_progress";
+  message: string;
+  requiredAction: string;
+  resumable: boolean;
+};
+
+/** 最终交付信息（规格 §14.1 交付卡四问的来源）。`remaining` 为空数组时
+ *  UI 必须显式写「无」——留白会让用户以为还有没列出的尾巴。 */
+export type TaskResultView = {
+  outcome: string;
+  changes: string[];
+  verification: string[];
+  remaining: string[];
+};
+
+/** 任务的 UI 视图。字段是 framework `TaskRecord` 的**子集**：只留界面真正
+ *  消费的那些。evidence 只带计数与最近若干条摘要，不整份下发——一个长任务
+ *  的证据集可以有几十条，而界面只画最近几条。 */
+export type TaskRecordView = {
+  id: string;
+  sessionId: string;
+  goal: string;
+  status: TaskLifecycleStatus;
+  steps: TaskStepView[];
+  acceptanceCriteria: TaskCriterionView[];
+  blocker?: TaskBlockerView;
+  revision: number;
+  attemptCount: number;
+  constraints: string[];
+  createdAt: string;
+  updatedAt: string;
+  deliveredAt?: string;
+  /** 累计执行毫秒（各 Attempt 之和），进度区展示运行时长用。 */
+  activeMs?: number;
+  result?: TaskResultView;
+  /** 证据摘要（最近在前，最多 12 条）与总数。 */
+  evidence?: { count: number; recent: { kind: string; summary: string }[] };
+};
+
+/** 一条消息与任务的关系（framework PromptReceipt.disposition）。
+ *  后两个值是规格 3 之前的旧值，仅为容忍历史 receipt 保留。 */
+export type PromptDisposition =
+  | "task_started"
+  | "task_steered"
+  | "task_resumed"
+  | "queued_new_task"
+  | "started"
+  | "queued";
 
 /** 会话已持久化的转录（来自引擎 getMessages）。info 取 id/role/error，parts 即完整片段。 */
 export type SelectedSkill = { id: string; name: string; digest: string };

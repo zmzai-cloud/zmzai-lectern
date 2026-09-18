@@ -1,4 +1,17 @@
-import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary } from "./types";
+import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary, TaskBlockerView, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
+
+/** blocker kind → 生命周期状态。与 framework `lifecycleForBlocker` 同构。
+ *
+ *  【为什么要在前端也有一份】`task.blocked` 事件只带 blocker，不带状态
+ *  （状态是 blocker 的函数，发两份就会有不一致的机会）。前端要么重算，
+ *  要么去问服务器——重算是一行纯映射，问服务器会让「事件到了但状态还没更新」
+ *  这段窗口里 UI 显示错的标签。 */
+function statusForBlocker(kind: TaskBlockerView["kind"]): TaskLifecycleStatus {
+  if (kind === "permission") return "waiting_permission";
+  if (kind === "input" || kind === "choice") return "waiting_input";
+  if (kind === "external_auth") return "waiting_external";
+  return "blocked";
+}
 
 /** ChatView 消息树的数据类型与投影器。
  *
@@ -34,6 +47,22 @@ export type ChatViewData = {
   /** 长任务中途进度快照（session.checkpoint，N6）：最近一次运行中的「中间落点」，
    *  中断后据此提示「上次进行到哪」（已执行 N 个工具 · 最后一步 · 耗时）。 */
   checkpoint: SessionCheckpoint | null;
+  /** 当前持久任务（规格 3 §7）。**「任务完成」的唯一依据**——`summary` 与
+   *  `status === "idle"` 都只描述一次运行，只有它描述用户的目标。 */
+  task: TaskRecordView | null;
+  /** 本任务的 Attempt 轨迹（`task.attempt.finished` 累积，最新在后）。
+   *  它是「执行轨迹」的数据源：`session.summary` 说的是这一轮干了什么，
+   *  这里说的是这条任务一共跑了几轮、每轮多久。 */
+  taskAttempts: TaskAttempt[];
+};
+
+/** 一次内部运行（Attempt）的收尾记录。**不是任务完成**（规格 §8.3）。 */
+export type TaskAttempt = {
+  attempt: number;
+  outcome: "completed" | "error" | "aborted";
+  toolCalls: number;
+  filesEdited: number;
+  durationMs: number;
 };
 
 /** 长任务中途进度快照（N6）。 */
@@ -43,7 +72,7 @@ export type SessionCheckpoint = {
   elapsedMs: number;
 };
 
-export const EMPTY_CHAT_VIEW: ChatViewData = { messages: [], todos: null, reads: [], editedPaths: [], summary: null, artifacts: [], summaryArtifacts: [], checkpoint: null };
+export const EMPTY_CHAT_VIEW: ChatViewData = { messages: [], todos: null, reads: [], editedPaths: [], summary: null, artifacts: [], summaryArtifacts: [], checkpoint: null, task: null, taskAttempts: [] };
 
 /** 把引擎持久化的转录（MessageWithParts[]）转换成投影器可消费的
  *  message.updated + message.part.updated 事件流，从而跨会话恢复历史。
@@ -58,6 +87,12 @@ export function transcriptToEvents(messages: TranscriptMessage[]): LecternEvent[
     }
   }
   return out;
+}
+
+/** 事件里的步骤对象只保证 id/title/status；`order` 缺省时按 0 处理——
+ *  它只影响同层排序，缺失不该让整个步骤列表画不出来。 */
+function normalizeStep(step: TaskStepView): TaskStepView {
+  return { id: step.id, title: step.title, status: step.status, order: typeof step.order === "number" ? step.order : 0 };
 }
 
 type InternalMessage = { id: string; role: string; messageSeq?: number; parts: Map<string, UiPart>; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
@@ -80,6 +115,105 @@ export class ChatProjector {
   private summaryArtifacts: Artifact[] = [];
   /** 最近一次中途进度快照（session.checkpoint，N6）。 */
   private checkpoint: SessionCheckpoint | null = null;
+  /** 当前任务。事件给增量、快照给全量，两者都写进这一个对象。 */
+  private task: TaskRecordView | null = null;
+  /** 本任务的 Attempt 轨迹。 */
+  private taskAttempts: TaskAttempt[] = [];
+
+  /** 用快照里的权威任务覆盖本地累积（断线重连 / 首屏加载）。
+   *
+   *  【为什么要允许「覆盖」】事件流只带增量（blocked 只有 blocker、delivered
+   *  只有 result），而快照带的是完整记录。重连后先放快照再继续折事件，得到的
+   *  就是既有全量又有最新增量的正确状态。`null` 表示服务端确认没有任务——
+   *  此时清空，否则上一会话的任务会挂在新会话上。 */
+  adoptTask(task: TaskRecordView | null): void {
+    this.task = task;
+    if (!task) this.taskAttempts = [];
+  }
+
+  /** 折叠一个 task.* 事件。revision 单调：乱序/重放到达的旧事件直接丢弃
+   *  （规格 §13.3 要求客户端按 seq + taskId + revision 去重与排序）。 */
+  private ingestTask(type: string, data: Record<string, unknown>): void {
+    const taskId = typeof data.taskId === "string" ? data.taskId : null;
+    const revision = typeof data.revision === "number" ? data.revision : null;
+    if (!taskId || revision === null) return;
+    // 换了任务（上一条已终态、用户又开了一条）：从头建，不把旧任务的步骤留在新任务上
+    if (this.task && this.task.id !== taskId) {
+      this.task = null;
+      this.taskAttempts = [];
+    }
+    if (this.task && this.task.id === taskId && revision < this.task.revision) return;
+    this.task ??= {
+      id: taskId,
+      sessionId: "",
+      goal: "",
+      status: "queued",
+      steps: [],
+      acceptanceCriteria: [],
+      revision,
+      attemptCount: 0,
+      constraints: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const task = this.task;
+    task.revision = Math.max(task.revision, revision);
+    task.updatedAt = new Date().toISOString();
+
+    if (type === "task.started") {
+      task.goal = typeof data.goal === "string" ? data.goal : task.goal;
+      task.status = "running";
+      task.steps = Array.isArray(data.steps) ? (data.steps as TaskStepView[]).map(normalizeStep) : task.steps;
+      task.acceptanceCriteria = Array.isArray(data.acceptanceCriteria)
+        ? (data.acceptanceCriteria as TaskRecordView["acceptanceCriteria"])
+        : task.acceptanceCriteria;
+    } else if (type === "task.plan.updated") {
+      if (typeof data.goal === "string") task.goal = data.goal;
+      if (Array.isArray(data.steps)) task.steps = (data.steps as TaskStepView[]).map(normalizeStep);
+    } else if (type.startsWith("task.step.")) {
+      // 单步增量：事件只带 stepId，状态由事件类型决定（started/progress/completed）
+      const stepId = typeof data.stepId === "string" ? data.stepId : null;
+      const next: TaskStepView["status"] = type === "task.step.completed" ? "completed" : "in_progress";
+      if (stepId) task.steps = task.steps.map((step) => (step.id === stepId ? { ...step, status: next } : step));
+    } else if (type === "task.recovery.started") {
+      task.status = "recovering";
+      task.attemptCount = Math.max(task.attemptCount, typeof data.attempt === "number" ? data.attempt : 0);
+    } else if (type === "task.attempt.finished") {
+      const attempt = typeof data.attempt === "number" ? data.attempt : task.attemptCount;
+      task.attemptCount = Math.max(task.attemptCount, attempt);
+      this.taskAttempts = [
+        ...this.taskAttempts.filter((item) => item.attempt !== attempt),
+        {
+          attempt,
+          outcome: (data.outcome as TaskAttempt["outcome"]) ?? "completed",
+          toolCalls: typeof data.toolCalls === "number" ? data.toolCalls : 0,
+          filesEdited: typeof data.filesEdited === "number" ? data.filesEdited : 0,
+          durationMs: typeof data.durationMs === "number" ? data.durationMs : 0,
+        },
+      ].sort((a, b) => a.attempt - b.attempt);
+    } else if (type === "task.blocked") {
+      const blocker = data.blocker as TaskBlockerView | undefined;
+      if (blocker) {
+        task.blocker = blocker;
+        task.status = statusForBlocker(blocker.kind);
+      }
+    } else if (type === "task.verification.started") {
+      task.status = "verifying";
+      delete task.blocker;
+    } else if (type === "task.delivered") {
+      task.status = "delivered";
+      task.deliveredAt = new Date().toISOString();
+      delete task.blocker;
+      const text = typeof data.result === "string" ? data.result : "";
+      if (text) task.result = { outcome: text, changes: [], verification: [], remaining: [] };
+    } else if (type === "task.failed") {
+      task.status = "failed";
+      delete task.blocker;
+    } else if (type === "task.cancelled") {
+      task.status = "cancelled";
+      delete task.blocker;
+    }
+  }
 
   hasMessage(id: string): boolean { return this.messages.has(id); }
 
@@ -115,10 +249,16 @@ export class ChatProjector {
     this.artifacts = [];
     this.summaryArtifacts = [];
     this.checkpoint = null;
+    this.task = null;
+    this.taskAttempts = [];
   }
 
   /** 折叠单个事件（分支逻辑与原 project() 逐条对应，行为保持不变）。 */
   ingest(ev: LecternEvent): void {
+    if (ev.type.startsWith("task.")) {
+      this.ingestTask(ev.type, (ev.data ?? {}) as Record<string, unknown>);
+      return;
+    }
     if (ev.type === "message.updated") {
       const m = (ev.data as { message: { id: string; role: string; messageSeq?: number; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } } }).message;
       const existing = this.messages.get(m.id);
@@ -225,7 +365,10 @@ export class ChatProjector {
         for (const id of this.order.slice(idx)) this.messages.delete(id);
         this.order = this.order.slice(0, idx);
       }
-      // 被删 run 的派生状态一并清掉，避免残留旧「任务小结/断点」误导续跑
+      // 被删 run 的派生状态一并清掉，避免残留旧「任务小结/断点」误导续跑。
+      // **任务不清**：rewind 截断的是消息，不是用户的目标——把任务一起删掉会
+      // 让「回溯重发」变成「放弃任务」，而规格 §13.1 说回溯后重发的是同一条
+      // 任务的补充说明（disposition = task_steered / task_resumed）。
       this.summary = null;
       this.checkpoint = null;
       this.todos = null;
@@ -280,6 +423,13 @@ export class ChatProjector {
       artifacts: [...this.artifacts],
       summaryArtifacts: [...this.summaryArtifacts],
       checkpoint: this.checkpoint,
+      // 与 messages 同理：快照交出去的是拷贝，内部对象继续被后续事件就地更新。
+      // 直接交出引用会让「上一帧的快照」跟着变化——React 的比较、乐观 UI 的
+      // 回滚、以及任何按引用判断「有没有变」的地方都会读到不一致的过去。
+      task: this.task
+        ? { ...this.task, steps: [...this.task.steps], acceptanceCriteria: [...this.task.acceptanceCriteria], constraints: [...this.task.constraints] }
+        : null,
+      taskAttempts: [...this.taskAttempts],
     };
   }
 }

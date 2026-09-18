@@ -6,7 +6,7 @@ import { Markdown, cn } from "@zmzai/theme";
 import { client } from "@/lib/client";
 import { isPreviewable } from "@/lib/task-presentation";
 import type { WorkbenchTab } from "@/lib/task-layout";
-import type { SessionSummary } from "@/lib/types";
+import type { SessionSummary, TaskRecordView } from "@/lib/types";
 import CanvasPane from "./CanvasPane";
 import FileEditor from "./FileEditor";
 import FileTree from "./FileTree";
@@ -74,6 +74,7 @@ export default function WorkbenchPanel({
   editedPaths,
   sessionId,
   summary,
+  task = null,
   initialTab = "review",
   initialTabExplicit = false,
   onTabChange,
@@ -84,6 +85,16 @@ export default function WorkbenchPanel({
   sessionId?: string | null;
   /** 任务终态小结（session.summary，N5）：透传给 ReviewPane 渲染任务内变更摘要（§V3-1）。 */
   summary?: SessionSummary | null;
+  /**
+   * 当前任务的完整状态（规格 3 §15.2）。
+   *
+   * 【为什么审查页需要它，而 `summary` 不够】`summary` 是**本轮 Attempt** 的小结，
+   * 回答的是「这次跑出了什么」；`task` 回答的是「用户要的那件事做完了没有」。
+   * 规格 3 要修的根因正是把前者的结束当成后者的完成——审查页是这个问题最容易
+   * 露头的地方：一排改动摆在那里，看起来像「干完了」。两个状态并排放，审查的人
+   * 才能判断自己审的是「一个已交付目标的结果」还是「半途的中间态」。
+   */
+  task?: TaskRecordView | null;
   initialTab?: WorkbenchTab;
   initialTabExplicit?: boolean;
   onTabChange?: (tab: WorkbenchTab, explicit: boolean) => void;
@@ -402,6 +413,7 @@ export default function WorkbenchPanel({
               editedPaths={editedPaths ?? []}
               sessionId={sessionId}
               summary={summary}
+              task={task}
               onOpenFiles={() => select("files")}
             />
           );

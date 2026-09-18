@@ -776,6 +776,10 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         )}
         <Textarea
           ref={textareaRef}
+          // 任务动作「补充信息 / 选择方案」要把用户送到这里（规格 §14.2）：
+          // 那两个按钮唯一的实际效果就是「把光标放到你该打字的地方」，
+          // 所以需要一个稳定的定位锚点，而不是靠组件内部 ref 外泄。
+          data-composer-input
           onPaste={onPaste}
           rows={2}
           className="max-h-44 min-h-[68px] w-full resize-none border-0 bg-transparent px-4 py-3.5 text-sm leading-6 text-ink shadow-none outline-none placeholder:text-ink-3 focus-visible:ring-0"

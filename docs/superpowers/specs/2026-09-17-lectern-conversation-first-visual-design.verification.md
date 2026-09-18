@@ -127,7 +127,7 @@ type StoredTaskLayoutV1   = { version: 1; byTaskId: Record<string, TaskWorkbench
 | `pnpm build`（next build） | 通过，无新增警告 |
 | `LECTERN_TEST_URL=… node e2e/conversation-first-ui.mjs` | 通过 |
 | `LECTERN_TEST_URL=… node e2e/workbench-resize-ui.mjs` | 通过 |
-| `LECTERN_TEST_URL=… node e2e/touch-drag-ui.mjs` | 通过（Chromium 触摸事件路径；非真机触摸屏） |
+| `LECTERN_TEST_URL=… node e2e/touch-drag-ui.mjs` | 通过（Chromium 触摸事件路径；非真机触摸屏），并已进 CI（`ui-e2e.yml` 的 `browser` job，绿） |
 | `node e2e/task-groups-ui.mjs` | 通过（1440px / 960px） |
 | `node e2e/message-search-ui.mjs` | 通过 |
 | `node e2e/message-recovery-ui.mjs` | 通过（1440 / 1024 / 390） |

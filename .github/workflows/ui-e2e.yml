@@ -29,8 +29,8 @@ jobs:
       # 各脚本默认端口不同（3100/3101/3102/3104），那是为了本机并行跑互不干扰。
       # CI 里统一指到同一个 server。
       LECTERN_TEST_URL: http://127.0.0.1:3100
-      LECTERN_DATA_DIR: ${{ runner.temp }}/lectern-e2e/data
-      LECTERN_WORKSPACE: ${{ runner.temp }}/lectern-e2e/workspace
+      LECTERN_DATA_DIR: /tmp/lectern-e2e/data
+      LECTERN_WORKSPACE: /tmp/lectern-e2e/workspace
       LECTERN_UI_OUTPUT: test-results
       # next build 会吃光 Node 的默认堆上限（本机实测 OOM：Ineffective mark-compacts near
       # heap limit，堆停在 4GB）。runner 的内存更小、默认上限按内存推导会更低，必须显式抬高。
@@ -53,13 +53,13 @@ jobs:
       - name: Start web server
         run: |
           mkdir -p "$LECTERN_DATA_DIR" "$LECTERN_WORKSPACE"
-          nohup pnpm start > "$RUNNER_TEMP/web.log" 2>&1 &
+          nohup pnpm start > /tmp/lectern-web.log 2>&1 &
           for _ in $(seq 1 90); do
             if curl -sf -o /dev/null "$LECTERN_TEST_URL"; then exit 0; fi
             sleep 2
           done
           echo "::error::web server 未就绪"
-          cat "$RUNNER_TEMP/web.log"
+          cat /tmp/lectern-web.log
           exit 1
       - run: pnpm test:conversation-ui
       - run: pnpm test:workbench-ui
@@ -74,7 +74,7 @@ jobs:
           name: ui-e2e-browser
           path: |
             test-results/
-            ${{ runner.temp }}/web.log
+            /tmp/lectern-web.log
           if-no-files-found: warn
 
   clipboard-native:
@@ -84,8 +84,8 @@ jobs:
     timeout-minutes: 30
     env:
       LECTERN_TEST_URL: http://127.0.0.1:3100
-      LECTERN_DATA_DIR: ${{ runner.temp }}/lectern-e2e/data
-      LECTERN_WORKSPACE: ${{ runner.temp }}/lectern-e2e/workspace
+      LECTERN_DATA_DIR: /tmp/lectern-e2e/data
+      LECTERN_WORKSPACE: /tmp/lectern-e2e/workspace
       LECTERN_UI_OUTPUT: test-results
       # 同 browser job：next build 需要高于默认的堆上限。
       NODE_OPTIONS: --max-old-space-size=6144
@@ -101,13 +101,13 @@ jobs:
       - name: Start web server
         run: |
           mkdir -p "$LECTERN_DATA_DIR" "$LECTERN_WORKSPACE"
-          nohup pnpm start > "$RUNNER_TEMP/web.log" 2>&1 &
+          nohup pnpm start > /tmp/lectern-web.log 2>&1 &
           for _ in $(seq 1 90); do
             if curl -sf -o /dev/null "$LECTERN_TEST_URL"; then exit 0; fi
             sleep 2
           done
           echo "::error::web server 未就绪"
-          cat "$RUNNER_TEMP/web.log"
+          cat /tmp/lectern-web.log
           exit 1
       - run: pnpm test:clipboard-native
       - name: Preserve clipboard evidence
@@ -117,5 +117,5 @@ jobs:
           name: ui-e2e-clipboard-native
           path: |
             test-results/
-            ${{ runner.temp }}/web.log
+            /tmp/lectern-web.log
           if-no-files-found: warn

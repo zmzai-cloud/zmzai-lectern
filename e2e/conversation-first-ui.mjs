@@ -253,7 +253,10 @@ try {
   await page.keyboard.type("keyboard input");
   assert.equal(await composerInput.inputValue(), "keyboard input", "composer accepts keyboard input");
   assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isEnabled(), true, "typing enables send");
-  for (const label of ["添加附件", "运行配置"]) {
+  // 文案以规格 2 为准：附件入口的按钮叫「添加文件」（另有「更多添加方式」）。
+  // 规格 1 落地时它叫「添加附件」，规格 2 重做入口时改了名——两个规格各自在自己的
+  // 分支上跑绿，合并后才在这里撞出来。
+  for (const label of ["添加文件", "运行配置"]) {
     assert.equal(await page.getByRole("button", { name: label, exact: true }).count(), 1, `${label} must be a named button`);
   }
   const taskRow = page.locator(".task-row").first();

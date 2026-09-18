@@ -107,7 +107,14 @@ type StoredTaskLayoutV1   = { version: 1; byTaskId: Record<string, TaskWorkbench
 3. **降级抽屉下不写宽度**：桌面宽度不足以并排（侧栏很宽时将低于 852px 可用宽度）时，工作台
    以抽屉出现且**不改写**保存的宽度。窗口恢复后若仍并排，则按当时的可用宽度重新 clamp ——
    这个 clamp 会被持久化（规格未要求自动恢复更宽的旧值，且 §5.5.2 要求「到边界后保持稳定」）。
-4. 未在真机触摸屏上验证拖拽；指针捕获 + 透明层已覆盖 iframe 抢事件这一主要风险。
+4. **触摸拖拽**：已在 Chromium 的触摸事件路径上验证（`e2e/touch-drag-ui.mjs`：注入真实触摸事件流，
+   断言 `pointerType === "touch"`、零 `pointercancel`、clamp 与精确位移、抬手后状态清理，纵向同理），
+   但**未在真机触摸屏上验证**——硬件驱动与系统级边缘手势不在覆盖范围内。
+
+   这条用例顺带钉住了一个隐式前提：`.wb-splitter` 上的 `touch-action: none` 是**承重的**。
+   把它在运行时覆写成 `auto` 实测：8 次触摸移动只有 2 次送达、`pointercancel` 触发、
+   宽度只改了 145px 就停住（384 → 529）。失败形态是「拖到一半悄悄停住」而非「完全不动」——
+   只断言「宽度变了」的测试会照样通过，所以这里断的是精确位移与零 `pointercancel`。
 
 ---
 
@@ -120,6 +127,7 @@ type StoredTaskLayoutV1   = { version: 1; byTaskId: Record<string, TaskWorkbench
 | `pnpm build`（next build） | 通过，无新增警告 |
 | `LECTERN_TEST_URL=… node e2e/conversation-first-ui.mjs` | 通过 |
 | `LECTERN_TEST_URL=… node e2e/workbench-resize-ui.mjs` | 通过 |
+| `LECTERN_TEST_URL=… node e2e/touch-drag-ui.mjs` | 通过（Chromium 触摸事件路径；非真机触摸屏） |
 | `node e2e/task-groups-ui.mjs` | 通过（1440px / 960px） |
 | `node e2e/message-search-ui.mjs` | 通过 |
 | `node e2e/message-recovery-ui.mjs` | 通过（1440 / 1024 / 390） |

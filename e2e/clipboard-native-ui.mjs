@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,8 +16,13 @@ import { _electron } from "playwright";
  * 【跑法】需要 next server 已在跑（`pnpm build && pnpm start`，或 `pnpm dev:web`）：
  *   node e2e/clipboard-native-ui.mjs
  *
- * 【平台】只覆盖 macOS。Windows Explorer 的剪贴板格式（CF_HDROP）在这一层没有实现，
- * 不得据此声称跨平台已验证。
+ * 【平台】macOS 与 Windows，但两侧写入的**不是同一种机制**，差别必须讲清楚：
+ *   - macOS：用 Electron 自己的 clipboard.write 写 text/uri-list。落盘类型与 Finder
+ *     ⌘C 的 furl 一致，但**写入方不是 Finder**——「Finder ⌘C 本身」仍未验证。
+ *   - Windows：用 PowerShell 的 Set-Clipboard -Path 写 CF_HDROP，也就是资源管理器
+ *     Ctrl+C 落盘的同一格式；写完由另一个进程回读 FileDropList 确认（顺带证伪
+ *     「剪贴板数据随写入进程退出而失效」这个假设）。
+ * Linux 跳过。
  */
 
 const BASE = process.env.LECTERN_TEST_URL || "http://127.0.0.1:3100";
@@ -24,11 +30,12 @@ const reportDir = resolve(process.env.LECTERN_UI_OUTPUT || "test-results/clipboa
 const SES = "ses_clipboard";
 const SESSION_TITLE = "剪贴板验收";
 
-if (process.platform !== "darwin") {
-  console.log(`[skip] 原生剪贴板验收只在 macOS 上实现（当前平台 ${process.platform}）。`);
-  console.log("[skip] Windows Explorer 一侧仍未验证，不得据此声称跨平台覆盖。");
+if (process.platform !== "darwin" && process.platform !== "win32") {
+  console.log(`[skip] 原生剪贴板验收只在 macOS 与 Windows 上实现（当前平台 ${process.platform}）。`);
   process.exit(0);
 }
+const PASTE_KEY = process.platform === "darwin" ? "Meta+V" : "Control+V";
+const PASTE_LABEL = process.platform === "darwin" ? "⌘V" : "Ctrl+V";
 
 mkdirSync(reportDir, { recursive: true });
 
@@ -56,6 +63,10 @@ const results = [];
 let passed = false;
 const errors = [];
 const uploads = [];
+// 用哪种机制写的剪贴板、用哪条路径触发粘贴，都要进报告：报告是「验了什么」的唯一
+// 凭据，不能只有 passed 一个布尔值。
+let writer = null;
+let pasteRoute = null;
 
 const env = { ...process.env };
 // 这个环境默认设了 ELECTRON_RUN_AS_NODE：Electron 会以 Node 模式起来、不建 GUI，
@@ -79,6 +90,23 @@ try {
   await window.waitForFunction(() => (document.body?.innerText ?? "").trim().length > 20, null, { timeout: 60000 });
 
   window.on("pageerror", (error) => errors.push(error.message));
+
+  // 失败取证：这个用例只在有 GUI 会话的机器上跑，本机不容易复现 CI 的环境差异
+  // （曾经出现过「窗口起来了但会话列表没渲染」）。把网络流水与页面文本留下来，
+  // 否则只能拿到一句超时，等于白跑一轮。
+  const netlog = [];
+  window.on("request", (request) => netlog.push(`→ ${request.method()} ${request.url().slice(0, 120)}`));
+  window.on("response", (response) => netlog.push(`← ${response.status()} ${response.url().slice(0, 120)}`));
+  window.on("requestfailed", (request) => netlog.push(`✗ ${request.url().slice(0, 120)} ${request.failure()?.errorText ?? ""}`));
+  const dump = async (label, error) => {
+    await window.screenshot({ path: join(reportDir, `${label}.png`), animations: "disabled" }).catch(() => {});
+    const body = await window.locator("body").innerText().catch(() => "");
+    const shape = await window
+      .evaluate(() => ({ href: location.href, innerWidth, innerHeight, native: typeof window.lecternNative }))
+      .catch(() => null);
+    return `${error.message}\n地址与视口：${JSON.stringify(shape)}\n最近网络：\n${netlog.slice(-25).join("\n")}\n页面文本：\n${body.slice(0, 1500)}`;
+  };
+
   results.push("Electron 主进程与渲染窗口建立（真实系统剪贴板可用）");
 
   // mock 掉服务端：本用例要证的是剪贴板到卡片这一段，真实上传链路由单测与
@@ -122,26 +150,90 @@ try {
   });
 
   await window.reload({ waitUntil: "domcontentloaded" });
-  await window.getByText(SESSION_TITLE, { exact: true }).click({ timeout: 30000 });
+  try {
+    await window.getByText(SESSION_TITLE, { exact: true }).click({ timeout: 30000 });
+  } catch (error) {
+    throw new Error(await dump("session-list-missing", error));
+  }
   await window.locator(".chat-composer").waitFor({ timeout: 30000 });
   const textarea = window.locator('textarea[aria-label="消息"]');
   const cards = window.locator('ul[aria-label^="待发送附件"] > li');
   assert.equal(await cards.count(), 0, "开始前不应有附件卡片");
 
-  // 把文件放进**系统剪贴板**：file URL 格式，与 Finder ⌘C 落盘的类型一致。
-  // 注：evaluate 的函数体在 Playwright 注入的上下文里执行，那里没有 require——
-  // 拿得到的是它作为第一个参数传进来的 electron 模块。
-  const fileUrl = "file://" + samplePath;
-  const written = await desktop.evaluate(async ({ clipboard, ClipboardItem }, url) => {
-    await clipboard.write([new ClipboardItem({ "text/uri-list": url })]);
-    return true;
-  }, fileUrl).catch((error) => `写剪贴板失败: ${error.message}`);
-  assert.equal(written, true, String(written));
-  results.push("系统剪贴板写入文件 URL（text/uri-list，等价于 Finder ⌘C 的 furl）");
+  if (process.platform === "win32") {
+    // 资源管理器复制文件落盘的是 CF_HDROP。Electron 44 的 clipboard 已重构成 W3C 风格
+    // （只剩 clear/has/read/readText/write/writeText），没有写 CF_HDROP 的口子，
+    // 所以这里必须借外部写入方——PowerShell 的 Set-Clipboard -Path。
+    const setClipboard = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-STA", "-Command", `Set-Clipboard -Path '${samplePath.replace(/'/g, "''")}'`],
+      { encoding: "utf8", timeout: 30000 },
+    );
+    assert.equal(
+      setClipboard.status,
+      0,
+      `Set-Clipboard 失败（退出码 ${setClipboard.status}）：${setClipboard.stderr || setClipboard.error?.message || ""}`,
+    );
+    results.push("系统剪贴板写入 CF_HDROP（PowerShell Set-Clipboard -Path，与资源管理器 Ctrl+C 同格式）");
+
+    // 换一个进程回读：既确认格式确实是文件拖放列表，也确认它没有随写入进程退出而失效
+    // ——Clipboard.SetDataObject 的 flush 行为是外部实现细节，不该被当成假设写死。
+    const readBack = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetFileDropList()"],
+      { encoding: "utf8", timeout: 30000 },
+    );
+    assert.equal(readBack.status, 0, `回读剪贴板失败：${readBack.stderr || readBack.error?.message || ""}`);
+    assert.equal(
+      readBack.stdout.includes(SAMPLE_NAME),
+      true,
+      `剪贴板里应该是 ${SAMPLE_NAME}（回读得到 ${JSON.stringify(readBack.stdout.trim())}）`,
+    );
+    results.push("另一个进程回读 FileDropList 得到该文件（格式与存续性都成立）");
+    writer = "powershell:CF_HDROP";
+  } else {
+    // macOS：file URL 格式，与 Finder ⌘C 落盘的 furl 一致（写入方是 Electron 而非
+    // Finder 本身，这一步的差距已写在文件头的【平台】段）。
+    // 注：evaluate 的函数体在 Playwright 注入的上下文里执行，那里没有 require——
+    // 拿得到的是它作为第一个参数传进来的 electron 模块。
+    const fileUrl = "file://" + samplePath;
+    const written = await desktop.evaluate(async ({ clipboard, ClipboardItem }, url) => {
+      await clipboard.write([new ClipboardItem({ "text/uri-list": url })]);
+      return true;
+    }, fileUrl).catch((error) => `写剪贴板失败: ${error.message}`);
+    assert.equal(written, true, String(written));
+    results.push("系统剪贴板写入文件 URL（text/uri-list，等价于 Finder ⌘C 的 furl）");
+
+    // 再用一个独立进程查一眼系统粘贴板，确认写进去的不是「Electron 内部的一厢情愿」，
+    // 而是真的落在系统剪贴板上、且是文件 URL（furl）flavor——实测 macOS 会把
+    // text/uri-list 映射成 «class furl»，正是 Finder 复制文件所落的那一族 flavor。
+    // 顺带排除一种假通过：若写入方进程退出后数据就没了，这里会立刻暴露。
+    const board = spawnSync("osascript", ["-e", "clipboard info"], { encoding: "utf8", timeout: 15000 });
+    assert.equal(board.status, 0, `读取系统粘贴板失败：${board.stderr || board.error?.message || ""}`);
+    assert.equal(
+      /furl/.test(board.stdout),
+      true,
+      `系统粘贴板上应存在 furl flavor（实际 ${JSON.stringify(board.stdout.trim())}）`,
+    );
+    results.push("另一个进程确认系统粘贴板上存在 furl（文件 URL）flavor");
+    writer = "electron:text/uri-list";
+  }
 
   await textarea.click();
-  await window.keyboard.press("Meta+V");
-  await cards.first().waitFor({ timeout: 15000 });
+  // 主路径与 macOS 一致：让渲染进程收到真实粘贴键。若该平台下 CDP 键事件没能触发
+  // 编辑加速键，退到宿主窗口的 paste 命令——两条路径都仍然经过系统剪贴板，只是触发
+  // 点不同，实际用了哪条会记进结果，不假装它们是一回事。
+  pasteRoute = `键盘 ${PASTE_LABEL}`;
+  await window.keyboard.press(PASTE_KEY);
+  const appeared = await cards.first().waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
+  if (!appeared) {
+    pasteRoute = "webContents.paste()（回退：CDP 键事件未触发编辑加速键）";
+    await desktop.evaluate(({ BrowserWindow }) => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      target?.webContents.paste();
+    });
+    await cards.first().waitFor({ timeout: 15000 });
+  }
   await window.waitForFunction(
     () => document.querySelector('ul[aria-label^="待发送附件"] li')?.dataset.status === "ready",
     null,
@@ -151,7 +243,7 @@ try {
   const cardTitle = await cards.first().locator("[title]").first().getAttribute("title");
   assert.equal(cardTitle, SAMPLE_NAME, "卡片上的文件名应与剪贴板里的文件一致");
   assert.deepEqual(uploads, [SAMPLE_NAME], "应恰好发起一次上传，且文件名正确");
-  results.push("⌘V 之后卡片出现、上传完成、文件名正确");
+  results.push(`粘贴生效（${pasteRoute}）：卡片出现、上传完成、文件名正确`);
 
   // Finder 复制文件会把文件名塞进 text/plain；Composer 认出了它并**不**当说明文字粘进来。
   assert.equal((await textarea.inputValue()).trim(), "", "文件名不应被当成说明文字留在输入框里");
@@ -166,7 +258,7 @@ try {
   if (desktop) await desktop.close().catch(() => {});
   writeFileSync(
     join(reportDir, "report.json"),
-    JSON.stringify({ passed, platform: process.platform, base: BASE, sample: samplePath, uploads, results, errors }, null, 2),
+    JSON.stringify({ passed, platform: process.platform, base: BASE, writer, pasteRoute, sample: samplePath, uploads, results, errors }, null, 2),
   );
   console.log(`报告与样本保留在 ${root}`);
 }

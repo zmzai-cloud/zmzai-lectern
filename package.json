@@ -25,6 +25,7 @@
     "test:attachments-ui": "node e2e/attachments-ui.mjs",
     "test:clipboard-native": "node e2e/clipboard-native-ui.mjs",
     "test:workbench-ui": "node e2e/workbench-resize-ui.mjs",
+    "test:touch-ui": "node e2e/touch-drag-ui.mjs",
     "test:message-search-ui": "node e2e/message-search-ui.mjs",
     "test:message-recovery-ui": "node e2e/message-recovery-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",

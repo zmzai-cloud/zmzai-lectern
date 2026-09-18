@@ -68,10 +68,26 @@ try {
     await dialog.locator(`article[data-message-id="m-${n}"]`).waitFor();
   }
   assert.equal(contextCount, 3);
+  // setViewportSize 触发的是异步重排，紧接着量尺寸可能拿到重排前的中间盒。CI 上第一次
+  // 跑就因此判过一次假失败（本机不复现）。这里等到连续两次测量一致再断言：不掩盖真实
+  // 布局问题，也不再依赖「量的时候恰好已经稳定」这个假设。断言消息带上实测盒，便于定位。
+  const settledBox = async locator => {
+    let previous = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const box = await locator.boundingBox();
+      if (box && previous && Math.abs(box.width - previous.width) < 0.5 && Math.abs(box.x - previous.x) < 0.5 && Math.abs(box.height - previous.height) < 0.5) return box;
+      previous = box;
+      await page.waitForTimeout(50);
+    }
+    return previous;
+  };
   for (const [width, height] of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    const rect = await input.boundingBox();
-    assert.ok(rect && rect.width > 60 && rect.x >= 0 && rect.x + rect.width <= width);
+    const rect = await settledBox(input);
+    assert.ok(
+      rect && rect.width > 60 && rect.x >= 0 && rect.x + rect.width <= width,
+      `搜索输入框必须完整落在 ${width}px 视口内：${JSON.stringify({ rect, width })}`,
+    );
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: `${output}/search-${width}.png`, animations: "disabled" });
   }

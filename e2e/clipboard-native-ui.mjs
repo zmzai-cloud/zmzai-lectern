@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron } from "playwright";
+
+// 项目自带的那一个 Electron，而不是让 Playwright 自己下载一个：后者版本未必等于
+// package.json 声明的 44，那等于换了个浏览器做验收，结论没有意义。CI 上第一次跑
+// 就出现了 "Downloading Electron binary..."，说明这条依赖是真实存在的。
+const requireFromHere = createRequire(import.meta.url);
+const electronBinary = requireFromHere("electron");
+const electronVersion = requireFromHere("electron/package.json").version;
 
 /**
  * 原生剪贴板粘贴入口验收（规格 2 §7.2 / §18.13 的桌面一侧）。
@@ -36,6 +44,8 @@ if (process.platform !== "darwin" && process.platform !== "win32") {
 }
 const PASTE_KEY = process.platform === "darwin" ? "Meta+V" : "Control+V";
 const PASTE_LABEL = process.platform === "darwin" ? "⌘V" : "Ctrl+V";
+/** 与 lib/task-layout.ts 的 DESKTOP_MIN_WIDTH 一致：低于它应用落到紧凑档。 */
+const DESKTOP_MIN_WIDTH = 1180;
 
 mkdirSync(reportDir, { recursive: true });
 
@@ -81,6 +91,7 @@ try {
   // --no-sandbox / --disable-gpu：当前沙箱不允许 Electron 初始化自身进程沙箱
   // （sandbox initialization failed: Operation not permitted → GPU 进程崩溃 → 退出）。
   desktop = await _electron.launch({
+    executablePath: electronBinary,
     args: ["--no-sandbox", "--disable-gpu", "electron/main.cjs"],
     cwd: resolve("."),
     env,
@@ -88,6 +99,17 @@ try {
   });
   const window = await desktop.firstWindow({ timeout: 90000 });
   await window.waitForFunction(() => (document.body?.innerText ?? "").trim().length > 20, null, { timeout: 60000 });
+
+  // 把「验收对象是谁」写死成断言：换版本就报错，而不是悄悄换一个 Electron 继续跑。
+  const runtime = await desktop
+    .evaluate(() => ({ electron: process.versions.electron, chrome: process.versions.chrome }))
+    .catch((error) => `探测失败: ${error.message}`);
+  assert.deepEqual(
+    typeof runtime === "string" ? null : runtime.electron,
+    electronVersion,
+    `验收对象必须是项目声明的 Electron ${electronVersion}：${JSON.stringify(runtime)}`,
+  );
+  results.push(`验收对象是项目自带的 Electron ${runtime.electron} / Chromium ${runtime.chrome}`);
 
   window.on("pageerror", (error) => errors.push(error.message));
 
@@ -149,7 +171,28 @@ try {
     return route.fulfill({ json: {} });
   });
 
+  // CI runner 的显示器可能比应用默认窗口还窄。macos-15 实测**内容区只有 1024px**，
+  // 低于 lib/task-layout 的 DESKTOP_MIN_WIDTH(1180)：应用因此落到紧凑档，侧栏变成
+  // 默认关闭的覆盖层，会话列表**根本不在 DOM 里**——第一轮 CI 就死在这里（截图里只有
+  // 空的新任务页，页面文本里没有会话名）。这不是剪贴板的问题，别把它误判成产品缺陷。
+  // 先尽量把窗口撑到桌面宽度；系统若不让撑，就显式展开覆盖层。两条路的后续步骤一致。
+  await desktop
+    .evaluate(({ BrowserWindow }) => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      target?.setContentSize(1440, 900);
+    })
+    .catch(() => {});
+
   await window.reload({ waitUntil: "domcontentloaded" });
+  const viewport = await window.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  if (viewport.width < DESKTOP_MIN_WIDTH) {
+    await window.getByRole("button", { name: "展开会话栏", exact: true }).click({ timeout: 15000 }).catch(async (error) => {
+      throw new Error(await dump("sidebar-toggle-missing", error));
+    });
+    results.push(`视口 ${viewport.width}×${viewport.height} 低于 ${DESKTOP_MIN_WIDTH}，已显式展开会话栏覆盖层`);
+  } else {
+    results.push(`视口 ${viewport.width}×${viewport.height}（桌面档）`);
+  }
   try {
     await window.getByText(SESSION_TITLE, { exact: true }).click({ timeout: 30000 });
   } catch (error) {

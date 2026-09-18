@@ -4,7 +4,8 @@
 **分支：** `feat/file-attachments`（基于 `feat/conversation-first-ui`）
 **日期：** 2026-09-17
 **结论：** 通过 —— 第 18 节 14 条中 13 条满足，第 13 条（跨平台入口）部分满足：Web/Chromium
-与 macOS 剪贴板机制均已实测，Finder ⌘C 本身与 Windows Explorer 仍未覆盖，见 §3.1；第 19 节
+与 macOS 剪贴板机制均已实测（macOS 另有独立进程确认粘贴板上是 `furl` flavor），Windows 侧
+实现已就位并接了 CI、但尚未跑绿，Finder ⌘C 本身仍无观测，见 §3.1；第 19 节
 12 条禁止项逐条核查未违反。
 
 本报告是交付物 §20.6 的后半部分；前半部分（支持格式与限制说明）在 `docs/attachments.md`。
@@ -113,10 +114,10 @@ framework 侧根本区分不了不存在 / 不属于本会话 / 解析中 / 是�
 
 ## 3. 已知偏差与限制
 
-### 3.1 跨平台：macOS 剪贴板已实测，Finder ⌘C 本身与 Windows 仍未覆盖（§18.13 部分满足）
+### 3.1 跨平台：Web 与 macOS 已实测，Windows 实现就位、等 CI 判定（§18.13 部分满足）
 
-规格要求「macOS、Windows 和 Web 的规定入口完成验证」。2026-09-18 补齐了 macOS 一侧的
-剪贴板机制验证，落点是 `e2e/clipboard-native-ui.mjs`（已接入 `.github/workflows/ui-e2e.yml`）：
+规格要求「macOS、Windows 和 Web 的规定入口完成验证」。落点是 `e2e/clipboard-native-ui.mjs`
+（已接入 `.github/workflows/ui-e2e.yml`）：
 
 - **Web / Chromium：完整验证**（36 项 E2E 断言）。Electron 的渲染进程就是 Chromium，所以
   这一侧覆盖的是与桌面版**同一份**实现。
@@ -124,17 +125,25 @@ framework 侧根本区分不了不存在 / 不属于本会话 / 解析中 / 是�
   剪贴板**：把文件写进系统剪贴板后按 ⌘V，`clipboardData.items` 给出 `kind: "file"`、
   `type: "image/png"`，`clipboardData.files` 给出名称与字节数都正确的 `File`；附件卡片随即
   出现、上传发出、文件名正确，且文件名**没有**被误当成说明文字留在输入框里（即 `isJustFilename`
-  那条分支）。同一脚本还证明 W3C 新 clipboard API 的两种写法（`text/uri-list` 与原生
-  `public.file-url`）都能被读成 `File`。
-- **Finder ⌘C 本身：未实测。** 当前环境里 Apple events 授权被拦（`tell application "Finder"`
-  会挂住），所以剪贴板内容由 Electron 的 clipboard API 写入。写入类型与 Finder ⌘C 的落点
-  一致，但「Finder 应用往剪贴板写字」这一跳没有被观测。
-- **Windows Explorer 复制粘贴：未验证。**
+  那条分支）。
+  另有一道独立确认：**换一个进程**（`osascript -e 'clipboard info'`）读系统粘贴板，看到的是
+  `«class furl», 96` —— 即 Electron 写入的 `text/uri-list` 在 macOS 上落成了**文件 URL
+  flavor**，正是 Finder 复制文件所落的那一族。这一步同时排除了两种假通过：写进去的确实是
+  系统级数据（而不只是 Electron 内部的概念），且它没有随写入进程退出而失效。
+- **Finder ⌘C 本身：未实测。** 当前环境 Apple events 授权被拦（`tell application "Finder"`
+  会挂住），所以剪贴板内容仍由 Electron 的 clipboard API 写入。「Finder 应用往剪贴板写字」
+  这一跳没有被观测到——已确认的只是两者落在同一族 flavor 上。
+- **Windows Explorer：实现已就位，等 CI 判定。** Electron 44 的 clipboard 已重构成 W3C 风格
+  （只剩 `clear/has/read/readText/write/writeText`），没有写 `CF_HDROP` 的口子，因此 Windows
+  侧改由 PowerShell `Set-Clipboard -Path` 写入（与资源管理器 Ctrl+C 同格式），写完再由另一个
+  进程用 `GetFileDropList()` 回读确认格式与存续性。`ui-e2e.yml` 的
+  `clipboard-native-windows` job 会在 `windows-latest` 上真跑一次；**在它变绿之前这里保持
+  「未验证」，release notes 也不得声称跨平台已验证。**
 
 第 2 条之所以值得单独立一个脚本：浏览器 E2E 里的「粘贴」是页面内合成的 `ClipboardEvent`，
 它天然跳过了「系统剪贴板 → File」这前半段。代码侧对 Explorer 一侧也仍有准备——`onPaste`
 同时读 `clipboardData.items` 与 `clipboardData.files`，并对「有文件条目却一个都读不出」
-给了明确提示而不是静默忽略。没有在 release notes 里声称跨平台已验证。
+给了明确提示而不是静默忽略。
 
 ### 3.2 有意不做的事
 
@@ -148,8 +157,13 @@ framework 侧根本区分不了不存在 / 不属于本会话 / 解析中 / 是�
 
 - `MessageAttachmentCard`（消息里的附件卡）**没有组件级测试**。它的三条降级路径靠代码审查
   与 framework 侧的 part 契约测试保障，没有 DOM 级断言。
+  **这不是「顺手补一个测试」能解决的**：本仓 `pnpm test` 的 39 个文件全在 Node 环境下跑纯逻辑
+  （`lib/**/*.test.ts`），既没有 jsdom 也没有 @testing-library，加组件测试等于先引入一套前端
+  测试基础设施并改 vitest 配置——那是独立决策，不该夹在功能收尾里做。
+  这也正是渲染层的验收一直压在 E2E 上的原因，以及「E2E 必须进 CI」比往常更重要的原因。
 - 真实 Windows 原生构建下的安装包冒烟里没有附件用例。CI 的 `desktop-release-check.yml`
-  跑的是通用冒烟；把附件 E2E 接进那条链路是后续工作。
+  跑的是通用冒烟；把附件 E2E 接进那条链路是后续工作（渲染层与原生剪贴板用例已进
+  `ui-e2e.yml`，见 §3.1）。
 
 ### 3.4 与本次改动无关的既有问题
 
@@ -217,7 +231,7 @@ Helvetica 单字节字体——单字节字体的字符码只有 0–255，写�
 | 10 | 本地绝对路径不进入消息、日志或模型上下文 | ✅ | E2E：载荷不含 `/Users/` 与盘符路径；`classify.test`：`sanitizeFilename` 同时切断 `/` 与 `\`；framework：描述符校验拒绝含路径分隔符的文件名 |
 | 11 | 工作区引用限制在当前 session workspace 内，不与本地附件混淆 | ✅ | `classify.test`：`validateReferencePath` 拒绝绝对路径与 `..`；读取侧由 `resolveWithinWorkspace(_, workspaceRootForSession(id))` 兜底；两种卡片图标与标签不同 |
 | 12 | 旧附件消息兼容，现有图片发送能力无回归 | ✅ | `pi-bridge.test`：v1 data URL 原样落库；`rewind-route.test`：旧契约可重发；E2E：图片缩略图与对象 URL |
-| 13 | macOS、Windows 和 Web 的规定入口完成验证 | ⚠️ 部分 | Web/Chromium 完整验证（36 项）；macOS 剪贴板机制已实测（真实 Electron + 真实系统剪贴板 + ⌘V，`e2e/clipboard-native-ui.mjs`）；Finder ⌘C 本身与 Windows Explorer 仍未验证，见 §3.1 |
+| 13 | macOS、Windows 和 Web 的规定入口完成验证 | ⚠️ 部分 | Web/Chromium 完整验证（36 项）；macOS 剪贴板机制已实测（真实 Electron + 真实系统剪贴板 + ⌘V，另有独立进程确认 `furl` flavor，`e2e/clipboard-native-ui.mjs`）；Windows 实现就位、CI job `clipboard-native-windows` 未跑绿；Finder ⌘C 本身未观测，见 §3.1 |
 | 14 | 类型检查、单元测试、生产构建和附件 E2E 全部通过 | ✅ | §4 的验证记录 |
 
 ---
@@ -249,16 +263,19 @@ Helvetica 单字节字体——单字节字体的字符码只有 0–255，写�
 | 2 | Framework 的附件 descriptor、读取/搜索工具和历史兼容 | `zmzai-framework/src/core/runtime/attachments.ts`、`src/core/tools/attachments.ts`、`src/core/runtime/pi-bridge.ts` | ✅ |
 | 3 | PDF、Office、文本和图片 extraction adapters | `lib/attachments/extract/` | ✅ |
 | 4 | AttachmentStore、数据库迁移、清理策略和安全限制 | `lib/attachments/store.ts`、`limits.ts`、`sniff.ts`、`extract/zip.ts` | ✅ |
-| 5 | 单元、API、framework 和跨平台 E2E 测试 | 见 §4 表 | ⚠️ 跨平台 E2E 完成 Web 与 macOS 剪贴板两侧；Finder ⌘C 本身与 Windows Explorer 未覆盖 |
+| 5 | 单元、API、framework 和跨平台 E2E 测试 | 见 §4 表 | ⚠️ 跨平台 E2E 完成 Web 与 macOS 剪贴板两侧；Windows 实现就位、CI 未跑绿；Finder ⌘C 本身未覆盖 |
 | 6 | 支持格式/限制说明及逐条验收报告 | `docs/attachments.md` + 本文 | ✅ |
 
 ---
 
 ## 8. 后续工作
 
-1. **补 macOS / Windows 原生剪贴板实测**（§3.1）——需要在真实桌面环境跑一次，或在
-   Electron 打包冒烟里加一条「把文件放进系统剪贴板再粘贴」的用例。
+1. **等 Windows 剪贴板 job 跑绿**（§3.1）——Windows 侧实现已就位，`ui-e2e.yml` 的
+   `clipboard-native-windows` job 已接线；在它变绿之前，跨平台一律按「未验证」对待。
+   Finder ⌘C 本身另外需要一个能驱动 Finder 的桌面会话，当前环境给不了。
 2. **`MessageAttachmentCard` 的组件级测试**（§3.3），把三条降级路径变成断言。
-3. **framework 0.6.0 发布到 npm**，并把 vendor tarball 与已发布版本对齐（当前 local vendor
-   包内容与 registry 待核对）。
-4. **把附件 E2E 接进 CI**（`desktop-release-check.yml`），让它在 Windows 原生构建上也跑一次。
+3. ~~framework 发布到 npm，vendor tarball 与已发布版本对齐~~ —— 已完成：
+   `@zmzai/agent-framework@0.8.0` 已发布，vendor tarball 与 registry 逐文件哈希一致。
+4. ~~把附件 E2E 接进 CI，让它在 Windows 原生构建上也跑一次~~ —— 已完成：渲染层与原生剪贴板
+   用例进 `.github/workflows/ui-e2e.yml`（`browser` / `clipboard-native` /
+   `clipboard-native-windows` 三个 job）。

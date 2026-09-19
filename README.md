@@ -17,7 +17,7 @@ Electron (App) ┘  同一套页面           │
 - **推理云端 + 执行本机**：服务端 `lib/runtime.ts` 跑 agent-framework 运行时（JSONL 会话存储 + 内存事件总线），推理全走 relay；登录 cookie 经 `AsyncLocalStorage` 请求级透传（`lib/request-cookie.ts`），模型目录由 relay 下发（默认 `deepseek-chat`）。执行环境为本机沙箱：builtin 文件工具（read/write/edit/glob/grep）直接落 `ZMZAI_WORKSPACE`（默认 `./.workspace`），bash 走本机子进程沙箱（程序白名单），git / 终端工具绑定本机工作区（与 legacy 引擎同策略）。
 - **实时事件流**：`/api/sessions/[id]/events` SSE 推送（`session.status` / `message.part.delta` / 授权询问），UI 的 `client.subscribe` 订阅渲染，跨会话历史从 JSONL 转录恢复。
 - **App 增强（后续）**：旧版 Electron 本地引擎（MCP 插件池等剩余能力）完整保留在 `legacy/`，通过 `window.lecternNative` 渐进增强接入（App 多入口、Web 隐藏），详见 `legacy/README.md`。
-- **品牌图标**：Web favicon（`app/icon.png`，Next 自动识别）与 Electron/dmg 图标（`build/icon.png` → 自动转 icns）同源 @zmzai/theme 定案资产（荧光绿底白云，512px）。
+- **品牌图标**：**白底墨云**（底 `#FFFFFF`，云 `#111115`）。`app/icon.png`（512 满幅）供 Web favicon（Next 自动识别）；`build/icon.png`（512 满幅）供 Windows 安装器/任务栏与窗口图标（`electron/main.cjs`）；`build/icon-mac.png`（1024）供 dmg / `.app`——**必须是 824 居中的 macOS 网格版**，满幅会被系统自动套一圈白玻璃边框。托盘另有 `electron/assets/trayTemplate.png`（云剪影 template 图，系统按明暗自适应，与底色无关；放 `build/` 不会进 bundle）。三张位图同源于一份画，改一张要同步另两张。
 - **桌面打包**：`pnpm build:mac` 产出 dmg/zip（arm64）；打包应用内嵌 Next standalone 服务（`electron/main.cjs` 自动拉起 `node .next/standalone/server.js`），会话与工作区落系统用户数据目录，双击即用。
 
 ## 能力一览

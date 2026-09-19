@@ -5,7 +5,7 @@
 **日期：** 2026-09-17
 **结论：** 通过 —— 第 18 节 11 条全部满足；第 19 节 9 条禁止项逐条核查未违反。
   §17.3 四个场景中 A / C 落在 framework 运行时 E2E，B 由 `task_block` 用例覆盖，
-  D 由租约恢复用例覆盖。
+  D 由租约恢复用例覆盖语义、由打包版硬杀重启用例覆盖真实启动路径（2026-09-19 补，见 §4.3）。
 
 本文同时是交付物 §20.4（状态迁移说明）、§20.5（PDF 场景 E2E 运行记录）与
 §20.6（最终变更说明与限制）。§20.1–§20.3 的代码位置见 §8。
@@ -218,7 +218,7 @@
 | A · PDF 内容铺到网页 | `src/core/runtime/task-runtime.test.ts` | **运行时 E2E**：真 runner + 真 SQLite 事件日志 + 脚本化模型 |
 | B · 推送失败 | 同上，`task_block` 四条用例 | 运行时集成（见 3.3） |
 | C · 命令无输出 | 同上 | 运行时 E2E |
-| D · 应用重启 | `src/core/runtime/lease-recovery.test.ts` | 租约恢复用例 |
+| D · 应用重启 | `src/core/runtime/lease-recovery.test.ts` + `e2e/packaged-smoke.mjs` | 租约语义用例 + **打包版硬杀重启**（真实启动路径，2026-09-19 补） |
 
 **「运行时 E2E」是什么意思，以及它不覆盖什么。** 场景 A 走的是**真的** `SessionRunner`、
 真的 `runLoop`、真的 Completion Gate、真的持久化事件日志（断言从 `eventLog.read()` 读回，
@@ -280,7 +280,8 @@ titles = ["读取 PDF 并拆页", "提取正文与图片", "把内容写进页�
   「补充必要信息后任务会自动继续」这句模糊指示）；② 外部登录落 `waiting_external`，用户补齐后
   `disposition === "task_resumed"`、恢复**同一个** task、`task.blocked` 恰好 1 条；
   ③ 步骤全做完但在等用户时仍然不是 `delivered`；④ 参数不合法的声明不会把任务冻住。
-- **场景 D**（重启）：由 `lease-recovery.test.ts` 覆盖，不在 lectern 侧做浏览器 E2E。
+- **场景 D**（重启）：framework 的 `lease-recovery.test.ts` 覆盖租约语义；**打包版应用的真实
+  启动路径**由 `e2e/packaged-smoke.mjs` 的硬杀用例覆盖（2026-09-19 补，见 §4.3）。
 
 ---
 
@@ -296,8 +297,19 @@ titles = ["读取 PDF 并拆页", "提取正文与图片", "把内容写进页�
 这条链路上；它们分别由文件附件规格的 `extract-pipeline.test.ts` 与 `pdf.test.ts` 覆盖。
 没有把「真模型跑真 PDF」写进 CI。
 
-**(3) 场景 D 的恢复验证在 framework 侧，不在 lectern E2E。** 应用重启涉及 Electron 主进程，
-`lease-recovery.test.ts` 覆盖的是租约语义（恢复 / `unsafe_replay`），不是打包版应用的启动路径。
+**(3) 场景 D 的恢复验证：framework 租约语义 + 打包版真实启动路径（2026-09-19 补齐）。**
+`lease-recovery.test.ts` 覆盖租约语义（恢复 / `unsafe_replay`）；打包版的启动路径现在由
+`e2e/packaged-smoke.mjs` 覆盖——种入「过期租约 + 仍在 running 的任务」（其中一条另带未收尾
+的工具调用），**SIGKILL 掉进程（不调 `desktop.close()`）**，重启后断言两条分支分别落
+`waiting_input(input)` 与 `blocked(unsafe_replay)`，并且会话列表文案、任务卡文案与可点动作
+（「补充信息」/「检查后重试」）都与状态对应。用例跑在 `pnpm test:packaged` 里，因此自动进
+`desktop-release-check.yml` 的 macOS 与原生 Windows 两个 job。
+
+**这条用例构造了什么、没构造什么（不要读成更强的结论）：** 磁盘状态是直接写进 SQLite 的，
+因为打包冒烟不许调模型（`release-gates.md` 要求它可离线跑），跑不出一个真实 run。所以
+「租约由 runner 亲手盖上」这一跳**没有**被覆盖；被覆盖的是它之后的全过程——恢复扫描、
+任务对账、状态映射、界面文案与按钮。另外 `desktop.close()` 的优雅关闭路径（租约正常释放）
+不再单独验证：它走的是 runner 的 clear，不是恢复。
 
 **(4) framework `tsc --noEmit` 有 20 条既有测试文件错误**（`openai-provider.test.ts` 6、
 `attachments.test.ts` 9、`builtins.test.ts` 3、`truncate-from.test.ts` 1、`workflow.test.ts` 1），
@@ -408,7 +420,9 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
    按契约调用它。如果调用率低，要考虑的是工具 description 的措辞，或者把「缺信息」这类
    场景的识别前移到 Completion Gate（例如连续两轮文本里出现明确的缺信息陈述时给一次
    `waiting_input`），而不是继续加提示词。
-3. **真实应用的跨重启 E2E**（§4.3）：在 Electron 打包冒烟里加一条「跑到一半杀掉进程再启动」
-   的用例，把 `lease-recovery` 的租约语义接到真实启动路径上。
+3. ~~**真实应用的跨重启 E2E**（§4.3）：在 Electron 打包冒烟里加一条「跑到一半杀掉进程再启动」
+   的用例，把 `lease-recovery` 的租约语义接到真实启动路径上。~~ **已完成**（2026-09-19）：
+   `e2e/packaged-smoke.mjs` 的硬杀用例，覆盖两条恢复分支与界面文案，见 §4.3。
+   残留：「租约由 runner 亲手盖上」那一跳仍未覆盖，需要能跑真模型的打包验收。
 4. **`session.status` 的 `waiting_input` 复用**（§2.4）：若将来要区分「副作用未知」与「缺
    输入」，先给会话状态加值、再改 lectern 的 `sessionStatusFor`，别让新代码从会话层反推任务层。

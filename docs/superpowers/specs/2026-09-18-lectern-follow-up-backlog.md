@@ -89,6 +89,19 @@ main，渲染层 CI 两轮全绿。**本文只收仍然开着的项。** 每项�
 
 ## 2. 打包版「硬杀重启」任务恢复 E2E
 
+> **已完成（2026-09-19）。** `e2e/packaged-smoke.mjs` 里原来 `desktop.close()` 的优雅关闭重启
+> 已换成 **SIGKILL**；种入「过期租约 + running 任务」（一条另带未收尾工具调用），重启后两条
+> 分支分别断言 `waiting_input(input)` 与 `blocked(unsafe_replay)`，并核对会话列表文案、任务卡
+> 文案与可点动作（「补充信息」/「检查后重试」）。macOS 包实测 12 项全过。
+>
+> **有牙的证明（验收②）**：注释掉 `lib/runtime.ts` 的 `registerLeaseRecovery` 重建后重跑，
+> 必挂且挂点正是恢复断言——`Error: 任务未在 30000ms 内恢复，最后状态：{…"status":"running"…}`、
+> `darwin-report.json` 的 `passed: false` 且前 8 项全过。实验后已 `git checkout -- lib/runtime.ts`
+> 还原并重建产物。
+>
+> **如实记下的边界**：磁盘状态是直接写进 SQLite 的（打包冒烟不许调模型），所以「租约由 runner
+> 亲手盖上」那一跳**没有**覆盖；覆盖的是它之后的全过程。已写进验收报告 §4(3)。
+
 **背景。** `e2e/packaged-smoke.mjs:137-141` 已经有重启检查，但那是 `desktop.close()` 的
 **优雅关闭**——租约正常释放，根本走不到恢复路径。而 framework 侧的 `lease-recovery.test.ts`
 覆盖的是租约语义（恢复 / `unsafe_replay`），没有接到真实的应用启动路径上。这是验收报告

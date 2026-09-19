@@ -405,6 +405,11 @@ npx tsc --noEmit      → 干净（exit 0）
 npx vitest run        → 39 files / 422 tests passed
 pnpm build            → 成功
 pnpm test:task-delivery-ui → 通过（LECTERN_TEST_URL 指向本仓这次构建的 server）
+
+# CI（commit 7f2493c，ui-e2e run 35446327127）
+browser / clipboard-native / clipboard-native-windows → 全部 success
+  browser job 的 step「Run pnpm test:task-delivery-ui」= success（不是 skipped）
+node scripts/ui-e2e-gate.mjs --sha 7f2493c → ✓ 门禁通过
 ```
 
 > **跑那条浏览器 E2E 时踩到的坑（值得单独记一笔）**：本机 `pnpm start` 绑 3100，而正在运行的

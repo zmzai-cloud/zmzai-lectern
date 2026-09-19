@@ -114,3 +114,91 @@ describe("ChatProjector 产物按 run 归集", () => {
     expect(EMPTY_CHAT_VIEW.artifacts).toEqual([]);
   });
 });
+
+/** 交付卡的数据来源（规格 §14.1 四问 / §18.4 完成判定依据）。
+ *
+ *  【为什么这几条重要】交付卡上「验收 x/y · 证据 n 条」是给用户核对「这句
+ *  完成不必信」用的。此前这一行在**任何**任务上都显示 0/n：`task.started` 是
+ *  唯一携带 acceptanceCriteria 的事件，而那一刻所有条件必然 pending、证据
+ *  必然为 0，此后没有第二个事件带过它们。一个恒错的核对依据比没有更糟——
+ *  它让一条真的交付了的任务看起来像什么都没验证。 */
+describe("ChatProjector 交付卡的数据来源", () => {
+  function started(): { type: string; data: unknown } {
+    return {
+      type: "task.started",
+      data: {
+        taskId: "t1",
+        revision: 1,
+        goal: "把 PDF 铺到网页",
+        steps: [],
+        acceptanceCriteria: [{ id: "crit_1", description: "页面可用", required: true, status: "pending" }],
+      },
+    };
+  }
+
+  function delivered(overrides: Record<string, unknown> = {}): { type: string; data: unknown } {
+    return {
+      type: "task.delivered",
+      data: {
+        taskId: "t1",
+        revision: 2,
+        result: "渲染文本（旧客户端用）",
+        delivery: { outcome: "六步都做完了", changes: ["app/page.tsx"], verification: ["本地构建通过"], remaining: [] },
+        criteria: [{ id: "crit_1", description: "页面可用", required: true, status: "passed" }],
+        evidenceCount: 3,
+        ...overrides,
+      },
+    };
+  }
+
+  it("四问读结构化 delivery，验收与证据读权威字段", () => {
+    const p = new ChatProjector();
+    p.ingest(started() as never);
+    p.ingest(delivered() as never);
+    const task = p.data().task!;
+    // 关键点：`outcome` 是 delivery 里的那句话，而**不是**那段渲染文本
+    expect(task.result).toEqual({
+      outcome: "六步都做完了",
+      changes: ["app/page.tsx"],
+      verification: ["本地构建通过"],
+      remaining: [],
+    });
+    expect(task.acceptanceCriteria[0]!.status).toBe("passed");
+    expect(task.evidence?.count).toBe(3);
+  });
+
+  it("0.9.0 之前的旧帧（只有 result 文本）仍然落得出交付卡", () => {
+    const p = new ChatProjector();
+    p.ingest(started() as never);
+    p.ingest({ type: "task.delivered", data: { taskId: "t1", revision: 2, result: "旧版渲染文本" } } as never);
+    const task = p.data().task!;
+    expect(task.result?.outcome).toBe("旧版渲染文本");
+    expect(task.result?.remaining).toEqual([]);
+    // 旧帧没有 criteria：条件保持原状，不许凭空编一个结论出来
+    expect(task.acceptanceCriteria[0]!.status).toBe("pending");
+  });
+
+  it("对不上的 id、非法状态、脏元素都被丢掉，不污染现有条件", () => {
+    const p = new ChatProjector();
+    p.ingest(started() as never);
+    p.ingest(
+      delivered({
+        criteria: [{ id: "crit_unknown", status: "passed" }, null, { id: "crit_1", status: "胡说" }],
+        delivery: { outcome: "x", changes: ["a.ts", 42, null], verification: "不是数组", remaining: ["还有一条"] },
+      }) as never,
+    );
+    const task = p.data().task!;
+    expect(task.acceptanceCriteria).toHaveLength(1);
+    expect(task.acceptanceCriteria[0]!.status).toBe("pending");
+    expect(task.result?.changes).toEqual(["a.ts"]);
+    expect(task.result?.verification).toEqual([]);
+    expect(task.result?.remaining).toEqual(["还有一条"]);
+  });
+
+  it("没有 delivery 也没有 result 时不留一条空交付", () => {
+    const p = new ChatProjector();
+    p.ingest(started() as never);
+    p.ingest({ type: "task.delivered", data: { taskId: "t1", revision: 2 } } as never);
+    expect(p.data().task!.result).toBeUndefined();
+  });
+});

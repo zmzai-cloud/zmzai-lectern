@@ -125,6 +125,41 @@
 - `firstBlocker` 里 input 那条原本写死文案「补充必要信息后任务会自动继续。」，属 §14.4 禁止
   的模糊指示；现在三条分支都透传 `requiredAction`（模型原话）。
 
+### 1.5 二次修订：交付由模型显式声明（2026-09-19，framework 0.9.0）
+
+§1.1 修掉的是「一次**运行结束** ≠ 用户目标已实现」。但改造后仍留着一条同形的推导：
+`projectImplicitCriterion` 看「本轮有没有输出文本」，据此把隐式验收条件判 `passed`。
+一次真实事故把它暴露出来：
+
+> 用户发「继续执行」，模型回「继续。跑自检验证前面改动的正确性：」——一句话停在冒号上、
+> 零工具调用、28 个输出 token。`answerPresent` 为真 → 隐式条件 passed → Completion Gate
+> 五条件全过 → `task.delivered` 照发。交付卡写着「完成了 0 个步骤、0 次工具调用」
+> 「剩余项：无」，任务进终态，用户那句指令被吞掉。
+
+这与 §1.1 是同一个错，只是把「运行结束」换成了「文本非空」。修法不是把启发式的判据调得更
+聪明，而是取消推导本身——与 §1.4 里 `task_block` 那条「不猜，让模型显式声明」是同一条原则
+在交付侧的应用：
+
+| 改动 | 内容 |
+|---|---|
+| 新增内置工具 `task_deliver` | 四问 + 逐条验收条件结论；`verification` 至少一条由 schema 强制 |
+| Completion Gate 新增条件 6 | 必须有交付声明。它同时堵上一个平凡漏洞：任务一条 required 条件都没有时，条件 1/2/3/5 会全部平凡通过，交付又退回到「文本非空即完成」 |
+| 删除导出 `projectImplicitCriterion` | 替代品 `applyDelivery`：纯函数投影，验收条件的结论只有一个来源 |
+| 契约里印出 criterion id | `- [crit_implicit] 用户的目标`。不印 id 模型只能猜，猜错那条结论就落不到契约上，任务会被无限打回 |
+| `task.delivered` 新增三个**必填**字段 | `delivery`（四问结构化）/ `criteria`（逐条终态）/ `evidenceCount`。必填是刻意的：缺失时宁可让帧解析失败，也不要让客户端静默退回一个恒错的默认值 |
+
+**交付卡上「验收 x/y · 证据 n 条」原来在任何任务上都是错的。** `task.started` 是唯一携带
+`acceptanceCriteria` 的事件，而那一刻所有条件必然 pending、证据必然为 0，此后整条任务里
+没有第二个事件带过它们；投影器还把渲染后的整段文本塞进 `outcome`，于是「剩余项」在四问里
+出现两次（文本里一次、重建的字段里一次）且互相矛盾。现在投影器读 `delivery` 与 `criteria`、
+把 `evidenceCount` 落到 `evidence.count`，旧帧（只有 `result` 文本）保留回退路径。
+
+`model_observation` 证据的来源也随之变了：原来是「本轮有最终文本就记一条」，等于把「文本
+非空」直接变成「有证据」（而证据是条件 3 的输入）；现在只在任务**一条工具证据都没有**时，
+用交付声明本身顶上，`ref` 固定为 `task_deliver`（去重键是 `(kind, ref)`，固定它让重复交付
+更新同一条，否则 `criteria.evidenceIds.length` 参与进度指纹会让「反复交付」看起来像在推进）。
+纯解释 / 写作 / 问答类任务仍能一次交付，只是模型必须先说清「怎么验证的」。
+
 ---
 
 ## 2. 状态迁移说明（§20.4）
@@ -318,9 +353,21 @@ titles = ["读取 PDF 并拆页", "提取正文与图片", "把内容写进页�
 显式暴露 `sandbox` 修掉，回到 20 的基线）。
 
 **(5) framework 0.8.0 已发布到 npm（2026-09-18 补齐）。** registry 上 `latest` = 0.8.0，
-tag `v0.8.0`；Lectern 仍通过 `vendor/zmzai-agent-framework-0.8.0.tgz`（320673 字节，含
-`dist/core/tools/task-block.js`）消费，该 tarball 在发布时与 registry 上的 0.8.0 **逐文件
-哈希核对一致**。切回版本号 spec 属可选清理，不是缺口。
+tag `v0.8.0`；Lectern 通过 `vendor/zmzai-agent-framework-0.8.0.tgz`（320673 字节）消费。
+切回版本号 spec 属可选清理，不是缺口。**（已被 (6) 取代：Lectern 现用 0.9.0。）**
+
+**(6) 交付语义在 0.9.0 有一次破坏性变更（2026-09-19）。** 见 §1.5。变更面：移除导出
+`projectImplicitCriterion`（替代品 `applyDelivery`）、`task.delivered` 新增三个必填字段。
+全仓 grep 确认被移除的导出**没有外部消费者**（只在 framework 内部引用），按 0.x 惯例走
+minor：0.8.0 → 0.9.0（tag `v0.9.0`，已发布 npm）。Lectern 侧同步切到
+`vendor/zmzai-agent-framework-0.9.0.tgz`。
+
+**这条变更是「运行到一半就交付」这一类事故的第二次收口，所以它对本报告的口径有实质影响：**
+§1.1 那次改的是「运行结束算不算完成」，这次改的是「说了一句话算不算完成」。
+验收报告此前只覆盖了前者——**在 0.9.0 之前，§6 第 4 条（「任务完成状态只由持久化
+`task.delivered` 驱动，并有验收 evidence」）在实现上是成立的，在语义上是不成立的**：
+`task.delivered` 确实只由运行时发出，但运行时会在「模型输出了一句非空文本」时发出它。
+现在这条不变量两侧都闭合了。
 
 **顺带记一条缺口：vendor tarball 与 registry 的一致性目前只有人工核对。** 发布链的校验
 （`release-validation.mjs`）只管 dist 产物清单的 SHA-512，不会去比 vendor 包与 registry
@@ -332,8 +379,10 @@ tag `v0.8.0`；Lectern 仍通过 `vendor/zmzai-agent-framework-0.8.0.tgz`（3206
 
 ## 5. 验证记录
 
+首轮（2026-09-17，§1.1–§1.4）：
+
 ```
-# zmzai-framework（main，HEAD 97bde551 + 本轮测试文件修正）
+# zmzai-framework（main，HEAD 97bde551 + 测试文件修正）
 npx vitest run        → 45 files / 529 tests passed
 npx tsc --noEmit      → 源码 0 错误；20 条既有测试文件错误（见 §4.4）
 
@@ -342,6 +391,44 @@ npx tsc --noEmit      → 干净（exit 0）
 npx vitest run        → 39 files / 418 tests passed
 pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 ```
+
+二次修订（2026-09-19，§1.5，framework 0.9.0）：
+
+```
+# zmzai-framework（main，HEAD 51f061e0，tag v0.9.0）
+npx vitest run        → 46 files / 547 tests passed
+npx tsc --noEmit      → 源码 0 错误；20 条既有测试文件错误（见 §4.4）
+pnpm build && npm publish → @zmzai/agent-framework@0.9.0 已上 registry
+
+# zmzai-lectern（main，vendor 已切 0.9.0）
+npx tsc --noEmit      → 干净（exit 0）
+npx vitest run        → 39 files / 422 tests passed
+pnpm build            → 成功
+pnpm test:task-delivery-ui → 通过（LECTERN_TEST_URL 指向本仓这次构建的 server）
+```
+
+> **跑那条浏览器 E2E 时踩到的坑（值得单独记一笔）**：本机 `pnpm start` 绑 3100，而正在运行的
+> Lectern 桌面应用也监听 3100（服务它自带的一份产物）。两者可以同时存在——Electron 占 IPv4、
+> `pnpm start` 落到 IPv6——于是 `LECTERN_TEST_URL=http://127.0.0.1:3100` 打到的是**旧产物**，
+> 用例拿改之前的界面比改之后的断言，报出 `验收0/1·证据0条`。当时单测 11 条全绿、`.next` 里的
+> 产物确实是新的、反编译出的 `task.delivered` 分支逻辑也正确，一度把方向引向「字段在客户端
+> 某处被丢掉」。定案靠 `curl` 两个地址取回不同的 `page-<hash>.js`。
+> 现已加 `e2e/serve-guard.mjs`（`assertServingThisBuild`，`page.goto` 之前校验 HTML 引用的根路由
+> chunk 必须存在于本仓 `.next`），并在正反两侧各跑一次确认：指向本仓构建通过、指向 3100 的旧产物
+> 按预期报错退出。**CI 没有这个问题**（runner 上只有 `pnpm start`）。
+
+二次修订的用例增量（相对首轮）：
+
+| 文件 | 变化 | 钉住的事 |
+|---|---|---|
+| `src/core/tools/task-deliver.test.ts` | 新增 8 条 | 四问读出、逐条结论值域、**非法参数一律读成「没有声明」**、免授权、已注册 |
+| `src/core/task/plan.test.ts` | 21 → 26 条 | `applyDelivery` 取代 `projectImplicitCriterion`：省略 criteria 走隐式通过、`not_applicable` 不能绕过 required、failed 不挂证据、未覆盖条件保持 pending |
+| `src/core/task/completion.test.ts` | 32 → 36 条 | 条件 6 四条：无声明打回并点名 `task_deliver`；**一条 required 条件都没有时也不能靠文本交付**；漏掉 required 时点名 `crit.id` |
+| `src/core/events/manifest.test.ts` | 10 → 11 条 | `delivery` / `criteria` / `evidenceCount` 缺失时必须解析失败 |
+| `src/core/runtime/task-runtime.test.ts` | 19 条（脚本改写） | 每个「期望交付」的用例改成 `todo` + 显式 `task_deliver`——只写一句收尾文本不再是交付 |
+| `lib/chat-projector.test.ts` | 7 → 11 条 | 四问读结构化 `delivery`；验收终态与证据条数读权威字段；旧帧回退；脏元素不污染 |
+| `e2e/task-delivery-ui.mjs` | 新增（浏览器） | 走 SSE 折叠路径，断言卡片上实际画出的「验收 1/1 · 证据 3 条」；帧里同时带 `result`，钉住「结构化 `delivery` 压过渲染文本」 |
+| `e2e/serve-guard.mjs` | 新增 | `assertServingThisBuild`：被测服务必须是本仓这次的构建，否则直接报出双方 chunk 名（见 §5 的坑） |
 
 任务执行相关的测试分布（本报告结论的主要证据来源）：
 
@@ -379,10 +466,10 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 | 1 | 一个至少五步的模拟任务由一条用户消息启动并自动完成，全程无需「继续下一步」 | ✅ | 场景 A：六步、一条消息、一个 workflow run、六个 step 全 completed |
 | 2 | 模型在任务中途正常结束至少三次时自动续跑，聊天记录中没有合成用户消息 | ✅ | 场景 A 断言 5：首次 delivered 前 `attempt.finished ≥ 3`；断言 1：用户消息数 = 1 |
 | 3 | 任一 required step/criterion 未完成时，UI、通知和 session 列表均不显示「任务完成」 | ✅ | `presentTask.completed` 单点定义；`sessionListOutcome` 不再把「有标题」当完成；§17.2-1/3 |
-| 4 | 任务完成状态只由持久化 `task.delivered` 驱动，并有验收 evidence | ✅ | `ROWS` 行 0a 只认 `task.status === "delivered"`；`taskNotice` 只对 delivered 改标题/播提示音；evidence 由 `TaskResult` 与 criterion evidenceIds 承载 |
+| 4 | 任务完成状态只由持久化 `task.delivered` 驱动，并有验收 evidence | ✅ | `ROWS` 行 0a 只认 `task.status === "delivered"`；`taskNotice` 只对 delivered 改标题/播提示音；evidence 由 `TaskResult` 与 criterion evidenceIds 承载。**0.9.0 起这条不变量的两侧都闭合**：`task.delivered` 还要求模型显式提交交付声明（Completion Gate 条件 6，§1.5）——在此之前它虽然只由运行时发出，但「模型输出一句非空文本」就能让运行时发出它 |
 | 5 | 权限通过或用户补充信息后，恢复原 task，不创建新 root task | ✅ | 权限等待用例（replyPermission 后继续同一 Attempt）；`task_block` 的 external_auth 用例断言恢复同一 task、`task.blocked` 恰好 1 条 |
 | 6 | 工具超时、网络错误、未知副作用、无进展和服务重启均有明确、可测试的状态转换 | ✅ | 场景 C（unsafe_replay）；no_progress 三档；401 只跑一轮落 failed；`lease-recovery.test.ts` |
-| 7 | 最终交付信息含结果、主要改动、验证方式和剩余项；无剩余项时明确为「无」 | ✅ | `TaskResult` 四问；`TaskDeliveryCard` 的 `data-task-outcome` / `-basis` / `-remaining`；「剩余项：无」有显式分支 |
+| 7 | 最终交付信息含结果、主要改动、验证方式和剩余项；无剩余项时明确为「无」 | ✅ | 四问由模型在 `task_deliver` 里逐条声明，`task.delivered` 携带结构化 `delivery`（§1.5）；`TaskDeliveryCard` 的 `data-task-outcome` / `-basis` / `-remaining`；「剩余项：无」有显式分支。**0.9.0 之前这条只是形式上成立**：投影器把渲染文本整段当成 `outcome`，四问里后三问恒为空，而「剩余项：无」还在那段文本里重复出现一次 |
 | 8 | 正常内部 Attempt、checkpoint 和 continuation 不触发完成通知 | ✅ | `taskNotice` 对 queued/running/recovering/verifying 返回 `null`；§17.2-3 七项断言 |
 | 9 | 同一 session 不会有两个 active root task 并发修改工作区 | ✅ | `resolveTaskForPrompt` 只复用活跃任务或开新任务；`isActiveStatus` 判定；重复 requestId 返回同一 task |
 | 10 | 历史会话仍能加载，旧 summary 不再被误判为新 Task 的 delivered | ✅ | §17.2-7 四项：历史 summary 可查看、不产出任务、不显示完成、列表回 idle |
@@ -401,7 +488,7 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 | 把 TaskRecord 只放在 localStorage 或 React 状态 | 未违反 | 持久化在 SQLite（`SqliteTaskStore`），跨进程重启与断线重连可读；投影器只做视图 |
 | 无限续跑（必须有 no-progress、预算和副作用保护） | 未违反 | 进度指纹三档 + `blocked(no_progress)`；`activeMs` 预算（clamp 到 (0, 24h]）；Attempt 硬上限 64（默认 24） |
 | 自动重试结果未知的外部写操作 | 未违反 | 场景 C：`sandbox.run` 只调 1 次，落 `blocked(unsafe_replay)` 而非重试或 failed |
-| 直接修改 `node_modules` 中的 framework | 未违反 | framework 源码改动 → 测试 → 重打 vendor tarball（0.8.0）→ 更新 lockfile → 删旧 tgz |
+| 直接修改 `node_modules` 中的 framework | 未违反 | framework 源码改动 → 测试 → 发布 → 重打 vendor tarball（`0.9.0`）→ 更新 lockfile → 删旧 tgz |
 | 把「无法验证」包装成「已完成但建议用户检查」 | 未违反 | `blocked(unsafe_replay)` 的 `requiredAction` 直说要确认外部系统；`resumable` 决定给不给重试按钮，不可恢复的阻塞不摆出可点的重试 |
 
 ---
@@ -411,7 +498,7 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 | # | 交付物 | 位置 | 状态 |
 |---|---|---|---|
 | 1 | framework 的 TaskRecord、事件、store、continuation、Completion Gate、恢复逻辑和测试 | `zmzai-framework` `8e2f827d` / `51ab1ec3` / `1f43ab11` / `d06d3921` / `97bde551` | ✅ |
-| 2 | 新的 framework 包及 Lectern vendor/lockfile 更新 | `zmzai-framework` 0.8.0（已发布 npm，tag `v0.8.0`）；`vendor/zmzai-agent-framework-0.8.0.tgz`（`ef87476`） | ✅ 见 §4.5 |
+| 2 | 新的 framework 包及 Lectern vendor/lockfile 更新 | `zmzai-framework` **0.9.0**（已发布 npm，tag `v0.9.0`）；`vendor/zmzai-agent-framework-0.9.0.tgz` | ✅ 见 §4(5)(6) |
 | 3 | Lectern 的 task API、投影、状态组件、通知逻辑和测试 | `app/api/sessions/[id]/task/route.ts`、`lib/task-presentation.ts`、`lib/task-execution.test.ts`、`components/TaskStatus.tsx`、`app/page.tsx`、`lib/chat-projector.ts`（`050d923`） | ✅ |
 | 4 | 一份状态迁移说明，列出旧 `session.summary` 与新 task lifecycle 的兼容关系 | 本文 §2 | ✅ |
 | 5 | PDF 场景 E2E 的运行记录或测试报告 | 本文 §3 | ✅ |
@@ -426,6 +513,7 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
    `package.json` 的 spec 可从 `file:` 切回版本号。~~ **已完成**（2026-09-18）：registry
    `latest` = 0.8.0（tag `v0.8.0`），vendor tarball 与之一致，见 §4(5)。
    残留（可选）：`package.json` 仍用 `file:vendor/…tgz`，切回版本号 spec 是清理不是缺口。
+   **后续**：0.9.0（§1.5）已按同样流程发布并对齐 vendor，见 §4(6)。
 2. **观察 `task_block` 的调用率。** §4.1 那条限制的补法不在代码里——先看真实会话里模型是否
    按契约调用它。如果调用率低，要考虑的是工具 description 的措辞，或者把「缺信息」这类
    场景的识别前移到 Completion Gate（例如连续两轮文本里出现明确的缺信息陈述时给一次

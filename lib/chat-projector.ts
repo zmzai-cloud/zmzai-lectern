@@ -1,4 +1,4 @@
-import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary, TaskBlockerView, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
+import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary, TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
 
 /** blocker kind → 生命周期状态。与 framework `lifecycleForBlocker` 同构。
  *
@@ -93,6 +93,19 @@ export function transcriptToEvents(messages: TranscriptMessage[]): LecternEvent[
  *  它只影响同层排序，缺失不该让整个步骤列表画不出来。 */
 function normalizeStep(step: TaskStepView): TaskStepView {
   return { id: step.id, title: step.title, status: step.status, order: typeof step.order === "number" ? step.order : 0 };
+}
+
+/** 事件里的字符串数组：非字符串项直接丢掉，而不是让它们穿过边界后在
+ *  JSX 里被拼成 "[object Object]"。交付卡把这几个数组逐条渲染成文字，
+ *  一个脏元素会毁掉整块。 */
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** 验收条件状态白名单。framework 新增状态值时**故意**在这里落空
+ *  （保持原值），而不是让一个未知字符串穿过类型边界进入界面。 */
+function isCriterionStatus(value: unknown): value is TaskCriterionStatus {
+  return value === "pending" || value === "passed" || value === "failed" || value === "not_applicable";
 }
 
 type InternalMessage = { id: string; role: string; messageSeq?: number; parts: Map<string, UiPart>; skill?: SelectedSkill; references?: string[]; error?: { name: string; message: string } };
@@ -204,8 +217,43 @@ export class ChatProjector {
       task.status = "delivered";
       task.deliveredAt = new Date().toISOString();
       delete task.blocker;
-      const text = typeof data.result === "string" ? data.result : "";
-      if (text) task.result = { outcome: text, changes: [], verification: [], remaining: [] };
+      // 四问优先读**结构化**的 `delivery`。`result` 是同一份信息的渲染文本，
+      // 只在旧帧（0.9.0 之前的事件）里才是唯一来源——把它整段塞进 `outcome`
+      // 会让交付卡上「改动 / 验证 / 剩余项」三问恒为空，而那段文本自己又带着
+      // 「剩余项：无」：同一件事出现两次且互相矛盾，正是这个 bug 的形状。
+      const delivery = data.delivery as Record<string, unknown> | undefined;
+      if (delivery && typeof delivery.outcome === "string") {
+        task.result = {
+          outcome: delivery.outcome,
+          changes: asStringArray(delivery.changes),
+          verification: asStringArray(delivery.verification),
+          remaining: asStringArray(delivery.remaining),
+        };
+      } else {
+        const text = typeof data.result === "string" ? data.result : "";
+        if (text) task.result = { outcome: text, changes: [], verification: [], remaining: [] };
+      }
+      // 验收条件终态与证据条数（§18.4 的「完成判定依据」）。
+      //
+      // 【为什么只能在这里更新】`task.started` 是唯一携带 acceptanceCriteria 的
+      // 事件，而那一刻所有条件必然全是 pending、证据必然为 0；此后整条任务里
+      // 再没有别的 task.* 事件带过它们。于是卡片上那一行恒显示「验收 0/n ·
+      // 证据 0 条」——在一条真的交付了的任务上，这个「依据」是反的，而它恰恰
+      // 是给用户用来核对「不必相信这句完成」的。
+      if (Array.isArray(data.criteria)) {
+        const settled = new Map<string, TaskCriterionStatus>();
+        for (const item of data.criteria as { id?: unknown; status?: unknown }[]) {
+          if (typeof item?.id === "string" && isCriterionStatus(item.status)) settled.set(item.id, item.status);
+        }
+        // 只覆盖事件里给到的那些 id：收不到的条件保持原状，而不是被抹成 pending。
+        task.acceptanceCriteria = task.acceptanceCriteria.map((criterion) => {
+          const status = settled.get(criterion.id);
+          return status ? { ...criterion, status } : criterion;
+        });
+      }
+      if (typeof data.evidenceCount === "number") {
+        task.evidence = { count: data.evidenceCount, recent: task.evidence?.recent ?? [] };
+      }
     } else if (type === "task.failed") {
       task.status = "failed";
       delete task.blocker;

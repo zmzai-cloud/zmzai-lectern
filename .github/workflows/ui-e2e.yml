@@ -65,6 +65,7 @@ jobs:
       - run: pnpm test:workbench-ui
       - run: pnpm test:touch-ui
       - run: pnpm test:task-groups-ui
+      - run: pnpm test:task-delivery-ui
       - run: pnpm test:attachments-ui
       - run: pnpm test:message-search-ui
       - run: pnpm test:message-recovery-ui

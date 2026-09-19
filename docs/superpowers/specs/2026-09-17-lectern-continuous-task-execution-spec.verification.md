@@ -317,8 +317,16 @@ titles = ["读取 PDF 并拆页", "提取正文与图片", "把内容写进页�
 `task-runtime.test.ts` 里 `h.deps.sandbox` 带出了 undefined 分支；已按该 harness 既有约定
 显式暴露 `sandbox` 修掉，回到 20 的基线）。
 
-**(5) framework 0.8.0 尚未发布到 npm。** Lectern 通过 `vendor/zmzai-agent-framework-0.8.0.tgz`
-消费（320673 字节，含 `dist/core/tools/task-block.js`）。发布与 vendor 对齐见 §9。
+**(5) framework 0.8.0 已发布到 npm（2026-09-18 补齐）。** registry 上 `latest` = 0.8.0，
+tag `v0.8.0`；Lectern 仍通过 `vendor/zmzai-agent-framework-0.8.0.tgz`（320673 字节，含
+`dist/core/tools/task-block.js`）消费，该 tarball 在发布时与 registry 上的 0.8.0 **逐文件
+哈希核对一致**。切回版本号 spec 属可选清理，不是缺口。
+
+**顺带记一条缺口：vendor tarball 与 registry 的一致性目前只有人工核对。** 发布链的校验
+（`release-validation.mjs`）只管 dist 产物清单的 SHA-512，不会去比 vendor 包与 registry
+的同字节性——所以「改了 framework 却没重打 vendor」这类漂移只能靠人发现。要补的话是在
+`test:release` 里下载 registry 上的同版本 tarball 与 `vendor/*.tgz` 比摘要（需要网络，
+会与「打包冒烟可离线跑」的约束冲突，得单独放一个可跳过的作业）。
 
 ---
 
@@ -403,7 +411,7 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 | # | 交付物 | 位置 | 状态 |
 |---|---|---|---|
 | 1 | framework 的 TaskRecord、事件、store、continuation、Completion Gate、恢复逻辑和测试 | `zmzai-framework` `8e2f827d` / `51ab1ec3` / `1f43ab11` / `d06d3921` / `97bde551` | ✅ |
-| 2 | 新的 framework 包及 Lectern vendor/lockfile 更新 | `zmzai-framework` 0.8.0；`vendor/zmzai-agent-framework-0.8.0.tgz`（`ef87476`） | ⚠️ 未发布到 npm，见 §4.5 |
+| 2 | 新的 framework 包及 Lectern vendor/lockfile 更新 | `zmzai-framework` 0.8.0（已发布 npm，tag `v0.8.0`）；`vendor/zmzai-agent-framework-0.8.0.tgz`（`ef87476`） | ✅ 见 §4.5 |
 | 3 | Lectern 的 task API、投影、状态组件、通知逻辑和测试 | `app/api/sessions/[id]/task/route.ts`、`lib/task-presentation.ts`、`lib/task-execution.test.ts`、`components/TaskStatus.tsx`、`app/page.tsx`、`lib/chat-projector.ts`（`050d923`） | ✅ |
 | 4 | 一份状态迁移说明，列出旧 `session.summary` 与新 task lifecycle 的兼容关系 | 本文 §2 | ✅ |
 | 5 | PDF 场景 E2E 的运行记录或测试报告 | 本文 §3 | ✅ |
@@ -413,9 +421,11 @@ pnpm build            → 成功；/api/sessions/[id]/task 进产物清单
 
 ## 9. 后续工作
 
-1. **把 framework 0.8.0 发布到 npm**，并把 vendor tarball 与已发布版本对齐（当前 vendor 包
+1. ~~**把 framework 0.8.0 发布到 npm**，并把 vendor tarball 与已发布版本对齐（当前 vendor 包
    即 `pnpm pack` 产物，内容与待发布版本一致，但 registry 上仍是 0.7.0）。发布后
-   `package.json` 的 spec 可从 `file:` 切回版本号。
+   `package.json` 的 spec 可从 `file:` 切回版本号。~~ **已完成**（2026-09-18）：registry
+   `latest` = 0.8.0（tag `v0.8.0`），vendor tarball 与之一致，见 §4(5)。
+   残留（可选）：`package.json` 仍用 `file:vendor/…tgz`，切回版本号 spec 是清理不是缺口。
 2. **观察 `task_block` 的调用率。** §4.1 那条限制的补法不在代码里——先看真实会话里模型是否
    按契约调用它。如果调用率低，要考虑的是工具 description 的措辞，或者把「缺信息」这类
    场景的识别前移到 Completion Gate（例如连续两轮文本里出现明确的缺信息陈述时给一次

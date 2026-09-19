@@ -34,6 +34,13 @@ main，渲染层 CI 两轮全绿。**本文只收仍然开着的项。** 每项�
 
 ## 1. `ui-e2e.yml` 升格为发版门禁
 
+> **已完成（2026-09-19），按方案 A。** 判定是纯函数 `judgeRuns`，IO 是 `checkUiE2eGate`
+> （`scripts/ui-e2e-gate.mjs`），接在 `scripts/upload-oss.mjs` 的上传前路径上，规则写进
+> `docs/release-gates.md` 的「Release gate: rendering-layer E2E」一节。
+> 证据：对真实的 `f81a69d`（failure）与 `7a5e808`（cancelled）拒绝、对 `382a038`（success）
+> 通过；把门禁接进 uploader 后，未通过时**一个对象都不写**（`test:release` 里有断言钉住顺序）。
+> 30 项单测覆盖判定矩阵与三条 fail-closed 路径。
+
 **背景。** `ui-e2e.yml` 已连续两轮全绿（run 35320438902、35322890964），稳定性够格当门禁。
 但发版流程目前只看 `docs/release-gates.md` 里那几条本地检查，**渲染层 E2E 绿不绿不影响发版**。
 也就是说：改坏了 UI 仍然能发出一版。

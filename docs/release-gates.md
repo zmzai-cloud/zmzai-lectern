@@ -30,6 +30,53 @@ persistence. Reports are kept in `test-results/packaged-cross-drive/`. This gate
 was added after the 0.5.1 D:-install/C:-profile startup failure; a passing path
 unit test or cross-build alone is not a native Windows acceptance result.
 
+A release additionally requires a passing rendering-layer E2E run on the commit
+being shipped; building and smoke-testing the package is not sufficient on its
+own. See the section below.
+
+## Release gate: rendering-layer E2E
+
+`node scripts/upload-oss.mjs` refuses to upload unless the `ui-e2e` workflow
+passed on the exact commit being released. The uploader asks the GitHub API for
+that commit's runs (`scripts/ui-e2e-gate.mjs`) before writing a single object, so
+a release whose interface is broken cannot ship even when the desktop packages
+build cleanly and pass their own smoke tests. The two gates answer different
+questions: `test:packaged` says the package starts, this one says the UI behaves.
+
+The gate fails closed. Three outcomes all stop the upload, and the message says
+which one happened:
+
+- `query_failed` — `gh` is missing, unauthenticated, rate-limited, or the network
+  failed.
+- `no_run` — the commit has no `ui-e2e` run at all.
+- `failed` / `pending` — the latest finished run is not `success`, or nothing has
+  finished yet. A `cancelled` run is **not** a pass: a run cancelled by
+  `cancel-in-progress` is precisely the "did not finish" case this gate exists for.
+
+Judgement is on the latest **finished** run per commit, not "any run succeeded" —
+a commit that went green and then red on a re-run does not earn a release.
+
+Because this repository is public and `main` has no branch protection, the gate
+cannot be a GitHub required status check; the local check is what enforces it. Do
+not add `paths-ignore` to `ui-e2e.yml` to make the gate easier to satisfy: CI
+minutes are free here, and once branch protection is enabled a docs-only pull
+request would leave its required check pending forever.
+
+`--dry` prints the verdict but does not block, since a dry run writes nothing —
+it exists to preview what would be uploaded. Any real upload goes through the
+gate.
+
+Check a commit without uploading anything:
+
+```
+node scripts/ui-e2e-gate.mjs --sha <commit>
+```
+
+Scope: this covers the rendering layer — browser E2E against a source build plus
+the two native clipboard jobs. It is not evidence about packaged installers;
+those stay with `test:packaged` and the Windows installer / cross-drive smokes
+above.
+
 ## Signing
 
 Default local macOS builds use ad-hoc signing before ZIP/DMG creation; Windows

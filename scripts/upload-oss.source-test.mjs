@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { artifactNames, digest } from "./release-validation.mjs";
 
-async function upload(t, { fail = "", dry = false, both = false } = {}) {
+async function upload(t, { fail = "", dry = false, both = false, gate = "pass" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "lectern-upload-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "dist"));
@@ -30,8 +30,23 @@ async function upload(t, { fail = "", dry = false, both = false } = {}) {
       if (process.env.LECTERN_TEST_FAIL && key.endsWith(process.env.LECTERN_TEST_FAIL)) throw new Error('simulated upload failure');
     } }`);
   const loader = join(dir, "loader.mjs");
+  // 渲染层 E2E 门禁的替身：真实模块会去查 GitHub（需要网络、需要 gh、需要目标
+  // commit 上有 run），夹具里给不出这些。**只替换判定输入，不替换 upload-oss 的
+  // 接线**——所以下面那条「门禁不通过时一个对象都不许上传」测的仍是真实调用路径。
+  // 匹配精确的相对 specifier（upload-oss.mjs 里就是这么写的），这样替身内部用
+  // 绝对 URL import 真实模块拿 formatGateResult 时不会自拦截。
+  const gateMock = join(dir, "ui-e2e-gate.mock.mjs");
+  writeFileSync(gateMock, `import { formatGateResult } from ${JSON.stringify(new URL("./ui-e2e-gate.mjs", import.meta.url).href)};
+    export { formatGateResult };
+    export function checkUiE2eGate() {
+      if (process.env.LECTERN_TEST_GATE === 'fail') {
+        return { ok: false, reason: 'failed', sha: 'fixture', detail: 'fixture: 最近一次完成的 ui-e2e 运行结论是 failure' };
+      }
+      return { ok: true, reason: 'success', sha: 'fixture', detail: 'fixture: ui-e2e 通过' };
+    }`);
   writeFileSync(loader, `export async function resolve(specifier, context, next) {
     if (specifier === 'ali-oss') return { url: ${JSON.stringify(pathToFileURL(mock).href)}, shortCircuit: true };
+    if (specifier === './ui-e2e-gate.mjs') return { url: ${JSON.stringify(pathToFileURL(gateMock).href)}, shortCircuit: true };
     return next(specifier, context);
   }`);
   // Node's CLI resolves loader/entry arguments with a URL-first heuristic: a bare Windows
@@ -46,7 +61,7 @@ async function upload(t, { fail = "", dry = false, both = false } = {}) {
     cwd: dir, encoding: "utf8", timeout: 15000,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
       OSS_REGION: "oss-cn-beijing", OSS_BUCKET: "fixture-bucket", OSS_ACCESS_KEY_ID: "test-key", OSS_ACCESS_KEY_SECRET: "test-secret",
-      LECTERN_TEST_PUT_LOG: log, LECTERN_TEST_FAIL: fail },
+      LECTERN_TEST_PUT_LOG: log, LECTERN_TEST_FAIL: fail, LECTERN_TEST_GATE: gate },
   });
   const puts = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map(JSON.parse) : [];
   return { result, puts, dir, names };
@@ -79,6 +94,29 @@ test("dry run shows stable targets without uploading", async (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(puts, []);
   assert.match(result.stdout, /latest.yml \(stable root\)/);
+});
+
+// 发版门禁的三条行为。第一条是核心：门禁未通过时**一个对象都不许写**——
+// 顺序上它排在上传之前，这里正是为了钉住「顺序没有被人改回去」。
+test("rendering-layer E2E gate blocks the upload before any object is written", async (t) => {
+  const { result, puts } = await upload(t, { gate: "fail" });
+  assert.equal(result.status, 1, result.stdout);
+  assert.deepEqual(puts, [], "门禁未通过时不该有任何上传动作");
+  assert.match(result.stderr, /渲染层 E2E 未在将要发布的 commit 上通过/);
+});
+
+test("dry run reports a failing gate but does not block (it writes nothing anyway)", async (t) => {
+  const { result, puts } = await upload(t, { dry: true, gate: "fail" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(puts, []);
+  assert.match(result.stderr, /dry-run 未实际上传，故不阻止/);
+});
+
+test("a passing gate is announced before the upload", async (t) => {
+  const { result, puts } = await upload(t);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(puts.length > 0);
+  assert.match(result.stdout, /渲染层 E2E 门禁通过/);
 });
 
 test("desktop JSON feed is published last and selects both uploaded platform artifacts", async (t) => {

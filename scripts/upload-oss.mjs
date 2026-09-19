@@ -15,6 +15,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { digest, stableManifest, verifyRelease } from "./release-validation.mjs";
+import { checkUiE2eGate, formatGateResult } from "./ui-e2e-gate.mjs";
 import { parse, stringify } from "yaml";
 
 const args = process.argv.slice(2);
@@ -97,6 +98,26 @@ const stableLinks = stableManifests.map(({ name }) => `- ${encodeURI(`https://${
 console.log(`版本 v${version} · 目标 ${env.OSS_BUCKET}.${env.OSS_REGION}.aliyuncs.com/${keyBase}/`);
 console.log(files.map((f) => `  · ${f}`).join("\n"));
 if (stableManifests.length) console.log(stableManifests.map(({ name }) => `  · ${name} (stable root)`).join("\n"));
+
+// ── 渲染层 E2E 门禁（fail closed）──
+// 放在真实上传之前、产物校验之后：本地产物先报错（离线、快），再查需要网络的结论。
+// 判据是**将要发布的那个 commit** 上 `ui-e2e` 的结论——不是本机某个目录的状态，
+// 所以「改坏了界面但没跑 CI」这种情况在这里被拦下。规则见 docs/release-gates.md。
+const gate = checkUiE2eGate({ cwd: process.cwd() });
+if (gate.ok) {
+  console.log(`\n${formatGateResult(gate)}`);
+} else if (dry) {
+  // dry-run 不产生任何发布效果，因此只警告不阻止——它的用途是「预览会传什么」。
+  console.warn(`\n⚠️  ${formatGateResult(gate)}`);
+  console.warn("   dry-run 未实际上传，故不阻止；真实上传会被这条门禁拦下。");
+} else {
+  console.error(`\n❌ ${formatGateResult(gate)}`);
+  console.error("   渲染层 E2E 未在将要发布的 commit 上通过，拒绝上传（fail closed）。");
+  console.error("   查看运行：gh run list --workflow=ui-e2e.yml");
+  console.error("   门禁规则：docs/release-gates.md 的「Release gate: rendering-layer E2E」一节。");
+  process.exit(1);
+}
+
 if (dry) {
   console.log("\n(dry-run：未实际上传)");
   process.exit(0);

@@ -37,6 +37,10 @@ echo "==> [0/5] 清理历史打包产物（dist/、.package-build）"
 guard_mv dist .package-build
 
 echo "==> [1/5] next build（生产构建，含 standalone 输出）"
+# 与 build-mac.sh 同一原因：默认堆上限会让 next build 以 exit 134 中止，本地脚本自抬。
+if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-6144}"
+fi
 # 清掉上次构建的 .next/types 与 tsbuildinfo：残留会导致类型检查阶段引用不存在的
 # 文件而 Failed to compile（与 mac 侧同一坑）。大目录 rm 会触发 WorkBuddy
 # safe-delete 守卫（>50 文件拦截），一律 mv 到 /tmp。

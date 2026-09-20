@@ -20,6 +20,13 @@ echo "==> [0/5] 清理历史打包产物（避免 dist 累积旧版本 dmg/zip�
 bash scripts/clean-dist.sh
 
 echo "==> [1/5] next build（生产构建，含 standalone 输出）"
+# next build 的默认堆上限按可用内存推导（本机 64GB 也只给到 ~4GB），实测跑到
+# 「Reached heap limit Allocation failed」直接中止（exit 134），崩在打包第一步。
+# CI 靠 workflow 里的 NODE_OPTIONS 抬高，本地构建脚本必须自己抬——否则谁调谁崩。
+# 调用方已显式给了 --max-old-space-size 就尊重，不覆盖。
+if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-6144}"
+fi
 # 隔离整个旧 .next，避免开发缓存污染生产页面清单；备份保留在 /tmp。
 guard_mv .next tsconfig.tsbuildinfo
 pnpm build

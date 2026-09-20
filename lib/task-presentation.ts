@@ -12,9 +12,11 @@
  * - failed 与 delivered 非互斥：失败但产物在 → delivered，失败仅作次级 badge
  *   （§7.6），绝不吞掉可追溯的失败。
  * - delivered 优先于 review_ready（行 5 vs 6）：产物是比「一批编辑」更强的结果。
+ *   该行的「产物」只有 HTML 一种含义，与画布的渲染能力无关，见 `isPreviewable`。
  * - 每一条谓词都必须有单测（§13）。
  */
 
+import { canvasKindOf } from "./canvas-kind";
 import type { TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
 
 export type TaskPresentationState =
@@ -512,16 +514,19 @@ export function toTaskView(task: {
 type TaskCriterionLike = { id: string; description: string; required: boolean; status: TaskCriterionStatus };
 
 /**
- * 可预览产物判定：目前仅 HTML 家族（与成果预览的实际渲染能力一致）。
+ * 「有 HTML 产物」——ROWS 第 5 行的历史近似判据（任务契约出现之前的年代）。
  *
- * 单点定义，供 WorkbenchPanel（自动推荐预览）与 page.tsx（组装
- * previewablePaths）共用——此前两处各写一份正则且不一致
- * （`/\.html?$/` 漏了 `.htm`），属于典型漂移，统一到此处。
+ * 【它**不是**「成果预览能渲染什么」】画布的渲染能力见 `lib/canvas-kind.ts`，
+ * 那里还有 PDF 与图片。这两个概念刻意不合并：第 5 行把「有可预览产物」直接判成
+ * `delivered`，一旦跟着画布能力一起放宽，任何写出一张 PNG 的会话（截图、图标、
+ * 字体预览）都会被标成「已交付」——正是 0.9.0 交付语义要杜绝的那类推导
+ * （`delivered` 只由模型的 `task_deliver` 触发）。
+ *
+ * 【为什么委托 canvasKindOf 而不是自己写正则】此前本文件与 WorkbenchPanel 各写
+ * 一份正则且不一致（`/\.html?$/` 漏了 `.htm`）。扩展名表只该有一处。
  */
-const PREVIEWABLE_RE = /\.(html?|htm)$/i;
-
 export function isPreviewable(path: string): boolean {
-  return PREVIEWABLE_RE.test(path);
+  return canvasKindOf(path) === "html";
 }
 
 /** 从一批路径中筛出可预览产物（保持原顺序）。 */

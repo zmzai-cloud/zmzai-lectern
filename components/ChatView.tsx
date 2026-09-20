@@ -7,6 +7,7 @@ import type { TaskActionId, TaskPresentationView } from "@/lib/task-presentation
 import { ArrowDown, LoaderCircle, RotateCw, Search } from "lucide-react";
 
 import type { ConnectionState } from "@/lib/client";
+import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
@@ -292,6 +293,9 @@ type Props = {
   onAbort: () => void;
   /** 点击消息内的文件路径（可带行号）→ 产物侧文件 Tab 打开并滚动定位（P1-10/F2 联动）。 */
   onOpenFile: (path: string, line?: number) => void;
+  /** 点击产物卡：画布渲染得了的产物（网页/PDF/图片）直接进「成果预览」。
+   *  没有它时退回 `onOpenFile`（文件 Tab）。 */
+  onOpenPreview?: (path: string) => void;
   onOpenArtifact?: () => void;
   /** 历史分页：还有更早消息 + 触顶时回调（page.tsx 分页拉取并 prepend）。 */
   historyState: HistoryState;
@@ -436,20 +440,27 @@ function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?
   );
 }
 
-/** 产物卡片：一次可交付文件（HTML/截图/数据文件等）。轻量一行——图标（按
- *  contentType 选）、mono 路径、人类可读大小、「打开」按钮（本地走 shell.openPath，
- *  远端/预览走 window.open）。只展示本轮 run 的产物，不跨轮累积。 */
-function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile?: (path: string) => void }) {
+/** 产物卡片：一次可交付文件（HTML/截图/PDF/数据文件等）。轻量一行——图标（按
+ *  contentType 选）、mono 路径、人类可读大小、「打开」按钮。只展示本轮 run 的
+ *  产物，不跨轮累积。
+ *
+ *  【点击落到哪】画布渲染得了的（网页/PDF/图片）→ 成果预览；其余的本地文件 →
+ *  文件 Tab（那里对二进制给的是占位，不是把字节当源码摊出来）；远端 URL →
+ *  新窗口。 */
+function ArtifactCard({ artifact, onOpenFile, onOpenPreview }: { artifact: Artifact; onOpenFile?: (path: string) => void; onOpenPreview?: (path: string) => void }) {
   const { path, bytes, contentType, downloadUrl, previewUrl } = artifact;
   const base = path.split("/").pop() ?? path;
   const isImage = contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/i.test(base);
   const isHtml = contentType.includes("html") || /\.html?$/i.test(base);
-  const icon = isImage ? "🖼" : isHtml ? "🌐" : contentType.startsWith("video/") ? "🎬" : "📄";
+  const isPdf = contentType === "application/pdf" || /\.pdf$/i.test(base);
+  const icon = isImage ? "🖼" : isHtml ? "🌐" : isPdf ? "📕" : contentType.startsWith("video/") ? "🎬" : "📄";
   const human = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
   const open = () => {
     const url = previewUrl || downloadUrl;
-    // 本地工作区产物：交给文件 Tab 打开（路径联动）；远端/预览：新窗口打开
-    if (onOpenFile && !url.startsWith("http")) onOpenFile(path);
+    // 本地工作区产物：交给画布 / 文件 Tab（路径联动）；远端/预览：新窗口打开
+    const local = !url.startsWith("http");
+    if (local && onOpenPreview && canvasKindOf(path)) onOpenPreview(path);
+    else if (local && onOpenFile) onOpenFile(path);
     else if (url) window.open(url, "_blank", "noopener");
   };
   return (
@@ -469,7 +480,7 @@ function ArtifactCard({ artifact, onOpenFile }: { artifact: Artifact; onOpenFile
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint, task, taskAttempts } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -1027,7 +1038,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               )}
             </div>
             {summaryArtifacts.map((a) => (
-              <ArtifactCard key={a.artifactId} artifact={a} onOpenFile={onOpenFile} />
+              <ArtifactCard key={a.artifactId} artifact={a} onOpenFile={onOpenFile} onOpenPreview={onOpenPreview} />
             ))}
           </div>
         )}

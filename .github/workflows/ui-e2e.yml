@@ -69,6 +69,7 @@ jobs:
       - run: pnpm test:attachments-ui
       - run: pnpm test:message-search-ui
       - run: pnpm test:message-recovery-ui
+      - run: pnpm test:pdf-preview-ui
       - name: Preserve UI evidence
         if: always()
         uses: actions/upload-artifact@v4

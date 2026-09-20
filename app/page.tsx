@@ -16,6 +16,7 @@ import WorkbenchPanel from "@/components/WorkbenchPanel";
 import DebugArea from "@/components/DebugArea";
 import AccountBlock from "@/components/AccountBlock";
 import { client, type ConnectionState } from "@/lib/client";
+import { canvasKindOf } from "@/lib/canvas-kind";
 import { detectPermissionMode, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData } from "@/lib/chat-projector";
 import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
@@ -260,7 +261,7 @@ export default function App() {
   const [connState, setConnState] = useState<ConnectionState>("connected");
   const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
   // P1-10/F2 文件联动：消息路径点击（可带行号）/ ⌘P 快开 → 产物侧文件 Tab（ts 保证重复触发也生效）
-  const [openFileReq, setOpenFileReq] = useState<{ path: string; ts: number; line?: number } | null>(null);
+  const [openFileReq, setOpenFileReq] = useState<{ path: string; ts: number; line?: number; target?: "files" | "preview" } | null>(null);
   // P1-7 自治档位：自动 = 授权请求自动「始终允许」
   const [autoMode, setAutoMode] = useState(false);
   // ref 镜像：档位只在 SSE 订阅闭包里被读取（判断授权是否自动放行），若不走镜像
@@ -517,6 +518,13 @@ export default function App() {
   const openFileInWorkbench = useCallback((path: string, line?: number) => {
     setOpenFileReq({ path, ts: Date.now(), line });
     openWorkbench("files");
+  }, [openWorkbench]);
+  /** 产物直接落到成果预览（产物卡点击）。与 `openFileInWorkbench` 的区别是**不经过
+   *  文件 Tab**：PDF / 图片在编辑器里没有意义，而画布拿的是 URL，读一遍文本再丢掉
+   *  只是白花一次 IO（还会撞上 512KB 文本上限）。 */
+  const openArtifactInWorkbench = useCallback((path: string) => {
+    setOpenFileReq({ path, ts: Date.now(), target: "preview" });
+    openWorkbench("preview");
   }, [openWorkbench]);
   /** 工作台内切标签：标签与「是否显式选过」都是任务级偏好（规格 §7.1 / §9）。
    *  并排与抽屉共用同一个处理器，因此两条路径的偏好语义完全一致。 */
@@ -1118,6 +1126,23 @@ export default function App() {
     [chatData.editedPaths],
   );
 
+  /** 画布该优先显示的产物路径（最新的在前，已去重，已滤掉画布渲染不了的）。
+   *
+   *  【为什么产物与编辑路径分开算】`artifact.created` 与 `file.edited` 是两条独立
+   *  投影：一次「跑脚本生成 PDF」的交付里，产物清单上有那份 PDF，而编辑路径上只有
+   *  脚本。「打开成果」该看到哪个，取决于用户在产物卡上被告知交付的是哪个——所以
+   *  产物优先，编辑路径兜底，两者都在 WorkbenchPanel 里决定切不切 Tab。 */
+  const canvasArtifactPaths = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const artifact of [...chatData.summaryArtifacts, ...chatData.artifacts]) {
+      if (seen.has(artifact.path) || !canvasKindOf(artifact.path)) continue;
+      seen.add(artifact.path);
+      out.push(artifact.path);
+    }
+    return out;
+  }, [chatData.artifacts, chatData.summaryArtifacts]);
+
   const presentation = useMemo(
     () =>
       deriveTaskPresentation({
@@ -1313,6 +1338,7 @@ export default function App() {
               stalled={stalled}
               onAbort={abort}
               onOpenFile={openFileInWorkbench}
+              onOpenPreview={openArtifactInWorkbench}
               onOpenArtifact={() => openWorkbench("preview")}
               echo={echo}
               wtNotice={wtNotice}
@@ -1333,7 +1359,7 @@ export default function App() {
                   onDragChange={setWorkbenchDragging}
                 />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
                 </div>
               </>
             )}
@@ -1376,7 +1402,7 @@ export default function App() {
       {workbenchDrawer && (
         <div className="panel-scrim" role="presentation" onMouseDown={() => (compactPanels ? setActiveOverlay(null) : updateTaskLayout({ open: false }))}>
           <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
-            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
           </div>
         </div>
       )}

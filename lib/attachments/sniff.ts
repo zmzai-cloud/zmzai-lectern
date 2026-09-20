@@ -37,7 +37,12 @@ function containsAscii(bytes: Uint8Array, needle: string): boolean {
   return false;
 }
 
-/** 前 8KB 出现 NUL 即视为二进制（与 lib/api/fs/file 的判据一致）。 */
+/** 前 8KB 出现 NUL 即视为二进制。
+ *
+ *  【它和工作区文件预览的判据**不是同一套**，别照着改】这里只服务于上传：把上传物
+ *  归到 `text/plain` 还是「认不出」。工作区预览用的是 `lib/file-content.ts`，那边还要
+ *  认文件头、且 NUL 要扫全文——因为一份零 NUL 的 ReportLab PDF 当成附件上传无害，
+ *  被当文本打开就是事故（用户看到的是 `/BaseFont /STSong-Light …`）。 */
 function looksBinary(bytes: Uint8Array): boolean {
   const window = bytes.subarray(0, Math.min(bytes.length, 8192));
   return window.includes(0);

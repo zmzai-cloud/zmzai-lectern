@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown, cn } from "@zmzai/theme";
 
 import { client } from "@/lib/client";
+import { canvasKindOf, canvasKindOfMediaType, isCanvasRenderable } from "@/lib/canvas-kind";
 import { isPreviewable } from "@/lib/task-presentation";
 import type { WorkbenchTab } from "@/lib/task-layout";
 import type { SessionSummary, TaskRecordView } from "@/lib/types";
@@ -48,8 +49,15 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-/** 文件 Tab 栈的单个标签（F1：多文件并行查看，LRU 上限 8）。 */
-type FileTab = { path: string; content: string; size: number };
+/** 文件 Tab 栈的单个标签（F1：多文件并行查看，LRU 上限 8）。
+ *
+ *  `binary` 为真时 `content` 是空串——那是**内容不适合放进编辑器**，不是读取失败。
+ *  界面据此画占位（路径 / 大小 / 类型 / 送进成果预览的路），而不是把 PDF 的字节
+ *  当源码摊在 CodeMirror 里。 */
+type FileTab = { path: string; content: string; size: number; binary: boolean; mediaType: string | null };
+
+/** 外部要求在工作台里打开一个路径时的目标面板。 */
+type OpenTarget = "files" | "preview";
 
 const MAX_FILE_TABS = 8;
 
@@ -57,6 +65,53 @@ const FILE_TREE_WIDTH_KEY = "lectern:file-tree-width";
 
 function isMarkdown(path: string): boolean {
   return /\.mdx?$/i.test(path);
+}
+
+/** 嗅探结果里最值得给用户看的一小段说明；认不出就给通用那句。 */
+const MEDIA_LABEL: Record<string, string> = {
+  "application/pdf": "PDF 文档",
+  "application/zip": "ZIP 归档（或 OOXML 文档）",
+  "application/x-ole-storage": "旧版 Office 复合文档",
+  "image/png": "PNG 图片",
+  "image/jpeg": "JPEG 图片",
+  "image/gif": "GIF 图片",
+  "image/webp": "WebP 图片",
+};
+
+/**
+ * 二进制文件的占位：**不是错误页**，而是「编辑器打不开它，但这里还有别的路」。
+ *
+ * 【为什么不能顺手把字节摊出来】此前这条路是 CodeMirror + 纯文本高亮，于是
+ * ReportLab 生成的 PDF（零 NUL、99.97% 可打印 ASCII）被原样铺成了
+ * `/BaseFont /STSong-Light …`。用户看到的是「渲染挂了」，而不是「这不是文本」——
+ * 一个纯粹的格式判断问题被显示成了功能故障。占位页把这件事说清楚。
+ */
+function BinaryNotice({ path, size, mediaType, onOpenCanvas }: { path: string; size: number; mediaType: string | null; onOpenCanvas: () => void }) {
+  const renderable = canvasKindOf(path) ?? canvasKindOfMediaType(mediaType);
+  const human = size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : size >= 1024 ? `${Math.round(size / 1024)} KB` : `${size} B`;
+  return (
+    <div className="wb-empty">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-ink-3">
+        <path d="M13 2.5H6.5a1.5 1.5 0 0 0-1.5 1.5v16a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V8.5z" strokeLinejoin="round" />
+        <path d="M13 2.5v6h6" strokeLinejoin="round" />
+        <path d="M9 15.5h6M9 12.5h3" strokeLinecap="round" />
+      </svg>
+      <div className="text-sm font-semibold text-ink-2">这不是文本文件，编辑器不打开它</div>
+      <div className="max-w-md break-all text-center font-mono text-[0.6875rem] leading-5 text-ink-3">{path}</div>
+      <div className="font-mono text-[0.625rem] text-ink-3">
+        {MEDIA_LABEL[mediaType ?? ""] ?? (mediaType ? `服务端嗅探：${mediaType}` : "内容不是 UTF-8 文本")} · {human}
+      </div>
+      {renderable && (
+        <button
+          type="button"
+          onClick={onOpenCanvas}
+          className="rounded-[3px] bg-surface-2 px-2.5 py-1 text-[0.6875rem] font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink"
+        >
+          在成果预览中打开
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -67,11 +122,13 @@ function isMarkdown(path: string): boolean {
  *  │ FileTree │   内容区（preview/review/files）   │
  *  └──────────┴───────────────────────────────────┘
  * 「预览打开」把文件 Tab 的 HTML 产物送进成果预览；openRequest 是外部联动
- * （消息内路径点击 / ⌘P 文件快开 / 工具卡路径）请求打开某个文件（可带行号）。
+ * （消息内路径点击 / ⌘P 文件快开 / 工具卡路径 / 产物卡）请求打开某个文件
+ * （可带行号，或直接指定落到成果预览）。
  */
 export default function WorkbenchPanel({
   openRequest,
   editedPaths,
+  artifactPaths,
   sessionId,
   summary,
   task = null,
@@ -79,9 +136,18 @@ export default function WorkbenchPanel({
   initialTabExplicit = false,
   onTabChange,
 }: {
-  openRequest?: { path: string; ts: number; line?: number } | null;
+  openRequest?: { path: string; ts: number; line?: number; target?: OpenTarget } | null;
   /** 本轮 Agent 触碰过的文件（file.edited 投影，最新在前）——文件 Tab 顶部 chips + Git 高亮。 */
   editedPaths?: string[];
+  /**
+   * 本任务已产出的**可渲染**产物路径（artifact.created 投影，最新的在前）。
+   *
+   * 【为什么要单独传】`editedPaths` 与 `artifacts` 是两条独立的投影：产物是
+   * 「交付了什么」，被编辑的文件是「动过什么」。一次「跑脚本生成 PDF」的交付里，
+   * 用户被告知交付的就是那份 PDF（产物卡上写着），「打开成果」却只能翻到编辑过的
+   * 脚本——所以画布要优先认产物。只有画布渲染得了的才会传进来（过滤在 page.tsx）。
+   */
+  artifactPaths?: string[];
   sessionId?: string | null;
   /** 任务终态小结（session.summary，N5）：透传给 ReviewPane 渲染任务内变更摘要（§V3-1）。 */
   summary?: SessionSummary | null;
@@ -171,10 +237,18 @@ export default function WorkbenchPanel({
 
   // 外部联动：打开指定文件（切到文件 Tab、LRU 入栈并激活；line 用于锚点滚动）
   const [anchorLine, setAnchorLine] = useState<number | undefined>(undefined);
-  const openFile = useCallback((path: string, line?: number) => {
+  const openFile = useCallback((path: string, line?: number, target: OpenTarget = "files") => {
     const seq = ++loadSeq.current;
     // 用户主动打开文件（消息内路径点击 / 文件树 / ⌘P）→ 视为显式选择
     userChoseTab.current = true;
+    // 指定落到成果预览的调用（产物卡点击）：不取文本、不进文件 Tab 栈——
+    // 画布拿的是 URL，读一遍内容再丢掉只是白花一次 IO，还会让 >512KB 的 PDF
+    // 因为「文本上限」报错。
+    if (target === "preview") {
+      setCanvasPath(path);
+      setTab("preview", true);
+      return;
+    }
     setTab("files", true);
     setFileView(isMarkdown(path) && !line ? "preview" : "source");
     setAnchorLine(line);
@@ -188,7 +262,7 @@ export default function WorkbenchPanel({
         setFileTabs((prev) => {
           const idx = prev.findIndex((t) => t.path === f.path);
           const kept = prev.filter((t) => t.path !== f.path);
-          kept.unshift({ path: f.path, content: f.content, size: f.size });
+          kept.unshift({ path: f.path, content: f.content, size: f.size, binary: f.binary, mediaType: f.mediaType });
           const next = kept.slice(0, MAX_FILE_TABS);
           setActivePath((cur) => (next.some((t) => t.path === cur) ? cur : (next[Math.min(idx, next.length - 1)]?.path ?? null)));
           return next;
@@ -199,31 +273,31 @@ export default function WorkbenchPanel({
         if (seq !== loadSeq.current) return;
         setFileTabs((prev) => {
           const next = prev.filter((t) => t.path !== path);
-          next.unshift({ path, content: `无法预览：${err.message}`, size: 0 });
+          next.unshift({ path, content: `无法预览：${err.message}`, size: 0, binary: false, mediaType: null });
           return next.slice(0, MAX_FILE_TABS);
         });
       });
   }, [sessionId]);
 
-  // 自动推荐（automatic 侧）：产物 → 成果预览（§7.5）；无可预览产物但有首个编辑 → 审查（§7.4）。
-  // 用户已显式选过 tab 则完全停手；只抑制单条产物路径的场景由 suppressedPreviewPath 负责。
+  // 画布该显示哪一份产物（§7.5）。产物优先于被编辑的文件：用户被告知「交付的是
+  // 这份 PDF」，那「打开成果」就该是它，而不是顺手改过的那个脚本。
+  //
+  // 【为什么自动切 Tab 仍只认 HTML】判定放宽到 PDF/图片是为了**画布有内容**，
+  // 不是为了抢焦点：一次跑出十几张截图的会话如果每次都把工作台切到成果预览，
+  // 用户就再也回不到审查页了。非 HTML 的产物只是把画布备好，等用户点「打开成果」。
   useEffect(() => {
-    const latestPreview = editedPaths?.find(isPreviewable);
-    if (latestPreview) {
-      // 用共享判定而非就地正则：此前这里写的是 `/\.html?$/i`，漏了 `.htm`，
-      // 导致 .htm 产物不会被自动推荐（与「成果预览」的真实能力不一致）。
-      setCanvasPath(latestPreview);
-      if (!userChoseTab.current && suppressedPreviewPath.current !== latestPreview) {
-        setTab("preview");
-      }
+    const candidate = artifactPaths?.[0] ?? editedPaths?.find(isCanvasRenderable) ?? null;
+    if (candidate) setCanvasPath(candidate);
+    if (candidate && isPreviewable(candidate) && !userChoseTab.current && suppressedPreviewPath.current !== candidate) {
+      setTab("preview");
       return;
     }
     if (!userChoseTab.current && editedPaths && editedPaths.length > 0) setTab("review");
-  }, [editedPaths]);
+  }, [editedPaths, artifactPaths]);
 
   useEffect(() => {
     if (!openRequest) return;
-    openFile(openRequest.path, openRequest.line);
+    openFile(openRequest.path, openRequest.line, openRequest.target ?? "files");
   }, [openRequest, openFile]);
 
   const closeTab = (path: string) => {
@@ -252,7 +326,10 @@ export default function WorkbenchPanel({
     setTab(t, true);
   };
 
-  const activeIsHtml = activeFile ? isPreviewable(activeFile.path) : false;
+  // 二进制文件没有可打开的编辑器，所以也不给「预览打开」——那条路在占位里（且只
+  // 在画布确实渲染得了它时才出现）。
+  const activeKind = activeFile && !activeFile.binary ? canvasKindOf(activeFile.path) : null;
+  const activeIsHtml = activeKind === "html";
   const activeIsMarkdown = activeFile ? isMarkdown(activeFile.path) : false;
 
   const saveDraft = (path: string, content: string, size: number) => {
@@ -350,7 +427,17 @@ export default function WorkbenchPanel({
                   </button>
                 )}
               </div>
-              {activeIsMarkdown && fileView === "preview" ? (
+              {activeFile.binary ? (
+                <BinaryNotice
+                  path={activeFile.path}
+                  size={activeFile.size}
+                  mediaType={activeFile.mediaType}
+                  onOpenCanvas={() => {
+                    setCanvasPath(activeFile.path);
+                    select("preview");
+                  }}
+                />
+              ) : activeIsMarkdown && fileView === "preview" ? (
                 <div className="min-h-0 flex-1 overflow-y-auto bg-bg px-5 py-4">
                   <div className="mx-auto max-w-3xl pb-8">
                     <Markdown text={activeContent} />

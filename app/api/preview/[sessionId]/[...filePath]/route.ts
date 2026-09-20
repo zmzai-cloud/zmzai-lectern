@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 
 const MIME_TYPES: Record<string, string> = {
   ".avif": "image/avif",
+  ".bmp": "image/bmp",
   ".css": "text/css; charset=utf-8",
   ".gif": "image/gif",
   ".htm": "text/html; charset=utf-8",
@@ -20,6 +21,10 @@ const MIME_TYPES: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
+  // PDF 与图片一样是「浏览器的渲染对象」：交给 Chromium 内建阅读器画，而不是
+  // 让界面自己去解析（Electron 44 实测 `<iframe src=…pdf>` 直接出阅读器，
+  // 连 `plugins` 都不用开——详见 CanvasPane 的说明）。
+  ".pdf": "application/pdf",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
@@ -33,6 +38,9 @@ const MIME_TYPES: Record<string, string> = {
  * 预览用真实 URL 而不是 srcDoc：HTML 中的 `./style.css`、`../src/index.js`
  * 等相对资源会继续落在这个路由下，因而能像普通静态站点一样解析。sessionId
  * 是路径的一部分，后续模块/样式/图片请求会继续命中同一个隔离 worktree。
+ *
+ * PDF 与图片也走这里（它们不依赖相对资源，但同样需要「一个真实 URL 交给浏览器
+ * 渲染」——把二进制读进 JS 再转 blob 只是多绕一圈，还丢掉了 Range 请求）。
  */
 async function handleGET(
   _request: Request,

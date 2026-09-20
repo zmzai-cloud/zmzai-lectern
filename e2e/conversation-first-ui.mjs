@@ -80,7 +80,7 @@ try {
     if (path === "/api/skills") return route.fulfill({ json: { skills: [] } });
     if (path === "/api/settings/permissions") return route.fulfill({ json: { permissions: {} } });
     if (path === "/api/projects") return route.fulfill({ json: { projects: [], activeId: "default" } });
-    if (path === "/api/fs/file") return route.fulfill({ json: { path: url.searchParams.get("path") ?? "", size: 24, content: "export const answer = 42;\n" } });
+    if (path === "/api/fs/file") return route.fulfill({ json: { path: url.searchParams.get("path") ?? "", size: 24, content: "export const answer = 42;\n", binary: false, mediaType: "text/plain" } });
     return route.fulfill({ json: {} });
   });
 

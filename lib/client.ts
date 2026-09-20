@@ -7,6 +7,7 @@ import type {
   DeliveryOverview,
   FailoverEndpointView,
   FailoverEventView,
+  FileView,
   GitDiff,
   LecternEvent,
   KeyStatus,
@@ -270,7 +271,7 @@ export const client = {
 
   fsFile: (path: string, sessionId?: string | null) =>
     fetch(`/api/fs/file?path=${encodeURIComponent(path)}${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ""}`).then((r) =>
-      j<{ path: string; size: number; content: string }>(r),
+      j<FileView>(r),
     ),
 
   fsSave: (path: string, content: string, sessionId?: string | null) =>

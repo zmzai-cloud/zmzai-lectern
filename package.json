@@ -29,6 +29,7 @@
     "test:touch-ui": "node e2e/touch-drag-ui.mjs",
     "test:message-search-ui": "node e2e/message-search-ui.mjs",
     "test:message-recovery-ui": "node e2e/message-recovery-ui.mjs",
+    "test:pdf-preview-ui": "node e2e/pdf-preview-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",
     "verify:public": "node scripts/verify-public-release.mjs",
     "verify:update-path": "node scripts/verify-update-path.mjs",

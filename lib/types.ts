@@ -242,6 +242,22 @@ export type TreeNode = {
   mtime: string;
 };
 
+/** `GET /api/fs/file` 的结果：文本文件带内容，二进制只带判定结论。
+ *
+ *  【为什么二进制不是 HTTP 错误】「这份文件不是文本」是一个成功的观察，不是失败。
+ *  调用方（文件 Tab / 成果预览）要的是**该怎么处理它**，所以结论必须能被读到，
+ *  而不是变成一句异常消息。 */
+export type FileView = {
+  path: string;
+  size: number;
+  /** 文本内容；`binary` 为真时是空串。 */
+  content: string;
+  /** 不是文本（PDF / 图片 / 归档 / 未知二进制）。编辑器不打开它。 */
+  binary: boolean;
+  /** 服务端嗅探出的类型；`null` 表示不像文本但认不出具体是什么。 */
+  mediaType: string | null;
+};
+
 /** 宿主机探测到的 shell 候选（面板下拉 + 交互会话起哪一个）。 */
 export type ShellCandidate = {
   file: string;

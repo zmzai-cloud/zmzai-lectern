@@ -111,5 +111,41 @@ and orphan blockmaps. SHA-256 checksums also cover uploaded blockmaps.
 
 The CI workflow performs native platform builds and packaged smoke tests without
 publishing, and does not expose signing credentials to pull requests. Native
-Windows installer evidence, real signed artifacts and cross-version update
-tests remain mandatory before closing the corresponding P0 requirements.
+Windows installer evidence and real signed artifacts remain mandatory before
+closing the corresponding P0 requirements. Cross-version update tests are
+described under "Cross-version update path" below.
+
+## Cross-version update path
+
+The updater is first-party (`electron/updater.cjs` + `electron/update-contract.cjs`),
+not `electron-updater`: `electron/updater.source-test.cjs` asserts the source never
+references `quitAndInstall`, `autoUpdater`, `execSync` or `xattr`. Nothing replaces
+the app silently, and nothing strips quarantine. **Unsigned builds therefore do not
+block this channel** — macOS reveals the verified ZIP in Finder for the user to swap
+in, Windows launches the installer and then quits. Code signing stays an independent
+concern: it only decides whether Gatekeeper / SmartScreen interrupt that manual step.
+Do not schedule the two as one item.
+
+Two facts about a published version need evidence, and neither is covered by the
+build-time gates above:
+
+1. **The artifacts are intact on the public feed.** `pnpm verify:public` re-reads
+   `latest-desktop.json`, both stable manifests and every artifact, hashing each
+   download byte for byte against `dist/`. A successful upload is not evidence —
+   only a read-back is. This script existed from the start but sat outside every
+   npm script, so a release could ship without it ever running; it has a name now,
+   and the uploader prints it as the next step.
+2. **The previous release can see this one.** `pnpm verify:update-path` extracts
+   `update-contract.cjs` from the *installed* app — so the comparison runs the code
+   users actually hold, not today's source — asserts it selects the new version
+   from the live feed, then launches that app under an isolated
+   `LECTERN_USER_DATA_DIR` and watches the status go `idle` → `available`. Add
+   `--download` to also fetch and hash the real artifact (210 MB); `--contract-only`
+   skips the GUI.
+
+The GUI step is also the only coverage for the startup auto-check
+(`electron/main.cjs`, `setTimeout(check, 10_000)`) actually firing.
+
+Neither script belongs in CI: both need the public network, and (2) needs a
+previously released build installed locally. Run them after every release, in that
+order. They do not replace the packaged smoke test.

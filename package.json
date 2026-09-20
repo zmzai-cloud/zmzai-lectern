@@ -30,6 +30,8 @@
     "test:message-search-ui": "node e2e/message-search-ui.mjs",
     "test:message-recovery-ui": "node e2e/message-recovery-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",
+    "verify:public": "node scripts/verify-public-release.mjs",
+    "verify:update-path": "node scripts/verify-update-path.mjs",
     "build:mac": "bash scripts/build-mac.sh",
     "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",
     "build:win:cross": "bash scripts/build-win-cross.sh",

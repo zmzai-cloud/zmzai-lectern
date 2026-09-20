@@ -180,4 +180,9 @@ writeFileSync(
 );
 console.log(`\n✅ 全部上传完成。直链清单已写入 dist/release-links.md：\n`);
 console.log(links.join("\n"));
-console.log(`\n下一步：把上述链接更新进 landing page 的下载区（zmzai-lectern-landing.html），并发布 GitHub Release 归档。`);
+console.log(`\n下一步（顺序不要换）：`);
+console.log(`  1. 回读校验 —— 上传「成功」只有回读才算数：pnpm verify:public`);
+console.log(`  2. 更新 landing —— lectern-site 仓的 index.html（版本号 + 下载直链 + release pill），`);
+console.log(`     push main 后由该仓 deploy.yml 自动部署，无需手工 scp；`);
+console.log(`  3. 归档 —— gh release create v${version} --notes-file <notes> dist/Lectern-* dist/SHA256SUMS.txt`);
+console.log(`  升级通道本身（旧版能否看到这一版）另见 docs/release-gates.md 的 Cross-version update path。`);

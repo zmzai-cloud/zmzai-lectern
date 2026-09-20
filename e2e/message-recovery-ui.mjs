@@ -74,9 +74,16 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   // 桌面宽度下侧栏默认常驻（规格 §7）：只有它被收起时才需要展开，展开后侧栏方可点选任务。
+  //
+  // 这里**不能**用 count() 决定要不要点。count() 数的是「在不在 DOM」，而从 390 切回 1440 时，
+  // 「宽屏自动常驻」与「刚刚在窄屏手动收起」这两种状态之间有一个人眼不可见、机器能撞上的
+  // 时间窗：按钮可能已经在 DOM 里、却还没进入可点状态。那时 count() 返回 1，紧跟的 click()
+  // 就一头撞进 30s 超时（2026-09-20 CI 实测，本机 4 次全过，属环境时序差）。
+  // 改为看**侧栏本身**的可见性：已经开着就不碰它，确实收起才去点。
+  const sidebar = page.locator(".task-sidebar");
   const expandSidebar = page.getByRole("button", { name: "展开会话栏", exact: true });
-  if (await expandSidebar.count()) await expandSidebar.click();
-  await page.locator(".task-sidebar").waitFor();
+  if (!(await sidebar.isVisible()) && (await expandSidebar.isVisible())) await expandSidebar.click();
+  await sidebar.waitFor();
   initialFails = false;
   await retry.click();
   await page.getByText("A history 49", { exact: true }).waitFor();

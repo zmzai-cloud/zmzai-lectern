@@ -26,8 +26,18 @@ try {
   const other = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=else`)).json());
   const listed = Array.isArray(viaGateway?.sessions) && viaGateway.sessions.some((sn) => sn.id === session.id);
   const isolated = Array.isArray(other?.sessions) && other.sessions.every((sn) => sn.id !== session.id);
-  const ok = listed && isolated;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：生产路径 /api/sessions 经网关=${listed}；跨用户隔离=${isolated}；body 形状=${Array.isArray(viaGateway?.sessions) ? "Host" : JSON.stringify(viaGateway).slice(0, 80)}`);
+  // B2：生产路径 prompt（cookie → credential 通道）+ abort 经网关
+  const prompted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: "muzhi_session=gw-cred-check; other=x" },
+    body: JSON.stringify({ requestId: "gw-b2", text: "网关命令" }),
+  });
+  const receipt = await prompted.json();
+  const viaCommand = prompted.status === 200 && receipt.requestId === "gw-b2";
+  const aborted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/abort`, { method: "POST" });
+  const abortOk = aborted.status === 200;
+  const ok = listed && isolated && viaCommand && abortOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表经网关=${listed}；隔离=${isolated}；prompt(cookie→credential)经网关=${viaCommand}；abort 经网关=${abortOk}；prompt 回执=${JSON.stringify(receipt).slice(0, 90)}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { withWorkflowErrors, rethrowWorkflowError, WorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -57,6 +58,8 @@ function requestShape(input: {
 /** 发送提示词：进入 agent-framework runner，推理经 relay（cookie 透传）。
  *  附件只收 id（规格 2 §9.1），内容由附件存储持有并绑定到本条用户消息。 */
 async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as {
     text?: string;

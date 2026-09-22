@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFixtureRuntime } from "./runtime.js";
-import { startHostServer, type HostHandle } from "./server.js";
+import { credentialFor, startHostServer, type HostHandle } from "./server.js";
 
 /** M2a-S10 集成：发送 → Host → 工具 → 持久化 → SSE 重放；A03/A04 在 Host 层。 */
 async function boot(toolDelayMs = 0): Promise<{ host: HostHandle; close(): Promise<void>; dataDir: string; workspace: string }> {
@@ -194,6 +194,25 @@ describe("Host 命令族端点（M2b-B2）", { timeout: 25_000 }, () => {
       // permission 端点参数校验
       const missing = await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/permission`, { method: "POST", headers: auth(env.host), body: JSON.stringify({ sessionId: session.sessionId }) });
       expect(missing.status).toBe(400);
+    } finally {
+      await env.close();
+    }
+  });
+});
+
+describe("credentialRef 通道（M2b-B2）", () => {
+  it("prompt 携带 x-lectern-credential → Host 内存表按 sessionId 可取", async () => {
+    const env = await boot();
+    try {
+      const session = (await (await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/session`, { method: "POST", headers: auth(env.host) })).json()) as { sessionId: string };
+      await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/prompt`, {
+        method: "POST",
+        headers: { ...auth(env.host), "x-lectern-credential": "muzhi_session=cred-b2-test" },
+        body: JSON.stringify({ sessionId: session.sessionId, requestId: "b2-cred", text: "凭据通道" }),
+      });
+      expect(credentialFor(session.sessionId)).toBe("muzhi_session=cred-b2-test");
+      // 其他会话取不到
+      expect(credentialFor("ses_other")).toBeUndefined();
     } finally {
       await env.close();
     }

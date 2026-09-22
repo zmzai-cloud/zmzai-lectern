@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { withWorkflowErrors } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -10,6 +11,8 @@ export const runtime = "nodejs";
 /** 权限回复：批准（一次/总是）或拒绝，可选反馈。
  *  每次决定落审计（来源三分：manual 手动 / auto 自动档 / fine-grained 细粒度配置）。 */
 async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as {
     requestId?: string;

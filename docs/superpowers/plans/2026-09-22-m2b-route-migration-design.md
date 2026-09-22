@@ -1,6 +1,6 @@
 # M2b 设计：路由族分批迁移到 Host
 
-- 日期：2026-09-22；状态：设计稿，供 review 后实施
+- 日期：2026-09-22；状态：**R-1/B1/B2 已实施**（见 §6 实施结果）
 - 对应规格：§5.4（路由迁移清单）、§5.3（credentialRef）、§6（命令/事件协议）、§17 M2b 行
 - 前置：M2a 收口（S9–S12 全绿）；spec M2 纪律——**批次在隔离验证环境跑，未全部迁完不切生产入口**（双写红线）
 
@@ -85,3 +85,25 @@ POST /v1/commands/session               → createSession（已有）
 - R-2 事件/快照协议 B1 即需版本化 envelope（§6.4）——最小实现：帧加
   protocolVersion 字段，不动既有形状；
 - R-3 附件/终端是流式+长连接大户，B4 单独一轮做，不与 B1–B3 混排。
+
+
+## 6. 实施结果（2026-09-22）
+
+| 批 | 提交 | 结果 |
+| --- | --- | --- |
+| R-1 前置 | `8d1e844` | lib 186 处导入补 .js + 3 处别名改相对；host 连带编译真实装配（bundler 解析 + dist type:module） |
+| B1 只读族 | `32cbda6`/`2891025` | 五端点经真实 runtimeFor；网关路由表 + /api/sessions 接线；进程级双验证 |
+| B2 命令族 | `aa16098`/`fcc938a`/`305b1d0`/`b8565ac` | prompt/abort/permission/task 四命令端点 + 网关 POST（rewriteBody + cookie 单值提取）；credentialRef 全链（内存表→streamFnFor→ALS 回退优先级）；495/495 |
+
+实测与验证：real-check（五只读端点）、gateway-check（五项：列表/隔离/prompt
+带 cookie/abort/task）、M2a smoke 双模式 6/6、credential 优先级 2 单测、
+进程级 token/credential 零泄漏。
+
+实施踩坑（commit 可溯）：
+1. 自定义工具必须与 builtinTools 并存（S10）；
+2. pnpm 包装进程必须整进程组 kill（孤儿 next dev 占端口）；
+3. 行号删除误吞 modelProvider——装配静默降级，被进程级脚本当场抓获；
+4. 网关检查须插到目标 method 的 handler（task 路由 GET 有 POST 漏）。
+
+遗留：B3（compact/rewind）、B4（terminal/MCP/附件族）；relay 真实凭据的
+credential 端到端联调待有凭据环境；m2a 网关路由的生产 UI 接入随 M2c。

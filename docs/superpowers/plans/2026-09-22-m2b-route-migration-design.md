@@ -74,9 +74,11 @@ POST /v1/commands/session               → createSession（已有）
 
 ## 5. 风险
 
-- R-1 lib/runtime.ts 的设置读取/MCP/终端在 Host 进程内的初始化差异
-  （globalThis 缓存、路径解析）——B1 前先用 spike 验证 assembly.ts 能在
-  Host 进程拉起 runtimeFor，风险前置；
+- R-1【spike 已做，2026-09-22】lib 链零 `@/` 别名、全相对导入（利好）；
+  但**全库是 bundler 风格无后缀导入**（`./limits` 而非 `./limits.js`），
+  NodeNext 编译不过——B1 前置一轮机械 codemod：给 lib/** 相对导入补
+  `.js` 后缀（Next 编译完全兼容，vitest 不受影响）。完成后 host 构建连带
+  lib（rootDir 提到仓根）即可拉起真实装配；globalThis/路径差异届时再验。
 - R-2 事件/快照协议 B1 即需版本化 envelope（§6.4）——最小实现：帧加
   protocolVersion 字段，不动既有形状；
 - R-3 附件/终端是流式+长连接大户，B4 单独一轮做，不与 B1–B3 混排。

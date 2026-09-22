@@ -1,0 +1,32 @@
+{
+  "schema": "lectern.evals.results/1",
+  "generated_at": "2026-09-22T06:53:12.770Z",
+  "suite": "deterministic",
+  "system_under_test": {
+    "name": "m2a-host-minimal",
+    "kind": "lectern-after",
+    "commit": null,
+    "model": null
+  },
+  "environment": {
+    "machine": "local-dev",
+    "samples": 100,
+    "notes": "durable receipt（prompt 命令受理→回执）直连 Host，fixture sqlite"
+  },
+  "runs": [],
+  "summary": {
+    "total": 100,
+    "pass": 100,
+    "fail": 0,
+    "blocked": 0,
+    "not_run": 0,
+    "unverified": 0
+  },
+  "metrics": {
+    "p50_ms": 7.789208999999914,
+    "p95_ms": 15.668334000000016,
+    "max_ms": 36.28287499999999,
+    "gate": "p95 <= 300ms",
+    "gate_pass": true
+  }
+}

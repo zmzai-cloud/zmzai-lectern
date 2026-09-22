@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createFixtureRuntime } from "./runtime.js";
 import { startHostServer } from "./server.js";
-import type { SessionInfo } from "@zmzai/agent-framework";
+import type { RealRuntimeFace } from "./server.js";
 
 /** Host 进程入口（M2a dev 拓扑）。
  *  env: LECTERN_HOST_DATA=<数据目录>（M2a 为 fixture 目录，绝不允许指向生产数据）。
@@ -24,11 +24,42 @@ const runtime = createFixtureRuntime({
 // B1：真实 runtime 装配（env 必须先于 assembly 导入——dataDir 是模块加载期常量）
 process.env.LECTERN_DATA_DIR ??= dataDir;
 process.env.LECTERN_WORKSPACE ??= process.env.LECTERN_HOST_WORKSPACE ?? join(dataDir, "workspace");
-let realRuntime: { listSessions(filter: { userId: string; workspaceId?: string }): Promise<SessionInfo[]> } | undefined;
+let realRuntime: RealRuntimeFace | undefined;
 try {
   const { runtimeFor, defaultWorkspaceRoot } = await import("./assembly.js");
   const rt = runtimeFor(defaultWorkspaceRoot);
-  realRuntime = { listSessions: (filter) => rt.store.listSessions(filter) };
+  const store = rt.store;
+  realRuntime = {
+    listSessions: (filter) => store.listSessions(filter),
+    messages: async (sessionId) => {
+      const session = await store.getSession(sessionId);
+      if (!session) throw new Error("SESSION_NOT_FOUND");
+      return store.getMessages(sessionId);
+    },
+    search: (sessionId, query, limit) => {
+      const fn = store.searchMessages;
+      if (!fn) throw new Error("NOT_IMPLEMENTED");
+      return fn.call(store, sessionId, { query, limit });
+    },
+    readState: (sessionId) => {
+      const fn = store.getReadState;
+      if (!fn) throw new Error("NOT_IMPLEMENTED");
+      return fn.call(store, sessionId);
+    },
+    usage: async (sessionId) => {
+      const session = await store.getSession(sessionId);
+      if (!session) throw new Error("SESSION_NOT_FOUND");
+      const entries = await store.getMessages(sessionId);
+      let input = 0, output = 0, messages = 0;
+      for (const { info } of entries) {
+        messages += 1;
+        const tokens = (info as { tokens?: { input?: number; output?: number } }).tokens;
+        input += tokens?.input ?? 0;
+        output += tokens?.output ?? 0;
+      }
+      return { messages, tokens: { input, output, total: input + output } };
+    },
+  };
 } catch (error) {
   console.error("[host] 真实 runtime 装配失败（只读端点降级）:", error instanceof Error ? error.message : String(error));
 }

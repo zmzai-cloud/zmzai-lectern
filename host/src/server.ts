@@ -41,8 +41,15 @@ export type HostServerOptions = {
   hostInstanceId?: string;
   /** M2a fixture 执行链（S10+）。缺省时仅 /health 可用。 */
   runtime?: FixtureRuntime;
-  /** B1：真实 runtime 的只读面（sessions 列表）。缺省时端点 404。 */
-  realRuntime?: { listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]> };
+  /** B1：真实 runtime 的只读面。缺省的方法对应端点 404；会话不存在由实现
+   *  抛 SESSION_NOT_FOUND（server 映射 404）。 */
+  realRuntime?: {
+    listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]>;
+    messages(sessionId: string): Promise<unknown[]>;
+    search?(sessionId: string, query: string, limit: number): Promise<unknown>;
+    readState?(sessionId: string): Promise<unknown>;
+    usage?(sessionId: string): Promise<unknown>;
+  };
 };
 
 async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, unknown>> {
@@ -59,6 +66,8 @@ async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, un
 }
 
 type IncomingMessageLike = AsyncIterable<unknown> & { headers: Record<string, string | string[] | undefined> };
+
+export type RealRuntimeFace = NonNullable<HostServerOptions["realRuntime"]>;
 
 function send(res: ServerResponseLike, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -109,6 +118,31 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           uptimeMs: Date.now() - startedAt,
         };
         send(res, 200, handshake);
+        return;
+      }
+      const sessMatch = /^\/v1\/sessions\/([^/]+)\/(messages|search|read-state|usage)$/.exec(url.pathname);
+      if (req.method === "GET" && sessMatch && options.realRuntime) {
+        const real = options.realRuntime;
+        const sessionId = decodeURIComponent(sessMatch[1]);
+        const kind = sessMatch[2];
+        const method = kind === "messages" ? "messages" : kind === "search" ? "search" : kind === "read-state" ? "readState" : "usage";
+        const impl = (real as Record<string, unknown>)[method] as ((...args: unknown[]) => Promise<unknown>) | undefined;
+        if (!impl) {
+          send(res, 404, { error: "NOT_FOUND", message: `后端未提供 ${kind}` });
+          return;
+        }
+        try {
+          const query = url.searchParams.get("q") ?? "";
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? "50") || 50));
+          const body = kind === "messages" ? await impl(sessionId)
+            : kind === "search" ? await impl(sessionId, query, limit)
+            : await impl(sessionId);
+          send(res, 200, body as Record<string, unknown> ?? { });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/SESSION_NOT_FOUND/.test(message)) send(res, 404, { error: "SESSION_NOT_FOUND", message: "会话不存在" });
+          else send(res, 500, { error: "INTERNAL", message });
+        }
         return;
       }
       if (req.method === "GET" && url.pathname === "/v1/sessions" && options.realRuntime) {

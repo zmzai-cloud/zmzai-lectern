@@ -47,6 +47,7 @@ export type HostServerOptions = {
     listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]>;
     messages(sessionId: string): Promise<unknown[]>;
     abort?(sessionId: string): Promise<void>;
+    resumeTask?(sessionId: string): Promise<boolean>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -174,6 +175,24 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/task") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const action = body.action;
+          if (!sessionId || (action !== "resume" && action !== "stop")) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填；action ∈ resume|stop" });
+            return;
+          }
+          const runner = options.realRuntime ?? { abort: rt.runner.abort.bind(rt.runner), resumeTask: rt.runner.resumeTask.bind(rt.runner) } as never as { abort(s: string): Promise<void>; resumeTask(s: string): Promise<boolean> };
+          try {
+            const result = action === "resume" ? await (runner as { resumeTask(s: string): Promise<boolean> }).resumeTask(sessionId) : undefined;
+            if (action === "stop") await (runner as { abort(s: string): Promise<void> }).abort(sessionId);
+            send(res, 200, { ok: action === "resume" ? result !== false : true });
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
           return;
         }
         if (req.method === "POST" && url.pathname === "/v1/commands/abort") {

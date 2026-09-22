@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { withWorkflowErrors, WorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -19,7 +20,9 @@ export const runtime = "nodejs";
  * 不是一条消息，它是「用户核对完外部状态后放行」这个动作本身——走 prompt
  * 会落一条用户消息、会被计入 token、会在聊天记录里出现用户没说过的话。
  */
-async function handleGET(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   const runtime = sessionRuntime(id);
   const task = runtime.store.task;
@@ -29,6 +32,8 @@ async function handleGET(_request: NextRequest, ctx: { params: Promise<{ id: str
 }
 
 async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as { action?: string } | null;
   const runtime = sessionRuntime(id);

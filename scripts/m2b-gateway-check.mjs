@@ -36,8 +36,10 @@ try {
   const viaCommand = prompted.status === 200 && receipt.requestId === "gw-b2";
   const aborted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/abort`, { method: "POST" });
   const abortOk = aborted.status === 200;
-  const ok = listed && isolated && viaCommand && abortOk;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表经网关=${listed}；隔离=${isolated}；prompt(cookie→credential)经网关=${viaCommand}；abort 经网关=${abortOk}；prompt 回执=${JSON.stringify(receipt).slice(0, 90)}`);
+  const tasked = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/task`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "resume" }) });
+  const taskOk = tasked.status === 200;
+  const ok = listed && isolated && viaCommand && abortOk && taskOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

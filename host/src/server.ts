@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { subscribeEventLog } from "@zmzai/agent-framework";
+import type { FixtureRuntime } from "./runtime.js";
 
 /** M2a Host 骨架（spec §5.1）。
  *
@@ -37,7 +39,24 @@ export type HostServerOptions = {
   /** 测试注入：固定 token / hostInstanceId。 */
   token?: string;
   hostInstanceId?: string;
+  /** M2a fixture 执行链（S10+）。缺省时仅 /health 可用。 */
+  runtime?: FixtureRuntime;
 };
+
+async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(chunk as Buffer);
+    if (chunks.reduce((n, c) => n + c.length, 0) > 1_000_000) throw new Error("BODY_TOO_LARGE");
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  if (!text) return {};
+  const parsed: unknown = JSON.parse(text);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("BODY_NOT_OBJECT");
+  return parsed as Record<string, unknown>;
+}
+
+type IncomingMessageLike = AsyncIterable<unknown> & { headers: Record<string, string | string[] | undefined> };
 
 function send(res: ServerResponseLike, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -67,29 +86,85 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
   };
 
   const server = createServer((req, res) => {
-    // 先鉴权后一切：401 路径上不得产生任何副作用（A24）
-    if (!authorized(req)) {
-      send(res, 401, { error: "UNAUTHORIZED", message: "缺少或错误的 Host token" });
-      return;
-    }
-    const origin = req.headers.origin;
-    if (typeof origin === "string" && origin.length > 0 && !isLoopbackOrigin(origin)) {
-      send(res, 403, { error: "FORBIDDEN", message: "Origin 不在允许列表" });
-      return;
-    }
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (req.method === "GET" && url.pathname === "/health") {
-      const handshake: HostHandshake = {
-        protocolVersion: HOST_PROTOCOL_VERSION,
-        hostInstanceId,
-        schemaVersion: HOST_SCHEMA_VERSION,
-        capabilities: { commands: ["prompt"], events: true },
-        uptimeMs: Date.now() - startedAt,
-      };
-      send(res, 200, handshake);
-      return;
-    }
-    send(res, 404, { error: "NOT_FOUND", message: "M2a 骨架仅提供 /health" });
+    void (async () => {
+      // 先鉴权后一切：401 路径上不得产生任何副作用（A24）
+      if (!authorized(req)) {
+        send(res, 401, { error: "UNAUTHORIZED", message: "缺少或错误的 Host token" });
+        return;
+      }
+      const origin = req.headers.origin;
+      if (typeof origin === "string" && origin.length > 0 && !isLoopbackOrigin(origin)) {
+        send(res, 403, { error: "FORBIDDEN", message: "Origin 不在允许列表" });
+        return;
+      }
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        const handshake: HostHandshake = {
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          hostInstanceId,
+          schemaVersion: HOST_SCHEMA_VERSION,
+          capabilities: { commands: options.runtime ? ["prompt", "session"] : [], events: !!options.runtime },
+          uptimeMs: Date.now() - startedAt,
+        };
+        send(res, 200, handshake);
+        return;
+      }
+      if (options.runtime) {
+        const rt = options.runtime;
+        if (req.method === "POST" && url.pathname === "/v1/commands/session") {
+          send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/prompt") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const text = typeof body.text === "string" ? body.text.trim() : "";
+          if (!sessionId || !text) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 与 text 必填" });
+            return;
+          }
+          const input: Record<string, unknown> = { text, ...(typeof body.requestId === "string" && body.requestId ? { requestId: body.requestId } : {}) };
+          try {
+            const receipt = await rt.runner.prompt(sessionId, input as never);
+            send(res, 200, receipt);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (/REQUEST_ID_REUSED/.test(message)) send(res, 409, { error: "REQUEST_ID_REUSED", message: "同 requestId 换 payload 被拒" });
+            else if (/SESSION_NOT_FOUND/.test(message)) send(res, 404, { error: "SESSION_NOT_FOUND", message: "会话不存在" });
+            else if (/RECOVERY_REQUIRED/.test(message)) send(res, 409, { error: "RECOVERY_REQUIRED", message: "恢复后重试" });
+            else send(res, 500, { error: "INTERNAL", message });
+          }
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/v1/events") {
+          const sessionId = url.searchParams.get("sessionId") ?? "";
+          if (!sessionId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" });
+            return;
+          }
+          const sinceRaw = Number(url.searchParams.get("since") ?? "0");
+          const sinceSeq = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0;
+          res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
+          const abort = new AbortController();
+          req.on("close", () => abort.abort());
+          const heartbeat = setInterval(() => {
+            try { res.write(": ping\n\n"); } catch { /* 已关闭 */ }
+          }, 15_000);
+          try {
+            for await (const ev of subscribeEventLog(rt.eventLog, sessionId, { signal: abort.signal, sinceSeq })) {
+              res.write(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`);
+            }
+          } catch {
+            /* 客户端断开：直接结束流 */
+          } finally {
+            clearInterval(heartbeat);
+          }
+          res.end();
+          return;
+        }
+      }
+      send(res, 404, { error: "NOT_FOUND", message: options.runtime ? "未知路径" : "M2a 骨架仅提供 /health" });
+    })().catch(() => send(res, 500, { error: "INTERNAL", message: "请求处理失败" }));
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

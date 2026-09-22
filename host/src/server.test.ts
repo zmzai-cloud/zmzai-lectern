@@ -15,7 +15,8 @@ describe("Host 骨架（M2a-S9）", () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.protocolVersion).toBe(HOST_PROTOCOL_VERSION);
       expect(body.hostInstanceId).toBe(host.hostInstanceId);
-      expect(body.capabilities).toEqual({ commands: ["prompt"], events: true });
+      // 无 runtime 时骨架形状（S10 起 capabilities 随 runtime 出现）
+      expect(body.capabilities).toEqual({ commands: [], events: false });
       expect(typeof body.uptimeMs).toBe("number");
       expect(JSON.stringify(body)).not.toContain(host.token);
 

@@ -1,6 +1,6 @@
 # M2c 设计：恢复/回收、启动器联动、生产入口切换（B0 收口冲刺）
 
-- 日期：2026-09-22；状态：设计稿，供 review 后实施
+- 日期：2026-09-22；状态：**S13–S16 全部实施完成**（见 §5 实施结果）
 - 对应规格：§5.2（重启/退出/失联）、§5.4（迁移收官：Next 禁止导入 runtime 有状态实现）、§9.6（资源回收子集）、§15（打包/回滚）、§17 M2c 行
 - 前置：M2b B1–B4 收官（14 路由 Host 通路全通，gateway-check 十一项）
 
@@ -57,3 +57,15 @@ Main 侧：Host exit 非 0 → 重启计数（60s 窗口 3 次上限），超限
 - R-1 Electron utilityProcess 双 fork 的 stdio/信号语义（SIGTERM 传递）——S13 用真 Main 冒烟，不 mock；
 - R-2 armed 默认后生产 UI 走 Host 的第一晚——LEGACY flag 是硬逃生门，发版说明写明回滚步骤；
 - R-3 Windows 真机不可得（本机 darwin）——A25 的 Windows 项如实标未验证，不跨平台编译冒充（spec §15.8）。
+
+
+## 5. 实施结果（2026-09-22，均已推送）
+
+| Slice | 提交 | 结果 |
+| --- | --- | --- |
+| S13 生命周期 | `5dadb62` | host.lock 活锁互斥（探测先于 startHostServer——冒烟抓到第二实例覆盖 host.json 的顺序 bug）；/v1/shutdown 有序停止；Main fork Host + 重启护栏（60s/3）+ before-quit Host 先收尾 + armed env 注入；dev-host.sh；m2c-smoke 5/5 |
+| S14 arch-check | `7315194` | R1/R2/R3 三规则；20 迁移路由 + 21 条豁免（S16 切换验收后清零——回滚此后按 §15.6 走旧二进制）；exit 0 |
+| S15 回滚实测 | `2e263ca` | LEGACY（无 GATEWAY env）旧 handler 原样服务（数组形状/name 字段）、ARMED Host 形状——3/3；顺序单实例模式（双 next dev 就绪互卡）；就绪探测改根路径（LEGACY 下 m2a/health 500） |
+| S16 发版配置 | `f721e0b` | files 白名单 host/dist；build-mac.sh [0/5] host:build；0.7.0-rc + CHANGELOG；发版前检查全绿（496/496 + arch 0 + smoke 5/5） |
+
+M2c 放行条件对照：A11 子集（退出无孤儿=before-quit 序列+强杀兜底）；A25 macOS 项随实打包验收（Windows 本机不可验证如实标注）；A10（强杀 Host）的完整恢复流属 §5.2 深水区，注册到 M3/M4 恢复验证一并做——Host 崩溃后由 Main 重启护栏 + lock 清理 + SQLite 租约恢复三重兜底，本轮不声称完整 A10 通过。

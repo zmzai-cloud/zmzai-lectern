@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { NextResponse } from "next/server";
 
 import { terminalManager } from "@/lib/runtime";
@@ -13,6 +14,8 @@ export const runtime = "nodejs";
  * dev 模式下每请求一条日志，N 路轮询会把 dev 终端刷成瀑布并拖慢交互。
  */
 export async function GET(request: Request) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const mgr = terminalManager();
   let cursors: Record<string, number> = {};
   try {

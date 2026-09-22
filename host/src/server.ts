@@ -54,6 +54,9 @@ export type HostServerOptions = {
     attachmentUpload?(sessionId: string, input: { filename: string; mediaType: string; bytes: Buffer }): Promise<unknown>;
     attachmentReceipt?(sessionId: string, attachmentId: string): Promise<unknown>;
     attachmentRaw?(sessionId: string, attachmentId: string, download: boolean): Promise<unknown>;
+    terminalList?(): Promise<unknown>;
+    terminalCreate?(cwd: string, cols: number, rows: number): Promise<unknown>;
+    terminalOp?(id: string, op: "write" | "resize" | "kill" | "read" | "readAll", payload?: unknown): Promise<unknown>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -182,6 +185,66 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
           return;
+        }
+        if (req.method === "GET" && url.pathname === "/v1/terminal") {
+          if (!options.realRuntime?.terminalList) {
+            send(res, 404, { error: "NOT_FOUND", message: "后端未提供终端" });
+            return;
+          }
+          try {
+            send(res, 200, await options.realRuntime.terminalList());
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/terminal") {
+          const body = await readJsonBody(req);
+          if (!options.realRuntime?.terminalCreate) {
+            send(res, 404, { error: "NOT_FOUND", message: "后端未提供终端" });
+            return;
+          }
+          try {
+            send(res, 200, await options.realRuntime.terminalCreate(typeof body.cwd === "string" ? body.cwd : "", Math.floor(Number(body.cols ?? 80)), Math.floor(Number(body.rows ?? 24))));
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
+        const termMatch = /^\/v1\/terminal\/([^/]+)$/.exec(url.pathname);
+        if (termMatch && options.realRuntime?.terminalOp) {
+          const id = decodeURIComponent(termMatch[1]!);
+          if (req.method === "POST") {
+            const body = await readJsonBody(req);
+            const op = body.op;
+            if (op !== "write" && op !== "resize" && op !== "kill") {
+              send(res, 400, { error: "INVALID_INPUT", message: "op ∈ write|resize|kill" });
+              return;
+            }
+            try {
+              send(res, 200, await options.realRuntime.terminalOp(id, op, body.payload));
+            } catch (error) {
+              send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+            }
+            return;
+          }
+          if (req.method === "GET") {
+            const all = url.searchParams.get("all") === "1";
+            try {
+              send(res, 200, await options.realRuntime.terminalOp(id, all ? "readAll" : "read"));
+            } catch (error) {
+              send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+            }
+            return;
+          }
+          if (req.method === "DELETE") {
+            try {
+              send(res, 200, await options.realRuntime.terminalOp(id, "kill"));
+            } catch (error) {
+              send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+            }
+            return;
+          }
         }
         if (req.method === "POST" && url.pathname === "/v1/commands/attachment") {
           const body = await readJsonBody(req);

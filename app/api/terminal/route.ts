@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -11,6 +12,8 @@ export const runtime = "nodejs";
 const ownerPrefix = (sessionId: string) => `lectern:${sessionId}:`;
 
 async function handleGET(request: NextRequest) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const mgr = terminalManager();
   const { defaultShell, shells } = resolveShells();
   const sessionId = request.nextUrl.searchParams.get("sessionId");
@@ -41,6 +44,8 @@ async function startInteractiveShell(shellArg?: string, sessionId?: string, size
  * 两种后端下都是"命令会话"：输出游标读、exit 即结束，行为统一可预测。
  */
 async function handlePOST(request: NextRequest) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const body = (await request.json().catch(() => null)) as
     | { command?: string; name?: string; interactive?: boolean; shell?: string; sessionId?: string; cols?: number; rows?: number }
     | null;

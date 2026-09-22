@@ -75,6 +75,24 @@ try {
       const inline = /^(text\/plain|text\/markdown|image\/png|image\/jpeg|image\/webp|application\/pdf)$/i.test(record.mediaType);
       return { kind: "raw" as const, mediaType: record.mediaType, size: record.size, filename: record.filename, disposition: download || !inline ? "attachment" : "inline", stream: opened.stream };
     },
+    terminalList: async () => {
+      const { terminalManager } = await import("../../lib/runtime.js");
+      return terminalManager().list();
+    },
+    terminalCreate: async (cwd, cols, rows) => {
+      const { terminalManager, defaultWorkspaceRoot } = await import("../../lib/runtime.js");
+      return terminalManager().start({ command: process.env.SHELL ?? "bash", cwd: cwd || defaultWorkspaceRoot, ...(cols ? { cols } : {}), ...(rows ? { rows } : {}) });
+    },
+    terminalOp: async (id, op, payload) => {
+      const { terminalManager } = await import("../../lib/runtime.js");
+      const mgr = terminalManager();
+      if (op === "write") return { ok: mgr.write(id, String((payload as { data?: string } | undefined)?.data ?? "")) };
+      if (op === "resize") { mgr.resize(id, Math.floor(Number((payload as { cols?: number } | undefined)?.cols ?? 80)), Math.floor(Number((payload as { rows?: number } | undefined)?.rows ?? 24))); return { ok: true }; }
+      if (op === "kill") { mgr.kill(id); return { ok: true }; }
+      if (op === "read") return mgr.read(id);
+      // readAll = 大游标 read（ring 全量）
+      return mgr.read(id, 0);
+    },
     markRead: (sessionId, messageSeq, revision) => {
       const fn = store.markRead;
       if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));

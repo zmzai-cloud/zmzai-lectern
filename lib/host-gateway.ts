@@ -40,6 +40,13 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
       if (url.searchParams.get("download") === "1") q.set("download", "1");
       return new URL(`/v1/attachments/${g[1]}${raw ? "/raw" : ""}?${q}`, "http://127.0.0.1");
     } },
+  // B4：终端族（list/create/POST op/GET read）
+  { method: "GET", pattern: /^\/api\/terminal$/, hostPath: () => "/v1/terminal" },
+  { method: "POST", pattern: /^\/api\/terminal$/, hostPath: () => "/v1/terminal" },
+  { method: "POST", pattern: /^\/api\/terminal\/([^/]+)\/(input|resize)$/, hostPath: (g) => `/v1/terminal/${g[0]}`, rewriteBody: (g, b) => g[1] === "input" ? { op: "write", payload: { data: b.data } } : { op: "resize", payload: { cols: b.cols, rows: b.rows } } },
+  { method: "DELETE", pattern: /^\/api\/terminal\/([^/]+)$/, hostPath: (g) => `/v1/terminal/${g[0]}`, rewriteBody: (g) => ({ op: "kill" }) },
+  { method: "GET", pattern: /^\/api\/terminal\/([^/]+)\/read$/, hostPath: (g) => `/v1/terminal/${g[0]}` },
+  { method: "GET", pattern: /^\/api\/terminal\/read-all$/, hostPath: () => "/v1/terminal/__all__" },
 ];
 
 export function gatewayArmed(): boolean {

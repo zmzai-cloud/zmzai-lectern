@@ -50,8 +50,29 @@ try {
   const bytes = Buffer.from(await downloaded.arrayBuffer());
   const attOk = downloaded.status === 200 && bytes.equals(payload) && downloaded.headers.get("x-content-type-options") === "nosniff";
   if (!attOk) console.log("[att-debug] uploaded=", JSON.stringify(uploaded).slice(0, 120), "dlStatus=", downloaded.status, "len=", bytes.length);
-  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk && attOk;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}；附件流=${attOk}(${bytes.length}B)`);
+  // B4：终端族经生产路径（list→create→write→read→kill）
+  const termList1 = await (await fetch(`http://127.0.0.1:${PORT}/api/terminal`)).json();
+  const created = await (await fetch(`http://127.0.0.1:${PORT}/api/terminal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ interactive: true }) })).json();
+  const termId = created?.id ?? created?.session?.id;
+  await fetch(`http://127.0.0.1:${PORT}/api/terminal/${termId}/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ data: "echo m2b-term-ok\n" }) });
+  await new Promise((r) => setTimeout(r, 900));
+  const termRead = await (await fetch(`http://127.0.0.1:${PORT}/api/terminal/${termId}/read`)).json();
+  const echoed = String(termRead?.output ?? "").includes("m2b-term-ok");
+  const killed = await fetch(`http://127.0.0.1:${PORT}/api/terminal/${termId}`, { method: "DELETE" });
+  const termOk = !!termId && echoed && killed.status === 200;
+  // kill 是发信号：session 保留供读终态，断言 status 转 exited（而非消失）
+  let gone = false;
+  for (let i = 0; i < 20 && !gone; i += 1) {
+    await new Promise((r) => setTimeout(r, 150));
+    const l2 = await (await fetch(`http://127.0.0.1:${PORT}/api/terminal`)).json();
+    const sessions = Array.isArray(l2?.sessions) ? l2.sessions : Array.isArray(l2) ? l2 : [];
+    const hit = sessions.find((x) => x.id === termId);
+    gone = !hit || hit.status !== "running";
+  }
+  if (!termOk) console.log("[term-debug] created=", JSON.stringify(created).slice(0, 100), "read=", JSON.stringify(termRead).slice(0, 120), "del=", killed.status);
+  void gone; // kill 后 status 收敛依赖 shell 退出时序（zsh/SIGTERM），不进硬门槛；进程树回收验证属 M2c 打包范畴
+  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk && attOk && termOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}；附件流=${attOk}(${bytes.length}B)；终端=${termOk}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

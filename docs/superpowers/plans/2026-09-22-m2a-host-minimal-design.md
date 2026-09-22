@@ -1,9 +1,32 @@
 # M2a 设计：最小 Host 链路（发送 → Host → 工具 → 持久化 → Next 重启 → 页面恢复）
 
-- 日期：2026-09-22；状态：设计稿，供 review 后实施
+- 日期：2026-09-22；状态：**S9–S12 全部实施完成**（见 §7 实施结果）
 - 对应规格：§3（单一 Host 渐进抽离）、§5.1（启动/握手/token）、§6（命令/事件协议子集）、§17 M2a 行
 - 前置：M1 已收口（framework 0.10.0，lectern 484/484）；runnerFor 装配在 `lib/runtime.ts:200`
 - 硬约束（§17）：**独立 fixture 数据目录**，不允许未迁移路由与 Host 对同一生产数据双写；dev 拓扑先行，Electron/生产拓扑归 M2c
+
+## 7. 实施结果（2026-09-22）
+
+| Slice | 提交 | 结果 |
+| --- | --- | --- |
+| S9 Host 骨架 | `f582007` | 随机端口/token/401 零副作用；进程实测 token 零泄漏 |
+| S10 fixture 链路 + 端点 | `f939939` | 491/491；session/prompt/SSE 三端点 |
+| S11 Next 代理 + smoke | `c05b29e` | dev 模式 A01–A04/A24 **6/6** |
+| S12 standalone + 性能 + 长连接 | `65d98a6` + 本笔 | start 模式 **6/6**；receipt p95=15.7ms（门槛 300）；SSE 60s/540 帧无缺口 |
+
+放行条件核对：A01–A04、A24 在 fixture 内通过（双模式）；性能门槛基线留档
+`evals/results/m2a-receipt-perf-baseline.json`（p50 7.8 / p95 15.7 / max 36.3ms）；
+SSE 长连接双模式验证（含跨 Next 重启的 27 帧连续重放）。
+
+实施踩坑（已进 commit message）：
+1. 自定义工具必须与 `builtinTools` **并存**——替换默认表会让 task_deliver 缺席，
+   交付门禁打回续跑直到 no_progress 阻塞；
+2. pnpm 包装进程必须**整进程组** kill，否则 next dev 孤儿化并占用端口污染
+   后续测试（A02 场景尤其）；
+3. 本机 `next build` 需 6144MB 堆（沿用 7ec0ec9 结论，裸 4096 会 OOM）。
+
+遗留（M2b 处理）：m2a 实验路由与生产路由并存期间 UI 不接 m2a 通道；
+credentialRef/Origin 完整规则随路由族迁移。
 
 ## 1. M2a 拓扑（dev）
 

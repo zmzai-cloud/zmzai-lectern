@@ -27,7 +27,7 @@ import {
   type SqliteSessionStore,
   type ToolContext,
 } from "@zmzai/agent-framework";
-import { currentCookieHeader } from "./request-cookie.js";
+import { currentCookieHeader, withSessionCredential } from "./request-cookie.js";
 import { attachmentProviderFor } from "./attachments/scope.js";
 import { authHeaders, ollamaBase, getFailoverEndpoints } from "./settings.js";
 import { capsFor } from "./model-caps.js";
@@ -197,6 +197,14 @@ function contextWindowFor(): number {
  *  opts.workspaceRoot：worktree 隔离覆盖（robustness-plan §9）——fs/git/终端/沙箱/
  *  repo_map/自定义 Agent 全部落到隔离副本；缓存键带根路径，与主工作区 runtime 互不干扰
  *  （store 仍按项目分库，隔离会话的转录消息与普通会话同库）。 */
+/** credentialRef 提供者（M2b-B2）：Host 进程注入（sessionId → 凭据）。
+ *  Next 进程不设置——ALS 请求上下文优先，本钩子只在 ALS 为空时生效。 */
+let sessionCredentialProvider: ((sessionId: string) => string | undefined) | undefined;
+
+export function setSessionCredentialProvider(fn: (sessionId: string) => string | undefined): void {
+  sessionCredentialProvider = fn;
+}
+
 export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string }): AgentFramework {
   const root = opts?.workspaceRoot ? resolve(opts.workspaceRoot) : projectPath;
   const matches = listProjects().filter((p) => resolve(p.path) === resolve(projectPath));
@@ -315,6 +323,13 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     capabilities: { repoMap: { workspaceRoot: wsRoot }, subagents: 1 },
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠
     runnerOptions: {
+      // B2：Host 模式凭据通道——ALS 不可用时按 sessionId 取 credentialRef
+      // 包住每次模型流（个人 key 仍优先；cookie 仅在无 key 时由 authHeaders 采用）
+      streamFnFor: (session) => {
+        const credential = sessionCredentialProvider?.(session.id);
+        const stream = provider.streamFor(session);
+        return (model, context, options) => withSessionCredential(credential, () => stream(model, context as never, options as never));
+      },
       // 租约接线（P0-③）：runner 起 run 盖章、结束清除；崩溃/重启后由
       // registerLeaseRecovery 的扫描循环收尾过期租约
       leaseStore: sessionStore,

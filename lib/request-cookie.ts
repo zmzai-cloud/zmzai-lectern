@@ -24,8 +24,23 @@ export function withRequestCookie<T>(cookie: string | null, fn: () => T): T {
 /** 当前请求携带的完整 cookie 头（如 "muzhi_session=abc"），无则 null。
  *  ⚠ 仅在 withRequestCookie 包裹的上下文（prompt 流）内有值；
  *  普通代理路由请用 sessionCookieFrom(request)。 */
+/** 会话级凭据（M2b-B2 Host 模式）：Host 进程没有 ALS 上下文，模型请求的
+ *  凭据来自 credentialRef 内存表；streamFnFor 在调用模型流时用本包裹注入。
+ *  值不落日志/不进事件；请求结束即随作用域消失。 */
+let sessionCredential: string | null = null;
+
+export function withSessionCredential<T>(credential: string | null | undefined, fn: () => T): T {
+  const prior = sessionCredential;
+  sessionCredential = credential ?? null;
+  try {
+    return fn();
+  } finally {
+    sessionCredential = prior;
+  }
+}
+
 export function currentCookieHeader(): string | null {
-  return requestStore.getStore()?.cookie ?? null;
+  return requestStore.getStore()?.cookie ?? sessionCredential ?? null;
 }
 
 export const sessionCookieName = process.env.SESSION_COOKIE_NAME ?? "muzhi_session";

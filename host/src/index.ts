@@ -26,7 +26,9 @@ process.env.LECTERN_DATA_DIR ??= dataDir;
 process.env.LECTERN_WORKSPACE ??= process.env.LECTERN_HOST_WORKSPACE ?? join(dataDir, "workspace");
 let realRuntime: RealRuntimeFace | undefined;
 try {
-  const { runtimeFor, defaultWorkspaceRoot } = await import("./assembly.js");
+  const { runtimeFor, defaultWorkspaceRoot, setSessionCredentialProvider } = await import("./assembly.js");
+  const { credentialFor } = await import("./server.js");
+  setSessionCredentialProvider(credentialFor);
   const rt = runtimeFor(defaultWorkspaceRoot);
   const store = rt.store;
   realRuntime = {

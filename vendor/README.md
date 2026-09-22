@@ -1,10 +1,16 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.5.1.tgz` is the published npm package
-`@zmzai/agent-framework@0.5.1`, vendored here so desktop builds and clean
+`zmzai-agent-framework-0.9.0.tgz` is the published npm package
+`@zmzai/agent-framework@0.9.0`, vendored here so desktop builds and clean
 installs resolve the framework without depending on registry access. The tarball
 is byte-identical to the registry artifact; the framework repository is the
 source of truth and its `main` matches this version.
+
+Daily development against the sibling working tree: use
+`scripts/framework-dev.sh on|off` (switches the dependency to
+`file:../zmzai-framework` and back). Never commit `package.json` /
+`pnpm-lock.yaml` while linked. See
+`docs/superpowers/plans/2026-09-21-framework-dev-linking-adr.md`.
 
 Regenerate after framework changes:
 
@@ -17,7 +23,7 @@ pnpm install --lockfile-only
 
 Lectern pins the tarball path and its integrity in `pnpm-lock.yaml`.
 
-## What this version adds
+## Historical: what 0.5.1 added
 
 - Session workflow persistence: `acceptPrompt` / `claimPrompt` / `finishPrompt` /
   `recoverInterrupted` with single-transaction registration, requestId

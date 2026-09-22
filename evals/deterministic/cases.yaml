@@ -1,0 +1,57 @@
+schema: lectern.evals.deterministic/1
+updated: 2026-09-21
+source_spec: docs/superpowers/specs/2026-09-21-lectern-host-and-subagents-design.md §16
+levels:
+  L1: Framework 进程内集成（scripted provider + 临时 SQLite）
+  L2: Lectern HTTP/SSE API 级（Next dev/standalone + 独立数据目录）
+  L3: 进程/打包级（启动器、强杀、发行包）
+baseline: 升级前架构的可执行性
+  yes: 当前代码可完整执行（结果即基线数字）
+  partial: 可执行但已知预期不达标或需近似（差距本身是基线价值）
+  requires_host: 依赖 Host 新架构（M2 后才存在被测对象）
+  requires_m3: 依赖子代理协调（M3 后才存在被测对象）
+shared:
+  scripted_provider: 预录脚本步骤（文本/工具调用/延迟），可注入故障：超时、429、断流、部分输出、进程强杀
+  sentinels: 副作用探针（受管文件 + 外部副作用标记文件），断言内容与写入次数
+  clock: 可注入假时钟（租约、超时、TTL 类用例）
+cases:
+  - {id: A01, level: L2, baseline: partial, scenario: 工具执行中断开 SSE 并重连（近似页面刷新）, faults: [], probes: [task/run id 前后一致, 消息 seq 去重计数], pass: [相同 task/run 继续, 消息不重复]}
+  - {id: A02, level: L3, baseline: partial, scenario: 任务执行中终止并重启 Next 服务, faults: [kill Next 进程], probes: [runtime 进程身份, 工具探针完成情况, 恢复后快照+SSE], pass: [Host PID 不变（升级前预期失败，记录租约接管行为）, 工具完成, 快照+SSE 恢复]}
+  - {id: A03, level: L2, baseline: yes, scenario: 接收命令后丢失 HTTP 响应再用原 requestId 重试, faults: [响应通道断开], probes: [workflow_runs 记录数, 探针写入次数], pass: [一条 durable 命令, 一次工具副作用]}
+  - {id: A04, level: L2, baseline: yes, scenario: 同 requestId 换 payload 重发, faults: [], probes: [回执内容], pass: [返回 409, 原命令不变]}
+  - {id: A05, level: L2, baseline: yes, scenario: 两客户端同时发送同 session 命令, faults: [], probes: [admission 顺序, 探针次数], pass: [串行 admission, 任务语义与既有规则一致]}
+  - {id: A06, level: L2, baseline: partial, scenario: 旧 run 的取消/权限回复晚到, faults: [延迟投递], probes: [新旧 run 状态], pass: [拒绝或返回旧终态, 不影响新 run（升级前无 epoch，记录实际行为）]}
+  - {id: A07, level: L2, baseline: yes, scenario: snapshot 与 subscribe 之间产生事件, faults: [], probes: [seq 连续性, 投影重复计数], pass: [无缺口, 无重复投影]}
+  - {id: A08, level: L2, baseline: partial, scenario: rewind、无效游标、慢消费者, faults: [游标回退, 订阅不消费], probes: [重同步信号, Host/Next 内存], pass: [显式重同步, 无静默丢消息, 无无限内存增长]}
+  - {id: A09, level: L2, baseline: yes, scenario: 切换项目、缺失挂载、重复 sessionId, faults: [], probes: [归属解析结果], pass: [无串库, 无回落当前项目]}
+  - {id: A10, level: L3, baseline: partial, scenario: 强杀运行时进程，工具执行结果未知, faults: [SIGKILL], probes: [探针状态, 恢复入口], pass: [不自动重放副作用, 显示可操作恢复原因（升级前杀 Next，记录现状）]}
+  - {id: A11, level: L3, baseline: partial, scenario: 正常退出及启动器意外死亡, faults: [启动器强杀], probes: [任务树状态, 受管进程存活], pass: [任务树收尾, 受管进程退出, 超时遗留可恢复]}
+  - {id: A12, level: L3, baseline: partial, scenario: cookie 模式下 Next 重启 / Host 重启, faults: [两类重启], probes: [鉴权连续性, 任务状态], pass: [前者持续鉴权, 后者合法恢复或等待登录]}
+  - {id: A13, level: L1, baseline: requires_m3, scenario: 3 个只读子代理并行, faults: [], probes: [运行时间区间重叠度, 父并发], pass: [至少两者运行区间重叠, 父可继续工作（升级前串行，可记降级基线）]}
+  - {id: A14, level: L1, baseline: requires_m3, scenario: 重试 spawn / send, faults: [超时重发], probes: [child 记录数, mailbox 消息数], pass: [同一 child, 同一 mailbox 消息, 不重复派生]}
+  - {id: A15, level: L2, baseline: requires_m3, scenario: workspace_write 子代理与父/另一根任务写冲突, faults: [], probes: [写权持有者, 探针写入交错], pass: [单写者执行, 无越权并发, 终端未结束不得移交]}
+  - {id: A16, level: L1, baseline: requires_m3, scenario: 只读/路径受限子代理尝试 shell、MCP、越界、symlink 写, faults: [], probes: [文件系统快照, 外部副作用探针], pass: [全部拒绝, 探针不变]}
+  - {id: A17, level: L1, baseline: requires_m3, scenario: 子代理失败或返回 blocked 而 Promise 正常返回, faults: [], probes: [UI 投影, 父结果状态], pass: [仍为失败/阻塞, 不报告 completed]}
+  - {id: A18, level: L2, baseline: requires_m3, scenario: 父取消时子正在运行/排队/等待权限, faults: [], probes: [后代终态, 新派生请求], pass: [后代全部停止, 新派生被拒, 无孤儿]}
+  - {id: A19, level: L3, baseline: requires_m3, scenario: 子完成、父消费前强杀 Host, faults: [SIGKILL], probes: [结果投递次数, 根交付状态], pass: [结果可恢复且仅纳入一次, 根不提前交付]}
+  - {id: A20, level: L1, baseline: requires_m3, scenario: 子代理中途发消息、上下文压缩, faults: [压缩触发], probes: [mailbox 水位, 约束保留], pass: [消息不丢失, 根目标/子目标/权限约束保留]}
+  - {id: A21, level: L1, baseline: requires_m3, scenario: 并发预算耗尽, faults: [], probes: [admission 拒绝, 子用量归属], pass: [停止新 admission, 根可解释地阻塞, 子用量计入]}
+  - {id: A22, level: L3, baseline: partial, scenario: 附件上传后重启 Next、跨子任务引用, faults: [重启], probes: [附件状态, 越权读取], pass: [上传/提取/绑定状态可恢复, 跨会话越权被拒]}
+  - {id: A23, level: L2, baseline: partial, scenario: 索引写入失败、迁移中断、迁移后重启, faults: [注入写失败], probes: [对账结果, 身份唯一性], pass: [可恢复对账, 无重复身份, 无双 writer]}
+  - {id: A24, level: L2, baseline: requires_host, scenario: 错误 token / Origin / 协议版本, faults: [], probes: [请求拒绝, 副作用探针], pass: [请求被拒, 未发生文件/工具副作用]}
+  - {id: A25, level: L3, baseline: partial, scenario: macOS / Windows 发行包运行, faults: [], probes: [Host 资源齐全, 生命周期事件], pass: [Host 启动/重启/取消/退出无孤儿（复用 packaged-smoke，Host 项待 M2c）]}
+  - {id: A26, level: L2, baseline: yes, scenario: 现有附件、交付、搜索、读状态、worktree、更新门禁回归, faults: [], probes: [vitest + e2e 套件结果], pass: [原有回归套件通过, 无功能丢失]}
+  - {id: A27, level: L2, baseline: yes, scenario: 两项目复用 requestId；项目提交后索引写入失败, faults: [索引写失败], probes: [回执查询], pass: [按 scope 独立去重, 原 scope 回执可查, 不重复执行]}
+  - {id: A28, level: L1, baseline: requires_m3, scenario: 父先结束轮次，子随后完成或在 parked 竞争窗口完成, faults: [时序交错], probes: [唤醒合并次数, 父续跑次数], pass: [同一 Task 自动续跑整合, 无需用户催促, 无丢失唤醒]}
+  - {id: A29, level: L1, baseline: requires_m3, scenario: 子结果与父取消竞争；向终态子代理 send, faults: [], probes: [根状态, 结果追加次数], pass: [父不复活, 终态 send 明确拒绝, 结果不重复追加]}
+  - {id: A30, level: L1, baseline: partial, scenario: 多次压缩、内部续跑与指令/Skill 变化, faults: [], probes: [目标/约束/审批/未消费结果保留], pass: [必要内容不丢, 版本规则明确生效（升级前跨 Attempt 摘要不可复用，记录重复摘要开销）]}
+  - {id: A31, level: L1, baseline: partial, scenario: 摘要模型窗口较小、摘要失败/膨胀、tool call 跨压缩边界, faults: [摘要故障注入], probes: [消息配对合法性, 重试次数], pass: [无非法配对, 无无限重试, 放不下明确阻塞]}
+  - {id: A32, level: L1, baseline: partial, scenario: 同 modelId 不同端点、备用模型缺工具/图片能力, faults: [], probes: [能力快照来源], pass: [能力不串用, 不静默删输入, 不能降级时报告原因（升级前仅按 modelId 缓存，记录串用）]}
+  - {id: A33, level: L1, baseline: partial, scenario: 部分输出/已完成工具后模型失败并重试, faults: [断流], probes: [流拼接, 工具重放次数, 重试计数], pass: [流不混拼, 副作用不重放, 计数与预算有界]}
+  - {id: A34, level: L1, baseline: partial, scenario: 工具非法输入/输出、未知 MCP 副作用、超大输出, faults: [], probes: [校验拦截, 输出字节上限], pass: [契约生效, 输出有界且可追踪]}
+  - {id: A35, level: L1, baseline: partial, scenario: 工具超时但进程未停、重复 toolCallId, faults: [超时], probes: [写权持有, 执行次数, part 终态], pass: [不提前释放写权, 不重复执行未知副作用（升级前重复 callId 有悬挂 running part 已知缺陷）]}
+  - {id: A36, level: L1, baseline: requires_m3, scenario: 子报告成功但测试失败/证据过期/结果冲突, faults: [], probes: [父验收记录], pass: [父拒绝交付并验证或有界返工, 消费不等于接受]}
+  - {id: A37, level: L2, baseline: partial, scenario: 对话 rewind 后重连、迟到子结果、旧 requestId 重试, faults: [], probes: [旧执行复活, 摘要失效, 文件不变], pass: [旧执行不复活, 摘要失效, 文件保持不变]}
+  - {id: A38, level: L2, baseline: partial, scenario: 文件撤销遇用户后续编辑、缺前像、中途崩溃, faults: [崩溃注入], probes: [journal, 文件内容], pass: [冲突/不可恢复明确, journal 可核对, 不覆盖用户改动（升级前为 reset --hard 全仓，记录差距）]}
+  - {id: A39, level: L1, baseline: partial, scenario: 100 轮运行/取消、项目切换、共享 MCP 与用户终端, faults: [], probes: [专属资源计数, 共享资源 TTL], pass: [专属资源归零, 共享按规则保留, 不误杀活跃资源]}
+  - {id: A40, level: L2, baseline: partial, scenario: 草稿清理与新引用竞争、删除会话后迟到请求、磁盘不足, faults: [竞争时序, 磁盘写失败], probes: [引用资源存活, 旧任务不重建], pass: [不误删, 不重建, 持久化失败不假报接受]}

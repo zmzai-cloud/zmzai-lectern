@@ -1,9 +1,10 @@
-# Lectern P0 / P1 与子代理升级规格
+# Lectern Agent 工作台完整升级规格
 
 - 日期：2026-09-21
 - 状态：规格草案，供用户审阅；不是已实现能力声明
-- 规格审查：原版及本次 Agent Harness 六项补充均已通过独立复审。更新规格不代表启动业务代码实施。
-- 范围：`zmzai-lectern`、`zmzai-framework`
+- 规格审查：Host/Harness 基础版已复审；本次四项扩展待复审。本文为完整目标规格，更新文档不代表开始实施。
+- 修订（2026-09-21，评审后）：优化实施节奏——§17 新增执行节奏总则、M2 拆分为 M2a/M2b/M2c、M0 扩充倒排计划与盘点交付物；§8.2 补 waiting_input 出口语义；§16 性能门槛由建议改为硬门禁。
+- 范围：`zmzai-lectern`、`zmzai-framework`、`zmzai-memory`；参考复用 `zmzai-agent` 的记忆适配
 - 基线：Lectern `a7af143`，Framework `51f061e0`；参考 ZCode `872ad96`
 - 已确认产品决策：页面刷新、Next 服务重启不停止任务；退出 Lectern 应用时有序停止。本期不做退出应用后后台驻留。
 - 目标：以可测量的可靠性为基础，建立独立 Host、明确命令与状态边界，并交付可并行、可控制、可恢复的子代理能力。
@@ -12,7 +13,7 @@
 
 本规格涵盖上一轮架构分析中的 P0（对照评测）、P1（独立 Host、协议与归属、Runner 拆分）以及子代理控制。按依赖顺序分阶段实施，每阶段独立验收，但最终必须形成同一套运行链路。
 
-Agent Harness 的补充范围见 §9：上下文与压缩、模型能力与降级、工具执行契约、子代理任务契约与父级验证、恢复/撤销边界、资源回收。这些是本期执行规则，不引入远程执行、独立记忆系统或多 worktree 自动整合。
+Agent Harness 的补充范围见 §9：上下文与压缩、模型能力与降级、工具执行契约、子代理任务契约与父级验证、恢复/撤销边界、资源回收。这些是基础阶段执行规则。扩展阶段纳入 §10 worktree、§11 浏览器验证、§12 computer use 和 §13 云端项目记忆；仍不建设新的记忆后端或子代理多 worktree 自动整合。
 
 ### 1.1 用户可感知的结果
 
@@ -23,12 +24,16 @@ Agent Harness 的补充范围见 §9：上下文与压缩、模型能力与降�
 5. 应用退出、Host 崩溃、子代理失败、模型鉴权失效均有可解释、持久化的状态，不伪装成任务完成。
 6. 每次升级都能通过相同场景评测，区分任务能力进步与运行可靠性回归。
 
-### 1.2 本期不做
+### 1.2 完整范围与分期边界
+
+基础阶段 B0 沿用 M0–M4；扩展阶段 W1（任务 worktree）、V1（浏览器验证）、C1（macOS computer use）、K1（项目记忆）见 §17。旧文中的“本期/首期”默认指 B0；§10–§13 中指对应扩展阶段。完整目标完成需 B0 与四项扩展都验收，不能把其中一阶段通过称为全部完成。
+
+完整目标仍不做：
 
 - SSH / WSL / 云端执行、手机远控、多人协作、常驻后台服务。
 - 替换 Next.js、PI、SQLite、HTTP/SSE，或移植 ZCode 的完整目录结构。
 - 一子代理一系统进程、同一工作区多写者并行、自动合并多个子代理 worktree。
-- 浏览器/CUA、插件市场、完整 TUI、大规模聊天视觉重做。
+- 插件市场、完整 TUI、大规模聊天视觉重做；Windows computer use 留待后续平台阶段。
 - 承诺对任意 shell / MCP 外部副作用实现 exactly-once 或崩溃后的无条件自动重放。
 
 ## 2. 基线事实与必须保留的行为
@@ -72,6 +77,11 @@ flowchart TD
   H --> P[模型与鉴权适配 / MCP / 终端]
   R --> C[子代理协调器]
   C --> CR[子会话 Runner]
+  H --> W[WorkspaceService：worktree 与整合]
+  H --> V[BrowserVerifier：服务与浏览器证据]
+  H --> CU[ComputerUseBroker：桌面独占控制]
+  H --> MA[Memory adapter：绑定与同步 outbox]
+  MA --> MS[memory.zmzai.cloud：鉴权与记忆 API]
 ```
 
 ### 3.1 状态所有者
@@ -85,6 +95,11 @@ flowchart TD
 | 终端、MCP、文件操作、模型连接 | Host 管理的适配器 |
 | 页面选中项目、面板、输入草稿、临时 optimistic 状态 | UI |
 | HTTP 入参解析、登录入口、Host 代理 | Next；不能持有运行中任务事实 |
+| worktree 创建/准备/整合 journal | Host WorkspaceService；Git 为仓库事实来源 |
+| 浏览器验证服务与 context、证据归属 | Host BrowserVerifier；复用 DeliveryAttempt |
+| 桌面观察与输入控制权 | Host ComputerUseBroker + 平台 adapter |
+| 项目记忆绑定、待同步候选、凭据引用 | Host Memory adapter |
+| 记忆事实、云端访问权限、写入操作回执 | zmzai-memory 服务；Host 不能自行授予 bank 权限 |
 
 Framework 不依赖 Next、Electron 或 Lectern 的文件路径。Host 是组装入口，不把所有业务重新塞进一个大文件。
 
@@ -103,7 +118,7 @@ B. **真实模型任务集**：固定模型标识、端点、参数、任务仓�
 ### 4.2 判定
 
 - 任务完成由预先定义的测试、文件断言或人工评审 rubric 判定，不使用模型自称完成作为唯一依据。
-- 当前里程碑适用的可靠性用例及全部既有回归通过，是该里程碑的硬门禁；尚未实现的后续用例标记未实施，不能伪报通过。M4 必须覆盖全矩阵。
+- 当前里程碑适用的可靠性用例及全部既有回归通过，是该里程碑的硬门禁；尚未实现的后续用例标记未实施，不能伪报通过。M4 覆盖 B0 的 A01–A40；W/V/C/K 用例分别由对应扩展阶段验收，完整目标才要求全部通过。
 - 真实模型固定预算下，升级后总通过数不得低于升级前；任何案例从 3/3 降为 0/3 必须调查后才能发布。结论同时给出原始计数，避免小样本百分比误导。
 - 与 ZCode 的比较是追赶报告，不作为未定义的“体验差不多”验收。首次目标是相同任务预算下整体通过数不低于 ZCode；未达到时明确剩余案例，不阻止单独交付已经通过的基础设施里程碑。
 - 无可用真实模型凭据或 ZCode 无法运行时，报告为未验证；不能用 mock 结果替代真实模型对比完成声明。
@@ -247,7 +262,7 @@ CI 架构检查禁止：UI/Next 导入 Host 有状态实现、Framework 导入 L
 
 新增 SubagentRecord：`childId`、`childSessionId`、`parentSessionId`、`rootTaskId`、`parentTaskId`、`spawnRequestId`、`agentType`、`goal`、`mode`、`workspaceId`、`status`、`revision`、执行 run/epoch、traceId、时间、结果引用和消费状态。
 
-生命周期：`queued → running ↔ waiting_permission / waiting_input / waiting_external → completed | failed | cancelled`；取消中使用 `cancelling`，崩溃先进入 `recovering`。副作用不确定时进入 `blocked` 并保留恢复原因，不能直接完成。鉴权失效映射 waiting_external；同身份重新登录绑定凭据后，仍需核对取消状态、权限与执行代际，才可重新排队。
+生命周期：`queued → running ↔ waiting_permission / waiting_input / waiting_external → completed | failed | cancelled`；取消中使用 `cancelling`，崩溃先进入 `recovering`。副作用不确定时进入 `blocked` 并保留恢复原因，不能直接完成。等待状态的出口互不替代：`waiting_input` 由父代理经 agent_send 交付的补充输入或用户在根会话的回复解除；`waiting_permission` 只能由对应权限审批解除；`blocked` 只能由恢复流程解除。鉴权失效映射 waiting_external；同身份重新登录绑定凭据后，仍需核对取消状态、权限与执行代际，才可重新排队。
 
 - SubagentRecord 是协调状态；childSession 保留 transcript；子会话原有 TaskRecord 如存在仍负责其任务语义。协调器从实际执行/Task 终态生成结果，不能建立相互矛盾的两套完成判断。
 - spawn 登记、childSession 关联、初始排队和父事件在同一项目数据库事务完成。
@@ -395,13 +410,138 @@ CI 架构检查禁止：UI/Next 导入 Host 有状态实现、Framework 导入 L
 - 用户删除会话前先按任务树取消/收尾，再清理其资源。共享内容寻址 blob 只有引用归零才删除。紧凑 tombstone 与幂等回执仍保留，使迟到请求返回已删除而非重新创建任务；不保存被删除的正文。将来若清理回执，须另行定义过期 requestId 的拒绝协议。
 - 使用假时钟和确定性 fixture 连续执行/取消 100 轮，回到静止态后专属 Runner、订阅、watcher、timer、受管进程数量回到基线，共享资源符合容量/TTL。记录 heap 趋势作诊断，不用一次 GC 或 RSS 瞬时值证明没有泄漏。
 
-## 10. 可观测性
+## 10. 任务工作区与 Worktree
+
+### 10.1 范围与所有者
+
+本阶段完成单任务工作区的创建、准备、执行、审查、整合、保留与删除；支持多个根任务各自 worktree，但不做子代理多 worktree 自动合并。Host WorkspaceService 是唯一入口，复用 §6 身份与命令规则及 §8 写权控制。
+
+当前 `lib/worktree.ts` 有创建失败降级、映射落库失败仍报成功、合并目标跟随主目录当前分支、清理操作结果未严格确认等行为。本节替代这些行为；既有归属隔离必须保持。既有交付规格中不可变快照和证据规则继续适用，旧 worktree merge 接口不得绕过交付检查。
+
+WorktreeRecord 至少包含 workspaceId、projectId、repoIdentity、sessionId、rootTaskId、baseRef/baseCommit、targetRef、path、branch、startingState、状态、准备结果、当前操作及 revision。状态为 creating / preparing / ready / active / verifying / ready_for_review / integrating / integrated / archived / deleting / failed。会话沿用工作区时，新 Task 明确绑定已有 workspaceId；不能把同一 worktree 的两个活跃写任务误认为互相隔离。
+
+### 10.2 创建与环境准备
+
+- 创建时明确选择 current_commit（默认）、指定 ref、working_tree_snapshot。默认不复制未提交改动，UI 必须说明；working_tree_snapshot 明确包括 tracked 修改及所选 untracked 文件，排除 ignored 文件、凭据和生成物，提供范围预览。不能默认把全部本机文件复制到副本。
+- 固定 baseCommit 和目标 targetRef，不能合并时才取“主目录当前分支”。detached HEAD 可创建隔离环境，但整合前必须明确有效目标分支；非 Git 项目可以普通目录模式运行，不能标为 worktree 隔离。
+- Git common directory 与路径通过 Git 查询，不假设 .git 必为目录；兼容 linked worktree、空格路径及 Windows。无提交仓库明确提示初始化需求，不擅自创建提交。
+- 创建命令先持久登记 creating 与操作 ID，再执行 Git 和落映射；只有二者核对一致才能 ready。中断后按操作 journal 和 `git worktree list` 对账，清理或接管必须验证所有权，不能接管同名用户分支。隔离失败保持 failed，可重试或由用户显式改用普通目录，不能自动落回主工作区。
+- 默认新 worktree 位于应用管理的仓库外目录；兼容导入已有 `.lectern-worktrees`，不可仅因不符合旧路径拼接规则而拒绝合法记录。迁移后按可信注册记录、真实路径及 Git common directory 联合校验，符号链接替换仍须拒绝。
+- 项目 setup manifest 描述依赖安装、必要配置映射、运行环境与预览命令；执行走工具权限与写权，脚本失败显示阶段和日志。仓库脚本不可因“准备环境”而绕过权限；配置/秘密只通过明确允许的本地映射，不进入提交或模型上下文。
+- 依赖优先利用包管理器下载缓存，不默认把不同 worktree 的可写 node_modules 指向同一目录。端口由 Host 分配并登记，不手工约定所有项目都使用 3000。
+
+### 10.3 审查、整合与生命周期
+
+- UI 始终展示执行目录、分支、基线、目标分支与准备状态；查看 diff、打开终端、预览和验证都以该 workspaceId 解析，不能跟随当前全局项目。
+- 审查快照覆盖已提交、未提交、删除及未跟踪的交付范围，以内容 fingerprint 和不可变 Git tree/commit 标识。验证证据绑定该快照，用户或工具改动使证据失效。
+- 接受、整合、归档、删除是独立动作。接受结果不自动删除目录，integrated 会话继续指向原工作区或只读归档；后续新 Task 必须显式选择继续该分支或新建工作区，不能悄悄切回主目录。
+- 整合前停止源工作区写入并取得 repository 级整合锁，核对 targetRef、expectedTargetCommit、源快照、必要验证和目标工作区状态。目标有未提交改动时拒绝整合并保留现场，不自动 stash/reset。
+- 在受管临时整合 worktree 上对固定目标提交与源交付提交做合并和冲突处理。冲突保留为独立 integration attempt，修复后对实际合并结果重新验证，不把源分支测试通过视为整合结果通过。
+- 目标 ref 未被 checkout 时，以 expectedTargetCommit 做 CAS 更新；目标已 checkout 时，在对应目标目录仅执行对已验证整合提交的 fast-forward 更新（要求 clean、HEAD/ref 未变化），失败不强制覆盖。禁止仅 update-ref 后留下不匹配的 index/工作树。外部编辑器不受 Host 锁控制，更新前后复核；发现竞态保留诊断并要求恢复，不能宣称跨 Git 和文件系统原子成功。
+- 每一步记录 integration journal；重试先判定目标是否已包含预期整合提交，不能再次重复合并。进程中断后对账 ref、index、工作树与 journal，未知状态保持 blocked。
+- 删除前核对运行任务、终端、服务、浏览器、未整合改动及证据引用；有未交付内容需明确丢弃意图。依次停止资源、移除 worktree、按归属策略删除分支、更新映射，任一步失败保留可修复记录，不能忽略 Git 错误后返回已删除。
+
+## 11. 浏览器验证与交付证据
+
+### 11.1 能力与实体
+
+沿用 `2026-09-02-trusted-delivery-browser-qa-design.md` 的 DeliveryAttempt、EvidencePacket 与快照概念，补实际 BrowserVerifier。浏览器验证属于 Host 管理的结构化浏览器自动化，与 §12 全桌面输入不同；不要求先实现 computer use。
+
+ServiceInstance 记录 workspaceId、attemptId、cwd、声明命令、进程身份、实际 origin、健康检查及 owned/borrowed。BrowserVerificationRun 记录 attemptId、snapshot fingerprint、plan version、serviceId、browserContextId、steps、结果及证据引用。状态为 queued / starting / running / passed / failed / cancelled / unavailable；unavailable 不算通过。
+
+### 11.2 执行闭环
+
+1. 固定当前验证快照与项目声明的 VerificationPlan：目标路由、视口、关键操作、断言及 required/advisory 分类。AI 可提出计划，但不能在失败后自行把 required 降为 advisory。
+2. 优先复用同 workspace、同代码版本且可核对的服务；否则在当前 worktree 启动受管服务。就绪检查须验证实际 origin 和应用标识，端口可连接不等于正确项目已启动。
+3. 默认新建隔离 browser context，使用结构化 DOM/可访问性定位；单 context 内操作串行，不同 context 可在资源预算内并行。登录态按账号与项目隔离；只能显式复用已授权 profile，不自动读取日常浏览器 cookie。
+4. 执行路由加载、交互和断言，采集必要的 console error、page error、失败请求、截图及步骤结果。网络诊断去除凭据和敏感 body，截图按证据权限管理。
+5. 以功能断言判断功能通过；视觉结果采用明确 rubric，记录机器可判定项与模型观察项。单张截图、HTTP 200、无 console error 均不能单独代替功能验收。
+6. 首次 required 浏览器 QA 失败可以在同一根预算内自动修复一次，产生新 DeliveryAttempt 并使旧成功证据失效；第二次失败进入 verification_failed，不循环自修。非 QA 的持续任务策略仍沿用 §9，不混用这一次修复计数。
+7. 最终证据附实际 URL、视口、时间、快照、计划、工具版本和步骤结果。测试范围之外不宣称通过；required unavailable 时保持 unverified 并说明环境原因。
+
+验证开始到结束前后核对 fingerprint 与服务版本；中途改变则结果 stale，不能 accepted。开发服务器可写缓存目录必须预先声明并排除出源代码 fingerprint，不能用“忽略生成物”掩盖应用源码变化。
+
+### 11.3 取消与环境限制
+
+浏览器工具统一接入 ToolExecutor、trace、权限、预算和资源回收。取消关闭当前验证操作和 owned context，按生命周期关闭 owned 服务；borrowed 用户服务仅解除绑定，不停止。重启后浏览器句柄失效，旧运行记为中断而不是 passed，重新验证创建新 run。
+
+网页中的文本/提示属于数据，不授予发送、购买、上传或访问其他项目的权限。浏览器操作可能变更远端业务状态，按工具副作用规则记录，不能因“QA”自动重放。外部登录、验证码或必要真实账号不可用时明确等待用户，不伪造结果。
+
+## 12. Computer use：桌面控制
+
+### 12.1 平台与范围
+
+本阶段默认先实现 macOS 原生应用观察与操作；Windows 显示 capability unavailable，后续单独验收后开放。此分期仅限 computer use，不降低既有 Host/桌面包的 Windows 验证要求。API/CLI/结构化浏览器能完成的动作优先使用相应工具，computer use 用于原生应用、系统对话框或无法结构化访问的界面。
+
+Host ComputerUseBroker 管理 observation、权限和输入独占权，平台 adapter 实现截图/可访问性树、点击、键盘、滚动与结果观察。模型调用通过统一 ToolExecutor，不允许 UI 或子代理直接操作系统输入。
+
+### 12.2 观察与控制契约
+
+- ControlSession 绑定 rootTaskId、hostInstanceId、目标 app/window、权限范围和 revision。Observation 包含 observationId、时间、窗口身份、显示器、缩放、坐标系及可用 accessibility 元数据。
+- Action 必须引用 observationId、目标窗口和预期状态；窗口/显示器/缩放/焦点改变或观察过期时重新观察，不能继续使用旧坐标。默认观察有效期 5 秒，可按 adapter 收紧；有效期内仍须检查窗口状态。
+- 全桌面输入只有一个 broker lease，按根 Task 排队；子代理可以请求操作，但不能各自抢占键盘鼠标。与结构化浏览器使用同一可见窗口时也必须协调，不能同时驱动同一目标。
+- 每次动作后观察目标效果，再决定后续动作；本期不执行不经中间核验的长串坐标脚本。动作状态持久登记 accepted/executing/succeeded/failed/unknown；无法确认结果的变更操作不得盲目重试。
+- UI 常驻显示正在控制的应用与停止入口，提供独立于模型循环的紧急停止快捷键。用户主动输入/接管时释放自动控制并暂停后续动作，恢复需用户明确继续；输入来源识别做不到时该平台不能宣称支持可靠自动接管。
+- 系统屏幕录制/辅助功能权限缺失时给出具体设置引导，模型不能绕过系统授权。窗口范围内操作不能隐式升级为全桌面任意应用控制。
+- 密码、验证码等由用户接管输入；凭据不进入模型文本、截图日志或回放材料。敏感应用/密码区域无法可靠遮挡时停止截图并请求用户处理。发送/上传等动作仅在当前任务已有明确授权范围内执行，否则使用现有权限机制。
+- Host/adapter 崩溃、用户锁屏、目标应用退出或权限被撤销时撤销控制 lease；恢复后重新观察和确认目标，不能复用旧输入队列。动作日志与脱敏证据纳入 DeliveryAttempt，单次点击成功不代表任务完成。
+
+## 13. 项目记忆：接入 memory.zmzai.cloud
+
+### 13.1 接入与所有权
+
+用户指定目标为 `https://memory.zmzai.cloud`。本地 `zmzai-memory` README 仍指向旧域名，当前部署、API 路由与鉴权需在联调前核实，不能将本规格当作线上接口已就绪的声明。
+
+复用 Framework `memoryContextFor`、`zmzai-agent/lib/memory` 的 adapter 思路与 `zmzai-memory` bank/recall 管理能力。Lectern Host → 经鉴权的 Memory API → 服务端 Hindsight；桌面端不直连 Hindsight、不保存管理密钥、不直接读共享 MongoDB。
+
+MemoryBinding 保存本地 projectId、服务 origin、账号/租户标识、cloudWorkspaceId、bankId、bindingVersion、enabled/syncPolicy 与权限状态。只能绑定服务端返回的有权限工作区；不能把本机路径、本地 projectId 或 Git remote URL 当作已有访问授权。
+
+本阶段先支持用户选择已有有权访问的云端 bank。没有可绑定项目时明确指向现有云端项目创建流程，禁止客户端猜测 bankId 自动建库。项目重命名/移动不改变 binding；重新绑定后旧待上传记录不得发送到新 bank。worktree 共享项目 binding，但记忆包含 branch/baseCommit、作用域和来源版本。
+
+### 13.2 服务端契约与认证
+
+现有 cookie API 可用于首轮联调，Host 通过 §5.3 credentialRef 获取所需用户会话；服务 origin 采用可信配置，重定向不得把 cookie 转发给另一 origin。401 暂停该账号同步并等待重新登录，403 撤销可见缓存并阻止读写；项目任务本身可继续无记忆运行。
+
+以下是逻辑契约，不预设线上已有同名 URL；在 `zmzai-memory` 提供版本化 schema/错误码和契约测试，复用已有实现时适配现有返回形状：
+
+| 操作 | 请求/响应与要求 |
+| --- | --- |
+| listBindings / capabilities | 返回授权工作区、bank、读写/纠错能力和协议版本 |
+| recall | bank、query、scope、tokenBudget → 带 ID/版本/来源/状态的事实；服务端鉴权 |
+| retain | idempotencyKey、bindingVersion、结构化事实与证据 → operationId；可查询处理状态 |
+| revise / invalidate | memoryId + expectedVersion + 原因 → 新版本或 tombstone；写权限及审计 |
+| operationStatus | 查询 accepted/processing/succeeded/failed/unknown；接收不等于完成 |
+
+所有请求服务端重新检查账号/租户与 bank 权限，不能信任客户端声明。成员能读不自动代表能写/纠错；服务端返回明确 capabilities，本期写入/纠错默认 owner/admin，除非现有权限模型已提供更细授权并有测试。
+
+retain 幂等键由服务端登记，不能仅靠桌面端 in-flight Map。若上游不支持幂等且服务端在提交后状态未知，操作保留 unknown 等待查询/对账，不自动重复 retain。结构化事实版本和上游文档/操作 ID 必须能关联，否则不宣称支持可靠纠错与失效。
+
+### 13.3 召回、写入与可信度
+
+- 每个新根目标召回一次，约束明显改变时可重新召回；内部续跑优先复用当前有效结果，避免每轮请求重复消耗。默认 deadline 800ms、最多 12 条且总计不超过 2,000 估算 token，同时受 ContextBuilder 剩余预算限制；这些默认值沿用现有 adapter 思路并可配置。
+- 记忆以带来源的背景块注入 ContextManifest，当前代码、有效用户指令和权限优先。失效/撤销事实不注入；涉及代码的事实带 commit/path/hash，版本不匹配标为历史参考并要求核对。
+- 项目共享知识包括已确认约定、有效命令、架构决策和故障结论。未合并实验只进入 branch/task scope，不自动提升为项目事实；提升需父验证及明确的整合/接受依据。
+- 不默认上传全量会话、仓库文件或原始工具日志。启用项目同步时明确展示同步类型；仅上传经过父验证的结构化候选事实与必要来源元数据，排除凭据、个人数据和无关内容。用户可以查看、编辑候选或关闭自动写入。
+- Task delivered 后可以产生候选，但只有满足所选作用域的证据规则才可入队；子代理不直接写长期记忆，由父归并去重。每条候选以来源 task/result revision + 内容 digest 固定幂等键，重试保持不变。
+- 写入使用本地持久 outbox，状态 pending/sending/accepted/succeeded/failed/unknown，结果不阻塞已完成的本地交付。默认网络失败最多 3 次自动重试（同键、指数退避），之后保留 failed 供用户重试；accepted/unknown 先查询状态，不重新生成操作。
+- 修改错误记忆使用 expectedVersion，冲突时重读；失效保留 tombstone/替代关系，不用删除本地缓存冒充云端已删除。用户删除本地项目不自动删除共享 bank，明确区分解除绑定与服务端删除权限。
+- 服务超时/不可用时任务继续，并展示本次未使用记忆；首期不离线注入持久召回缓存。退出登录或权限撤销清除内存召回与 credentialRef，暂停 outbox；未同步内容只有原账号和原 binding 重新授权后才可继续。
+
+### 13.4 产品与验证
+
+项目设置提供绑定/解除、同步开关、可读写权限、最近召回来源、候选与同步失败状态；任务中可查看使用了哪些记忆及来源。保持现有 Memory 管理台作为详细管理入口，不复制一整套管理产品。
+
+与无记忆运行对照：验证重复项目任务是否减少重复探索，并检查过期/错误/跨项目记忆是否被拒绝或核对。仅召回条数增加不能说明效果改善。联调必须覆盖目标域名真实鉴权与账号隔离；没有环境/凭据时标未验证，不用 mock 宣称服务已接通。
+
+## 14. 可观测性
 
 每条命令、模型调用、工具、子代理、租约与恢复日志携带可适用的 trace/task/session/run/attempt/child 标识。关键指标：命令排队时间、执行中数量、重复命令次数、事件重放/缺口次数、Host 重启、子代理队列和取消耗时、模型用量。
 
 提供诊断快照接口与脱敏导出，足以定位“任务为什么不动”。常规日志禁止完整 prompt、Cookie、API key、附件正文和未经筛选的工具输入输出。评测报告引用受控 fixture 证据，不复制用户工作区数据。
 
-## 11. 数据迁移、打包与回滚
+## 15. 数据迁移、打包与回滚
+
+扩展阶段同样遵守本节：WorktreeRecord 导入与旧路径校验替换必须一起发布；旧直接 merge/remove 路由迁移为 WorkspaceService 门面，不能保留绕过证据的入口。Browser/CUA 句柄不做跨进程复活，恢复以新运行记录开始。MemoryBinding/outbox 的 schema 与服务契约版本一起管理，协议不兼容暂停同步但不损害本地 Task 数据。
 
 1. 所有 schema 变更提供显式版本与可重复执行 migration。停止旧执行者、备份 SQLite（正确处理 WAL）及项目注册/附件元数据后迁移。
 2. 现有 project/session/task/message/attachment ID 与存储目录保持稳定。新增 workspace ID、协调表、命令元数据/outbox、索引采用增量迁移。
@@ -412,7 +552,7 @@ CI 架构检查禁止：UI/Next 导入 Host 有状态实现、Framework 导入 L
 7. Host 和 Framework 作为可追溯版本随桌面包发布。更新 vendored Framework tarball、锁文件、Host 构建产物、standalone 资源和版本握手。源码相邻不代表发行包已更新。
 8. macOS 与 Windows 打包 smoke 均验证 Host 启动、Next 重启、进程树取消和退出无孤儿进程。原生平台未执行须标为未验证，不能把跨平台编译当真机验证。
 
-## 12. 验收矩阵
+## 16. 验收矩阵
 
 以下均为必须覆盖的确定性场景，不能只检查源代码含某字符串。
 
@@ -459,26 +599,80 @@ CI 架构检查禁止：UI/Next 导入 Host 有状态实现、Framework 导入 L
 | A39 | 100 轮运行/取消、项目切换、共享 MCP 与用户终端 | 专属资源归零，共享资源按规则保留，不误杀活跃资源 |
 | A40 | 草稿清理与新引用竞争、删除会话后迟到请求、磁盘不足 | 引用资源不误删，旧任务不重建，持久化失败不假报接受 |
 
-建议在固定 CI 机器记录性能门槛：mock 命令 durable receipt p95 ≤ 300ms；取消登记 ≤ 1s；可控 mock 工具及子进程 5s 内停止。真实模型取消延迟单独记录，不混入 mock 门槛。每轮报告必须记录机器与样本数；无历史数据时先测基线，再调查超标，不静默放宽标准。
+扩展阶段验收（每项为必须实现的场景组）：
 
-## 13. 实施里程碑与交付物
+| ID | 场景 | 必须观察到的结果 |
+| --- | --- | --- |
+| W01 | 三种起点、dirty/untracked、linked worktree、Windows 路径 | 基线和复制范围明确，不漏用户选择、不复制排除内容 |
+| W02 | Git 创建成功落库失败、重启、同名非受管分支 | journal 可对账，不误接管、不回落主目录 |
+| W03 | 依赖准备失败、配置映射、端口冲突 | 准备状态真实，各工作区资源独立且可取消 |
+| W04 | 审查后源变化/目标分支推进/目标目录 dirty | 旧证据失效，拒绝过期整合，不自动 stash |
+| W05 | 合并冲突、目标分支已 checkout、整合中断重试 | 验证实际整合结果，ref/index/tree 一致，不重复整合 |
+| W06 | 整合后继续会话、删除失败、活跃资源与未交付文件 | 不悄悄换工作区，不误删，保留可恢复记录 |
+| V01 | 两个 worktree 各自起服务、误占端口 | 页面证据对应正确工作区和版本 |
+| V02 | 关键交互失败但截图正常/HTTP 200 | required 断言失败，不假报通过 |
+| V03 | 验证中源码变化、QA 修复一次仍失败 | 旧证据 stale，修复次数有界，结果可解释 |
+| V04 | 登录不可用、外部变更、取消与 Host 重启 | 无假通过、无重复外部副作用、borrowed 服务不被停止 |
+| V05 | 多视口与功能/视觉混合要求 | 分项证据可追溯，未测范围不宣称通过 |
+| C01 | macOS 授权缺失/撤销、Windows 未支持 | 能力状态真实，不绕过权限或假报执行 |
+| C02 | 焦点/窗口/显示器改变、旧 observation | 拒绝陈旧动作，重新观察 |
+| C03 | 两个任务争用、用户输入接管、紧急停止 | 全桌面单控制者，停止后不执行排队旧动作 |
+| C04 | 操作后崩溃/锁屏、密码界面、结果未知 | 不盲目重放、不泄露凭据，重新确认后继续 |
+| K01 | 本地项目绑定、无权限 bank、不同账号/租户 | 服务端拒绝越权，项目/worktree scope 正确 |
+| K02 | 过期/错误/分支实验记忆、用户新指令 | 记忆不覆盖事实与指令，不污染共享项目知识 |
+| K03 | retain 响应丢失/上游未知、离线重试 | 同键不重复写，unknown 先对账，任务可正常交付 |
+| K04 | 退出登录、解除/改变绑定、撤权 | 旧 outbox 不上传新 bank，缓存与权限及时失效 |
+| K05 | 云端纠错版本冲突、本地删除项目 | 重读解决冲突，不隐式删除共享 bank |
+| K06 | 目标域名真实鉴权/读写/操作查询及对照任务 | 真正接通的证据完整；无环境明确未验证 |
+
+性能门槛是硬门禁，不是建议性记录：mock 命令 durable receipt p95 ≤ 300ms；取消登记 ≤ 1s；可控 mock 工具及子进程 5s 内停止。自 M2a 起每次集成回归测量并留档，M4 放行要求最近连续三次全量回归达标；无历史数据时在 M2a 先测基线，此后超标必须先调查再放行。真实模型取消延迟单独记录，不混入 mock 门槛，也不作为门禁。每轮报告必须记录机器与样本数；调整门槛必须显式修订本规格并说明原因，不静默放宽标准。
+
+## 17. 实施里程碑与交付物
+
+### 17.0 执行节奏总则
+
+- 倒排优先：M0 产出的倒排执行计划是 B0 的日程事实来源，含日历锚点、人力分配、依赖图与 0.6.x 合并窗口；此后偏差通过修订该计划显式记录，不用口头顺延。
+- 版本锚点（建议值，非承诺）：M2c 生产切换对应 0.7.0，M3 对应 0.8.0，M4 基线报告对应 0.9.0；W1/V1/C1/K1 各占一个独立 minor，不与 B0 里程碑混排。
+- 维护线：B0 期间 0.6.x 只收 bug 修复与安全更新，不叠加新架构特性；M2c 之前的修复仍落在旧进程内 Runtime，与 Host 分支的冲突在倒排计划的合并窗口内吸收。0.6.x backlog 中与 Runner/task 工具强相关的迭代（如 task_deliver 调用率）须在 M0 冻结前完成，或显式改排 M3 之后，避免与 M1 拆分双线改同一批文件。
+- Framework 联调：M1–M2 开发期 Lectern 以 file: 链接引用 Framework 工作区（file: 依赖是拷贝，变更后需 reinstall/刷新锁文件），仅在里程碑边界（M1 收口、M2c、M4、各扩展阶段收口）发布版本化 tarball 并同步 vendor/ 与锁文件；CI 同时覆盖联调分支与 tarball 装配验证。
+- 扩展节奏：W1/V1/C1 按 §17.1 在 B0 基础闭环后推进；K1 桌面端不早于其前置（B0 的 M2），排期以 M0 盘点结论为准；zmzai-memory 服务端契约与测试可在 M0 盘点后先行，不阻塞 B0。
+- 预算纪律：真实模型评测的预算上限与重跑触发条件在 E 阶段启动前固化（原定 M0，随评测后置调整）；里程碑中途不追加消耗，超出即修订计划并留痕。
+- 评测后置（2026-09-21 决策）：评测执行——harness 独立建设、fixtures、升级前后真实模型基线与 ZCode 对照——整体后置为独立评测阶段 E（见 §17.1）；A01–A40 与 R01–R12 案例定义保持冻结（`evals/`）。E 之前各里程碑放行条件以「全部既有回归 + 阶段内针对已实现场景的常规测试」替代，未执行用例如实标 not_run/unverified，不伪报通过；随实现编写的单元/集成测试不后置。§16 性能门槛在 harness 就位前允许以针对性脚本测量，全量留档随 E 补齐。
 
 | 阶段 | 工作 | 放行条件 |
 | --- | --- | --- |
-| M0 | 冻结评测案例、现有可靠性与真实模型基线 | 原始结果可复查；未验证项明确 |
-| M1 | 必要的 Runner 拆分、协议/事务/归属、上下文/模型/工具契约 | 既有测试通过；状态/命令无双 owner；A30–A35 的 Framework 单元及集成场景通过 |
-| M2 | 先打通最小 Host 链路，再迁移全部 API、鉴权/附件、恢复/回收与打包 | A01–A12、A22–A27、A30–A35、A37–A40 通过本阶段适用场景；涉及子代理部分留待 M3 |
+| M0 | 案例冻结（A01–A40 / R01–R12，`evals/`）；倒排执行计划；Framework 联调方式决策；memory.zmzai.cloud API 现状盘点 | 交付物已落档并收口（2026-09-21）；评测执行后置 E 阶段，基线未测项按 unverified 管理；倒排日历锚点待 D1 |
+| M1 | 必要的 Runner 拆分、协议/事务/归属、上下文/模型/工具契约；effect 组合语义（git 与 workspace 并存等）定义进工具契约；waiting_input 出口语义纳入状态机测试 | 既有测试通过；状态/命令无双 owner；A30–A35 的 Framework 单元及集成场景通过；以版本化 tarball 收口 |
+| M2a | 最小 Host 链路（独立 fixture 数据目录）：发送 → Host → 工具 → 持久化 → Next 重启 → 页面恢复；含 Next 代理 SSE 长连接稳定性验证（dev 与 standalone 两种模式） | A01–A04、A24 在 fixture 内通过；性能门槛首次基线测量留档 |
+| M2b | 路由族分批迁移（建议批次：只读查询族 sessions/messages/search/read-state/fs/git-diff/repomap → projects/settings/models/agents → terminal/mcp/skills/plugins → 附件/交付/worktree/preview）与 credentialRef 鉴权改造 | A05–A09、A12、A22、A27 按批通过；迁移表逐路由闭环 |
+| M2c | 恢复/回收、正常退出与启动器联动、双平台打包、生产入口切换 | A10–A11、A23、A25–A26、A30–A35（集成形态复验）、A37–A40 通过；性能门槛连续达标；旧进程内 Runtime 停用 |
 | M3 | 子代理持久协调、任务契约、异步工具、写权、父验证与 UI | A13–A21、A28–A29、A36 及其余用例的子代理场景通过；父交付/取消闭环 |
-| M4 | 全量回归、真实模型重测、发布检查 | 全部门禁与差距报告，用户可复核 |
+| M4 | B0 全量回归（既有回归 + A 目录已实现场景）、发布检查 | A01–A40 已实现场景与既有门禁通过（性能门槛按可用测量数据评估）、差距框架报告，用户可复核；真实模型重测后置 E 阶段，未回填前标 unverified；不阻塞于未实施扩展 |
 
 每阶段交付：代码、schema/migration、相关测试、架构检查、运行说明和验证报告。报告列出实际执行的命令、版本、失败与未验证项，不把新增测试文件视为已通过测试。
 
 实施计划需拆成可独立 review 的变更，优先保证“保持行为的拆分 → 单 owner 切换 → 子代理新行为”的依赖顺序。任何阶段都不能以 UI 按钮已出现代替底层可靠性验收。
 
-M1 只拆出最小链路需要的职责，不以前置全量重构阻塞可运行版本。M2 首个增量使用独立 fixture 数据目录跑通“发送 → Host → 工具 → 持久化 → Next 重启 → 页面恢复”；该增量是开发验证，不允许未迁移路由与 Host 对同一生产数据双写。随后按路由族迁移，每批验证后再扩展，全部迁移完才切换生产入口。
+M1 只拆出最小链路需要的职责，不以前置全量重构阻塞可运行版本。M2a 使用独立 fixture 数据目录跑通“发送 → Host → 工具 → 持久化 → Next 重启 → 页面恢复”，该增量是开发验证，不允许未迁移路由与 Host 对同一生产数据双写；M2b 按路由族迁移，每批验证后再扩展；M2c 全部迁移完成后才切换生产入口，切换后旧进程内 Runtime 停用，并按 §15 保留一个可回滚的版本窗口。
 
 Harness 补充交付物包括：ContextManifest/CompactionRecord schema、模型能力快照、工具元数据清单、Spawn/ResultContract、父结果验收记录、撤销 journal、资源注册与保留策略，以及 A30–A40 的可复现证据。这些模型尽量扩展既有 store/interface，不额外建设通用工作流平台。
 
-## 14. 本规格的完成定义
+### 17.1 扩展阶段与依赖
 
-规格覆盖范围只有在 Host 独立运行、所有业务状态单一归属、协议故障场景通过、子代理并行/写权/取消/恢复闭环、§9 六项 Harness 规则及 A01–A40 验收完成、基线对照结果齐备后才算完成。ZCode 尚有远程控制、CUA 和生态能力不在本期范围，因此本期完成不能表述为已全面达到 ZCode 的全部产品能力。
+| 阶段 | 前置 | 交付 | 放行条件 |
+| --- | --- | --- | --- |
+| W1 | B0 的 M2，已有单 owner、工具契约和恢复协议 | 单任务 worktree 全生命周期、旧映射迁移、受验证整合 | W01–W06；既有交付和归属回归 |
+| V1 | W1，统一证据与受管服务 | BrowserVerifier、验证计划、证据和一次修复闭环 | V01–V05；真实本地 fixture 浏览器测试 |
+| C1 | B0 的 M2，借用 V1 证据结构；不要求浏览器工具依赖 CUA | macOS adapter、桌面 broker、用户接管与停止 | C01–C04；原生 macOS 实测 |
+| K1 | B0 的 M2 身份/凭据/ContextBuilder；可与 W1 并行 | MemoryBinding、adapter、outbox、服务端契约与设置入口 | K01–K06；memory.zmzai.cloud 实际联调 |
+| E | B0 的 M3 收口后（可与 W1 并行） | harness 三层建设、fixtures、升级前后两轮真实模型基线、ZCode 对照与差距报告、性能门槛全量留档 | A01–A40 全量执行；R01–R12 真实模型数据齐备或明确 unverified |
+
+建议工作顺序：B0 基础闭环 → W1 → V1 → C1；K1 在 Host 身份与鉴权稳定后并行。M3 子代理整合按各功能启用状态补回归，未完成 W1 前仍遵守共享工作区单写者，不提前开放多 worktree 自动整合。
+
+每阶段先提交具体接口/schema 与状态转换计划，再实施；本总规格固定产品规则、所有者和验收，分阶段计划不能删减规则来声称完成。新增持久状态都要进入快照、恢复、删除、诊断与打包测试，而非只连通成功路径。原生 desktop control 的权限和行为验证不能由 mock 替代，云端记忆的真实鉴权也不能由本地 adapter 单测替代。
+
+旧浏览器 QA spec 与本规格冲突时，以本规格的版本/写权/整合规则为准：特别是已 checkout 目标的更新，不能只更新 ref；源代码版本变化必须让证据失效。保留旧规格的 EvidencePacket 和不可变 DeliveryAttempt，避免重复创建第二套交付模型。
+
+## 18. 本规格的完成定义
+
+B0 完成要求 Host/Harness/子代理与 A01–A40 通过；完整目标还要求 W1、V1、C1、K1 的验收通过及真实环境证据齐备。各阶段允许独立发布并报告范围，未完成或未验证项必须保留。远程控制、Windows computer use 和插件生态仍不在完整目标内，因此不能表述为全面达到 ZCode 的全部产品能力。

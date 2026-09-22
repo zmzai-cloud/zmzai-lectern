@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lectern eval results",
+  "type": "object",
+  "required": ["schema", "generated_at", "suite", "system_under_test", "environment", "runs"],
+  "properties": {
+    "schema": { "const": "lectern.evals.results/1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "suite": { "enum": ["deterministic", "real-model"] },
+    "system_under_test": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["lectern-before", "lectern-after", "zcode"] },
+        "commit": { "type": ["string", "null"] },
+        "model": {
+          "type": ["object", "null"],
+          "properties": {
+            "id": { "type": "string" },
+            "endpoint": { "type": ["string", "null"] },
+            "params": { "type": "object" }
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["machine", "samples"],
+      "properties": {
+        "machine": { "type": "string" },
+        "samples": { "type": "integer", "minimum": 1 },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "run_index", "outcome"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "run_index": { "type": "integer", "minimum": 1 },
+          "outcome": { "enum": ["pass", "fail", "blocked", "not_run", "unverified"] },
+          "failure_category": { "type": ["string", "null"] },
+          "manual_interventions": { "type": "integer", "minimum": 0 },
+          "duration_ms": { "type": ["integer", "null"] },
+          "tokens_input": { "type": ["integer", "null"] },
+          "tokens_output": { "type": ["integer", "null"] },
+          "cost": { "type": ["number", "null"] },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "notes": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "pass": { "type": "integer" },
+        "fail": { "type": "integer" },
+        "blocked": { "type": "integer" },
+        "not_run": { "type": "integer" },
+        "unverified": { "type": "integer" },
+        "raw_counts_per_case": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}

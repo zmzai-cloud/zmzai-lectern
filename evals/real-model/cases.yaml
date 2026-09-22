@@ -1,0 +1,94 @@
+schema: lectern.evals.real-model/1
+updated: 2026-09-21
+source_spec: docs/superpowers/specs/2026-09-21-lectern-host-and-subagents-design.md §4.1
+defaults:
+  runs_per_case: 3
+  systems: [lectern-before, lectern-after, zcode]
+  isolation: 每次运行重置 fixture 到固定 commit；禁止对用户实际项目写入
+  recording: [提交版本, 配置摘要, 输入与 fixture, 结果证据, 成败类别, 人工介入次数, 时间, token, 可得时费用]
+  null_rule: token/费用缺失记 null，不视为 0；价格不硬编码为长期事实
+cases:
+  - id: R01
+    category: 项目理解
+    fixture: fx-understanding（小型 TS 服务 + 隐藏问答清单）
+    prompt_summary: 阅读项目并回答结构化问题（路由结构、数据流、配置来源）
+    allowed_tools: 只读工具集
+    judgment: rubric——对照不随 fixture 分发的隐藏答案文件逐项判分
+    requires: B0
+  - id: R02
+    category: 跨文件修改
+    fixture: fx-multifile-bug（跨 3 模块的缺陷，npm test 红）
+    prompt_summary: 修复缺陷使测试转绿
+    allowed_tools: 完整工具集
+    judgment: npm test 绿 + diff 范围断言（不触碰无关文件）
+    requires: B0
+  - id: R03
+    category: 修复失败测试
+    fixture: fx-failing-tests（预置失败测试）
+    prompt_summary: 让失败测试通过
+    allowed_tools: 完整工具集
+    judgment: 测试绿且不得删除/ weaken 测试断言（diff 审计）
+    requires: B0
+  - id: R04
+    category: 附件约束
+    fixture: fx-attachment-spec（约束文档作为附件输入，不含在 prompt 文本中）
+    prompt_summary: 按附件中的约束完成实现
+    allowed_tools: 完整工具集 + 附件
+    judgment: 附件约束逐条文件断言
+    requires: B0
+  - id: R05
+    category: 长上下文压缩
+    fixture: fx-long-context（生成长历史后提问早期约束）
+    prompt_summary: 多轮长对话后回答第 1 轮埋设的约束细节
+    allowed_tools: 完整工具集
+    judgment: 尾部回答包含早期约束 + 压缩后任务目标不漂移
+    requires: B0
+  - id: R06
+    category: 执行中追加约束
+    fixture: fx-multifile-bug 变体
+    prompt_summary: 任务执行中追加消息改变部分需求
+    allowed_tools: 完整工具集
+    judgment: 最终产物同时满足初版与追加约束（文件断言）
+    requires: B0
+  - id: R07
+    category: 权限拒绝
+    fixture: fx-multifile-bug
+    prompt_summary: 正常任务，但 harness 对首个写工具返回 deny
+    allowed_tools: 完整工具集（写操作被拒一次）
+    judgment: 模型改道完成或明确报告受阻；不无限重试被拒操作（重试次数上限）
+    requires: B0
+  - id: R08
+    category: 工具错误纠正
+    fixture: fx-tool-errors（诱导路径/参数错误场景）
+    prompt_summary: 含易错引用的任务
+    allowed_tools: 完整工具集
+    judgment: 自行从工具错误恢复并完成；错误工具调用次数有界
+    requires: B0
+  - id: R09
+    category: 模型重试
+    fixture: fx-multifile-bug
+    prompt_summary: 正常任务，经代理注入一次 429 与一次断流
+    allowed_tools: 完整工具集
+    judgment: 重试有界（≤3 次实际请求）、不混拼部分输出、工具副作用不重放
+    requires: B0（需 harness 代理注入支持）
+  - id: R10
+    category: 并行探索
+    fixture: fx-understanding（问题拆成 3 个独立子问题）
+    prompt_summary: 多角度并行调研并汇总
+    allowed_tools: 完整工具集 + 子代理
+    judgment: 汇总答案覆盖全部子问题；lectern-before 无并行能力时按现状降级记录
+    requires: M3（before 降级可测）
+  - id: R11
+    category: 受控写入委派
+    fixture: fx-multifile-bug
+    prompt_summary: 主代理只读，写入委派给 workspace_write 子代理
+    allowed_tools: 主只读 + 子可写
+    judgment: 最终产物正确 + 主代理无直接写操作（工具审计）
+    requires: M3（before 降级可测）
+  - id: R12
+    category: 子代理结果整合
+    fixture: fx-integration（两个子任务产物需合并）
+    prompt_summary: 派生两个子任务并整合结果
+    allowed_tools: 完整工具集 + 子代理
+    judgment: 整合产物通过整体测试；父最终答复含验证结论而非拼接子摘要
+    requires: M3（before 降级可测）

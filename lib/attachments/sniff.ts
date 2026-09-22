@@ -11,7 +11,7 @@
  * 放在真正读取内容的地方才有意义。
  */
 
-import { formatForFilename, type AttachmentFormat } from "./limits";
+import { formatForFilename, type AttachmentFormat } from "./limits.js";
 
 /** 嗅探出的规范类型；`null` 表示无法判定（未知或二进制）。 */
 export type SniffedMediaType = string | null;

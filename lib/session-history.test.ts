@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SessionHistory, type HistoryPage } from "./session-history";
+import { SessionHistory, type HistoryPage } from "./session-history.js";
 
 const page = (hasMore = true): HistoryPage => ({
   messages: [{ info: { id: "m", role: "assistant" }, parts: [] }] as HistoryPage["messages"],

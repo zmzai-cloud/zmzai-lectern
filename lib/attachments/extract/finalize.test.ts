@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { EXTRACTION_LIMITS } from "@zmzai/agent-framework";
 
-import { ExtractionFailure } from "./errors";
-import { finalizeDocument, splitLongText, summarize } from "./finalize";
+import { ExtractionFailure } from "./errors.js";
+import { finalizeDocument, splitLongText, summarize } from "./finalize.js";
 
 describe("finalizeDocument", () => {
   it("丢掉空节、保留 locator", () => {

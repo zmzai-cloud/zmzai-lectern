@@ -4,8 +4,8 @@
  * 同域 cookie 透传过去，即「登录一次，全链路可用」。
  */
 
-import { primeModelCaps } from "./model-caps";
-import { getSettings } from "./settings";
+import { primeModelCaps } from "./model-caps.js";
+import { getSettings } from "./settings.js";
 
 // relay 端点优先级：设置页配置（settings.json）> RELAY_URL > OPENAI_BASE_URL > 本机。
 // 函数形式：设置页修改后聊天/模型列表链路即时生效，无需重启。

@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 
-import { columnLetter, extractXlsx, valueToText } from "./xlsx";
+import { columnLetter, extractXlsx, valueToText } from "./xlsx.js";
 
 async function xlsxBytes(build: (workbook: ExcelJS.Workbook) => void): Promise<Uint8Array> {
   const workbook = new ExcelJS.Workbook();

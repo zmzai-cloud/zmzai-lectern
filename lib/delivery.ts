@@ -18,11 +18,11 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { dataDir } from "./runtime-constants";
-import { resolveCwdWithin } from "./delivery-path";
-import { worktreeForSession } from "./worktree";
-import { resolveSessionOwner } from "./session-owner";
-import { WorkflowError } from "./workflow-error";
+import { dataDir } from "./runtime-constants.js";
+import { resolveCwdWithin } from "./delivery-path.js";
+import { worktreeForSession } from "./worktree.js";
+import { resolveSessionOwner } from "./session-owner.js";
+import { WorkflowError } from "./workflow-error.js";
 import {
   casUpdateRef,
   currentBranch,
@@ -32,12 +32,12 @@ import {
   listChangedPaths,
   materializeDeliveryCommit,
   worktreeFingerprint,
-} from "./delivery-git";
+} from "./delivery-git.js";
 import {
   assertTransition,
   canAccept,
   resolveVerificationStatus,
-} from "./delivery-state";
+} from "./delivery-state.js";
 import type {
   CommandRun,
   DeliveryAttempt,
@@ -47,7 +47,7 @@ import type {
   DeliverySnapshot,
   DeliveryStatus,
   TaskDelivery,
-} from "./delivery-types";
+} from "./delivery-types.js";
 
 /** 交付数据目录（delivery.db 与临时 index / 输出都放这里）。 */
 const deliveryDataDir = () => join(resolve(dataDir), "deliveries");

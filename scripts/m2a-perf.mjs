@@ -7,7 +7,7 @@ import path from "node:path";
 const root = process.cwd();
 const dataDir = mkdtempSync(path.join(tmpdir(), "m2a-perf-data-"));
 const workspace = mkdtempSync(path.join(tmpdir(), "m2a-perf-ws-"));
-const host = spawn("node", [path.join(root, "host/dist/index.js")], {
+const host = spawn("node", [path.join(root, "host/dist/host/src/index.js")], {
   env: { ...process.env, LECTERN_HOST_DATA: dataDir, LECTERN_HOST_WORKSPACE: workspace },
   stdio: "ignore", detached: true,
 });

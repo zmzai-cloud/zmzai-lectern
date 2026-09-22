@@ -23,8 +23,8 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmS
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { ATTACHMENT_LIMITS, DRAFT_SESSION_ID, type AttachmentKind } from "./limits";
-import type { AttachmentError, AttachmentReceipt, AttachmentStatus } from "./types";
+import { ATTACHMENT_LIMITS, DRAFT_SESSION_ID, type AttachmentKind } from "./limits.js";
+import type { AttachmentError, AttachmentReceipt, AttachmentStatus } from "./types.js";
 
 export type ExtractionSummary = {
   pages?: number;

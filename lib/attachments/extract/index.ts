@@ -14,13 +14,13 @@
 
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { formatForFilename } from "../limits";
-import { ExtractionFailure, classifyThrown, type ExtractionFailureCode } from "./errors";
-import { extractDocx } from "./docx";
-import { extractPdf } from "./pdf";
-import { extractPptx } from "./pptx";
-import { extractPlainText } from "./text";
-import { extractXlsx } from "./xlsx";
+import { formatForFilename } from "../limits.js";
+import { ExtractionFailure, classifyThrown, type ExtractionFailureCode } from "./errors.js";
+import { extractDocx } from "./docx.js";
+import { extractPdf } from "./pdf.js";
+import { extractPptx } from "./pptx.js";
+import { extractPlainText } from "./text.js";
+import { extractXlsx } from "./xlsx.js";
 
 /**
  * 适配器版本。**改动任一适配器的解析行为就要 +1**，否则老缓存会继续被复用。
@@ -89,5 +89,5 @@ export type ExtractionCachePayload = {
   document: ExtractedDocument;
 };
 
-export { ExtractionFailure, corrupted, noExtractableText } from "./errors";
-export type { ExtractionFailureCode } from "./errors";
+export { ExtractionFailure, corrupted, noExtractableText } from "./errors.js";
+export type { ExtractionFailureCode } from "./errors.js";

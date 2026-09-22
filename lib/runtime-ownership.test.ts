@@ -37,7 +37,7 @@ vi.mock("./settings", () => ({ authHeaders: () => ({}), ollamaBase: () => null, 
 vi.mock("./relay", () => ({ relayBase: () => "https://relay.invalid" }));
 vi.mock("./mcp-config", () => ({ loadMcpConfig: () => ({ entries: [], errors: [], sources: [] }) }));
 vi.mock("./skills", () => ({ listSkills: () => [], loadSkill: vi.fn() }));
-import { runtimeFor, sessionRuntime, workspaceRootForSession } from "./runtime";
+import { runtimeFor, sessionRuntime, workspaceRootForSession } from "./runtime.js";
 
 beforeEach(() => {
   vi.clearAllMocks();

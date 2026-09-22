@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Vite 的内置模块枚举在部分 Node 版本上不含 node:sqlite（与 session-owner.test.ts 同一处理）。
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
 
-import { DRAFT_SESSION_ID } from "./limits";
-import { SqliteAttachmentStore } from "./store";
+import { DRAFT_SESSION_ID } from "./limits.js";
+import { SqliteAttachmentStore } from "./store.js";
 
 let dir: string;
 let store: SqliteAttachmentStore;

@@ -10,8 +10,8 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { dataDir } from "./runtime-constants";
-import type { PermissionAction, PermissionDomain, PermissionSettings } from "./types";
+import { dataDir } from "./runtime-constants.js";
+import type { PermissionAction, PermissionDomain, PermissionSettings } from "./types.js";
 
 const settingsFile = resolve(dataDir, "settings.json");
 const secretFile = resolve(dataDir, ".secret");

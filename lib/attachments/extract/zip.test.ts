@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { bytesOf, zipOf } from "./fixtures";
-import { ZIP_LIMITS, gateZipBytes, readZipDirectory, readZipEntries } from "./zip";
+import { bytesOf, zipOf } from "./fixtures.js";
+import { ZIP_LIMITS, gateZipBytes, readZipDirectory, readZipEntries } from "./zip.js";
 
 describe("ZIP 中央目录解析", () => {
   it("列出条目、方法与体积，且不解压", () => {

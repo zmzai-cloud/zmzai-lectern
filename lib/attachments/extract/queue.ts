@@ -17,11 +17,11 @@
 
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { EXTRACTOR_VERSION, extractionKindFor, runExtraction, type ExtractionCachePayload } from "./index";
-import { summarize } from "./finalize";
-import { formatForFilename } from "../limits";
-import { readBlobBytes } from "../read";
-import type { SqliteAttachmentStore, AttachmentRecord } from "../store";
+import { EXTRACTOR_VERSION, extractionKindFor, runExtraction, type ExtractionCachePayload } from "./index.js";
+import { summarize } from "./finalize.js";
+import { formatForFilename } from "../limits.js";
+import { readBlobBytes } from "../read.js";
+import type { SqliteAttachmentStore, AttachmentRecord } from "../store.js";
 
 /** 串行队列（模块级：一个 Node 进程内全局一份）。 */
 type Job = { store: SqliteAttachmentStore; attachmentId: string };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 
-import { resolveCwdWithin } from "./delivery-path";
+import { resolveCwdWithin } from "./delivery-path.js";
 
 const ROOT = resolve("/tmp/workspace-root");
 

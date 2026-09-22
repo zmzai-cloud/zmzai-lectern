@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { formatForFilename } from "./limits";
-import { sniffMediaType, verifyContent, verifyUpload } from "./sniff";
-import { zipOf } from "./extract/fixtures";
+import { formatForFilename } from "./limits.js";
+import { sniffMediaType, verifyContent, verifyUpload } from "./sniff.js";
+import { zipOf } from "./extract/fixtures.js";
 
 const OLE2_HEAD = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 

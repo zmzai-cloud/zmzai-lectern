@@ -6,8 +6,8 @@ import {
   canTransition,
   isSnapshotStale,
   resolveVerificationStatus,
-} from "./delivery-state";
-import type { CommandRun } from "./delivery-types";
+} from "./delivery-state.js";
+import type { CommandRun } from "./delivery-types.js";
 
 function run(over: Partial<CommandRun> & { requirement: "required" | "advisory"; status: CommandRun["status"] }): CommandRun {
   return {

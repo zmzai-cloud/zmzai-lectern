@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { client } from "./client";
-import { ChatProjector } from "./chat-projector";
+import { client } from "./client.js";
+import { ChatProjector } from "./chat-projector.js";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];

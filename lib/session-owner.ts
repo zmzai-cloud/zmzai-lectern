@@ -2,9 +2,9 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { dataDirFor, registeredProjects, type Project } from "./projects";
-import { worktreeForSession } from "./worktree";
-import { WorkflowError } from "./workflow-error";
+import { dataDirFor, registeredProjects, type Project } from "./projects.js";
+import { worktreeForSession } from "./worktree.js";
+import { WorkflowError } from "./workflow-error.js";
 
 export type SessionOwner = {
   project: Project;

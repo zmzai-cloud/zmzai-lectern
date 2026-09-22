@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { ExtractionFailure } from "./errors";
-import { bytesOf } from "./fixtures";
-import { extractPlainText, splitRecords } from "./text";
+import { ExtractionFailure } from "./errors.js";
+import { bytesOf } from "./fixtures.js";
+import { extractPlainText, splitRecords } from "./text.js";
 
 describe("splitRecords（CSV 引号规则）", () => {
   it("引号内的分隔符属于单元格内容", () => {

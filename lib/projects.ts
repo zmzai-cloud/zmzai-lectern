@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { createSqliteSessionStore, type SqliteSessionStore } from "@zmzai/agent-framework";
-import { dataDir, defaultWorkspaceRoot } from "./runtime-constants";
+import { dataDir, defaultWorkspaceRoot } from "./runtime-constants.js";
 
 const projectsFile = resolve(dataDir, "projects.json");
 

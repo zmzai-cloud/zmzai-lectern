@@ -14,7 +14,7 @@ import type {
   DeliveryStatus,
   UnverifiedReason,
   VerificationAggregate,
-} from "./delivery-types";
+} from "./delivery-types.js";
 
 /** 终态集合。 */
 export const TERMINAL_STATUSES: ReadonlySet<DeliveryStatus> = new Set([

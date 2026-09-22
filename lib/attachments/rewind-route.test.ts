@@ -65,8 +65,8 @@ vi.mock("@zmzai/agent-framework", async (importOriginal) => ({
 }));
 
 import { NextRequest } from "next/server";
-import { POST as rewindRoute } from "../../app/api/sessions/[id]/rewind/route";
-import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
+import { POST as rewindRoute } from "../../app/api/sessions/[id]/rewind/route.js";
+import { attachmentStoreFor, type SqliteAttachmentStore } from "./store.js";
 
 const SESSION = "ses_rewind";
 const PROJECT = { id: "proj_one", path: "" };

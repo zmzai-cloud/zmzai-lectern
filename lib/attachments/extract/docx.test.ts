@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { docxOf, paragraph } from "./fixtures";
-import { extractDocx, htmlToLines } from "./docx";
+import { docxOf, paragraph } from "./fixtures.js";
+import { extractDocx, htmlToLines } from "./docx.js";
 
 describe("htmlToLines（mammoth 的 HTML → 带标题层级的行）", () => {
   it("标题保留层级，并渲染成 markdown 前缀", () => {

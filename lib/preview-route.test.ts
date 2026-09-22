@@ -15,7 +15,7 @@ vi.mock("@/lib/runtime", () => ({ workspaceRootForSession: () => state.root }));
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { GET } from "../app/api/preview/[sessionId]/[...filePath]/route";
+import { GET } from "../app/api/preview/[sessionId]/[...filePath]/route.js";
 
 const PDF = Buffer.from("%PDF-1.4\n%%EOF\n", "latin1");
 mkdirSync(path.join(state.root, "dist"), { recursive: true });

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ReadDwell } from "./read-dwell";
+import { ReadDwell } from "./read-dwell.js";
 afterEach(() => vi.useRealTimers());
 it("requires 500 continuous eligible milliseconds", () => {
   vi.useFakeTimers();

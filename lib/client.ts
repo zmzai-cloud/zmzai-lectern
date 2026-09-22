@@ -32,8 +32,8 @@ import type {
   UsageInfo,
   PromptDisposition,
   TaskRecordView,
-} from "./types";
-import type { PermissionMode } from "./permission-mode";
+} from "./types.js";
+import type { PermissionMode } from "./permission-mode.js";
 
 /**
  * 浏览器端 API 客户端：Web 与 Electron 共用同一套页面、同一套 HTTP 接口。
@@ -169,20 +169,20 @@ export const client = {
     send("DELETE", `/api/sessions/${sessionId}`).then((r) => j<{ ok?: boolean; error?: string }>(r)),
 
   /** 稳定消息窗口：游标绑定 session + messageSeq + historyRevision。 */
-  getReadState: (sessionId: string, signal?: AbortSignal) => fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { signal }).then(r => j<import("./types").ReadState>(r)),
+  getReadState: (sessionId: string, signal?: AbortSignal) => fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { signal }).then(r => j<import("./types.js").ReadState>(r)),
   markRead: (sessionId: string, lastReadMessageSeq: number, historyRevision: number, signal?: AbortSignal) =>
-    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lastReadMessageSeq, historyRevision }), signal }).then(r => j<import("./types").ReadState>(r)),
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/read-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lastReadMessageSeq, historyRevision }), signal }).then(r => j<import("./types.js").ReadState>(r)),
   searchSessionMessages: (sessionId: string, query: string, cursor: string | null, signal?: AbortSignal) =>
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}/search?q=${encodeURIComponent(query)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })
-      .then(r => j<{ results: import("./types").MessageSearchHit[]; nextCursor: string | null }>(r)),
+      .then(r => j<{ results: import("./types.js").MessageSearchHit[]; nextCursor: string | null }>(r)),
 
   getMessageContext: (sessionId: string, target: { around: string } | { before: string } | { after: string }, signal?: AbortSignal) =>
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages?view=window&limit=50&${new URLSearchParams(target)}`, { signal })
-      .then(r => j<import("./session-history").HistoryPage & { afterCursor: string | null; hasMoreAfter: boolean }>(r)),
+      .then(r => j<import("./session-history.js").HistoryPage & { afterCursor: string | null; hasMoreAfter: boolean }>(r)),
 
   getMessagesPage: (sessionId: string, before: string | null, limit = 50, signal?: AbortSignal) =>
     fetch(`/api/sessions/${sessionId}/messages?view=window&limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`, { signal })
-      .then((r) => j<import("./session-history").HistoryPage>(r)),
+      .then((r) => j<import("./session-history.js").HistoryPage>(r)),
 
   /**
    * 发送提示词。附件只传 **id**（规格 2 §9.1）：文件内容早已落在附件存储里，

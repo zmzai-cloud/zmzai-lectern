@@ -15,10 +15,10 @@
 
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { ExtractionFailure } from "./errors";
-import type { SectionDraft } from "./finalize";
-import { finalizeDocument, splitLongText } from "./finalize";
-import { gateZipBytes } from "./zip";
+import { ExtractionFailure } from "./errors.js";
+import type { SectionDraft } from "./finalize.js";
+import { finalizeDocument, splitLongText } from "./finalize.js";
+import { gateZipBytes } from "./zip.js";
 
 const MAX_SHEETS = 64;
 const MAX_ROWS_PER_SHEET = 20_000;

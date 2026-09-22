@@ -3,8 +3,8 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({ search: vi.fn(), owner: vi.fn() }));
 vi.mock("@/lib/runtime", () => ({ sessionRuntime: () => ({ store: { searchMessages: mocks.search } }) }));
 vi.mock("@/lib/session-owner", () => ({ resolveSessionOwner: mocks.owner }));
-import { GET } from "../app/api/sessions/[id]/search/route";
-import { WorkflowError } from "./workflow-error";
+import { GET } from "../app/api/sessions/[id]/search/route.js";
+import { WorkflowError } from "./workflow-error.js";
 
 const request = (query = "q=needle") => GET(new NextRequest(`http://localhost/api/sessions/a/search?${query}`), { params: Promise.resolve({ id: "a" }) });
 beforeEach(() => {

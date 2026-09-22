@@ -16,8 +16,8 @@
  * - 每一条谓词都必须有单测（§13）。
  */
 
-import { canvasKindOf } from "./canvas-kind";
-import type { TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
+import { canvasKindOf } from "./canvas-kind.js";
+import type { TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types.js";
 
 export type TaskPresentationState =
   | "idle"

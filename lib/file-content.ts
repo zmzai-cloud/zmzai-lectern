@@ -16,7 +16,7 @@
  * 本模块必须保持纯净（无 node / DOM API）：路由与单测共用。
  */
 
-import { sniffMediaType } from "./attachments/sniff";
+import { sniffMediaType } from "./attachments/sniff.js";
 
 export type FileContent =
   /** 可以按文本打开（编辑器 / `<pre>`）。空文件也算——它本来就是空的。 */

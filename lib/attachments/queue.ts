@@ -14,11 +14,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { client, type UploadFailure } from "@/lib/client";
+import { client, type UploadFailure } from "../client.js";
 
-import { validateClientFile, type ExistingAttachment } from "./classify";
-import { DRAFT_SESSION_ID } from "./limits";
-import type { AttachmentError, AttachmentErrorCode, ComposerAttachment } from "./types";
+import { validateClientFile, type ExistingAttachment } from "./classify.js";
+import { DRAFT_SESSION_ID } from "./limits.js";
+import type { AttachmentError, AttachmentErrorCode, ComposerAttachment } from "./types.js";
 
 /** 受理失败的码一律不可重试（重试多少次结果都一样）；其余按瞬时故障处理。 */
 const PERMANENT_CODES: ReadonlySet<string> = new Set<AttachmentErrorCode>([

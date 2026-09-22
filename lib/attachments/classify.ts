@@ -14,8 +14,8 @@ import {
   mediaTypeForFilename,
   type AttachmentFormat,
   type AttachmentKind,
-} from "./limits";
-import type { AttachmentError, AttachmentErrorCode } from "./types";
+} from "./limits.js";
+import type { AttachmentError, AttachmentErrorCode } from "./types.js";
 
 /** 判定所需的最小子集。真实 `File` 天然满足。 */
 export type FileLike = { name: string; type?: string; size?: number };

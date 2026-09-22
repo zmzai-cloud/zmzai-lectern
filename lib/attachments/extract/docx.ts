@@ -16,11 +16,11 @@
 
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { ExtractionFailure } from "./errors";
-import type { SectionDraft } from "./finalize";
-import { finalizeDocument } from "./finalize";
-import { decodeEntities, decodeXml, stripTags } from "./xml";
-import { gateZipBytes, readZipEntries } from "./zip";
+import { ExtractionFailure } from "./errors.js";
+import type { SectionDraft } from "./finalize.js";
+import { finalizeDocument } from "./finalize.js";
+import { decodeEntities, decodeXml, stripTags } from "./xml.js";
+import { gateZipBytes, readZipEntries } from "./zip.js";
 
 /** 一个分节覆盖的行数上限：超过就断开，避免「一份没有标题的文档」变成单独一节。 */
 const LINES_PER_SECTION = 120;

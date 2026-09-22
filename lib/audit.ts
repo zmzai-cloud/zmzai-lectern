@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { dataDir } from "./runtime-constants";
+import { dataDir } from "./runtime-constants.js";
 
 /**
  * 权限审计日志（独立 SQLite，与 framework 的会话库零耦合）：

@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const store = { getMessages: vi.fn(), getMessageSnapshot: vi.fn() };
 vi.mock("@/lib/runtime", () => ({ sessionRuntime: () => ({ store }) }));
 vi.mock("@/lib/session-owner", () => ({ resolveSessionOwner: () => ({ project: { id: "project-a" } }) }));
-import { GET } from "../app/api/sessions/[id]/messages/route";
+import { GET } from "../app/api/sessions/[id]/messages/route.js";
 import { NextRequest } from "next/server";
 
 const request = (query: string) => GET(new NextRequest(`http://localhost/api/sessions/a/messages${query}`), { params: Promise.resolve({ id: "a" }) });

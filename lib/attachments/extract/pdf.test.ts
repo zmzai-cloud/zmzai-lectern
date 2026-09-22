@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { ExtractionFailure } from "./errors";
-import { pdfOf } from "./fixtures";
-import { extractPdf, linesFromEol, linesFromTransform, pageLines, summarizePageList } from "./pdf";
+import { ExtractionFailure } from "./errors.js";
+import { pdfOf } from "./fixtures.js";
+import { extractPdf, linesFromEol, linesFromTransform, pageLines, summarizePageList } from "./pdf.js";
 
 describe("PDF 行重建", () => {
   it("优先用 hasEOL，跳过换行标记产生的空片段", () => {

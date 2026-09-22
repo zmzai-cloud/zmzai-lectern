@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { pptxOf } from "./fixtures";
-import { extractPptx, normalizePartPath, paragraphLines, relationIdByType, relationTarget, slideOrder } from "./pptx";
+import { pptxOf } from "./fixtures.js";
+import { extractPptx, normalizePartPath, paragraphLines, relationIdByType, relationTarget, slideOrder } from "./pptx.js";
 
 describe("paragraphLines（形与文本体）", () => {
   it("一个段落里的多个 run 拼成一行（换字体会把一句话拆成多个 run）", () => {

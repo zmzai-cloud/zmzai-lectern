@@ -30,7 +30,7 @@ import {
   workbenchMaxFor,
   workbenchPresentationFor,
   writeTaskWorkbenchLayout,
-} from "./task-layout";
+} from "./task-layout.js";
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();

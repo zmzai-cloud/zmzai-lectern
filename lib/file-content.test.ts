@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyFileBytes, looksBinaryHead } from "./file-content";
+import { classifyFileBytes, looksBinaryHead } from "./file-content.js";
 
 /**
  * 回归夹具：一份**零 NUL、99.97% 可打印 ASCII** 的 PDF。

@@ -7,7 +7,7 @@ import {
   redact,
   sanitizeOutput,
   truncateToBytes,
-} from "./sanitize";
+} from "./sanitize.js";
 
 describe("脱敏 redact", () => {
   it("脱敏 KEY=VALUE 形态", () => {

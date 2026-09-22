@@ -7,7 +7,7 @@ import path from "node:path";
 const root = process.cwd();
 const dataDir = mkdtempSync(path.join(tmpdir(), "m2a-sse-data-"));
 const workspace = mkdtempSync(path.join(tmpdir(), "m2a-sse-ws-"));
-const host = spawn("node", [path.join(root, "host/dist/index.js")], { env: { ...process.env, LECTERN_HOST_DATA: dataDir, LECTERN_HOST_WORKSPACE: workspace }, stdio: "ignore", detached: true });
+const host = spawn("node", [path.join(root, "host/dist/host/src/index.js")], { env: { ...process.env, LECTERN_HOST_DATA: dataDir, LECTERN_HOST_WORKSPACE: workspace }, stdio: "ignore", detached: true });
 const next = spawn("pnpm", ["exec", "next", "start", "-p", "3177"], { cwd: root, env: { ...process.env, LECTERN_HOST_BOOTSTRAP: path.join(dataDir, "host.json") }, stdio: "ignore", detached: true });
 const DURATION_MS = Number(process.env.M2A_SSE_SECONDS ?? "60") * 1_000;
 let result = "未执行";

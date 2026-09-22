@@ -27,17 +27,17 @@ import {
   type SqliteSessionStore,
   type ToolContext,
 } from "@zmzai/agent-framework";
-import { currentCookieHeader } from "./request-cookie";
-import { attachmentProviderFor } from "./attachments/scope";
-import { authHeaders, ollamaBase, getFailoverEndpoints } from "./settings";
-import { capsFor } from "./model-caps";
-import { relayBase } from "./relay";
-import { loadMcpConfig } from "./mcp-config";
-import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects";
-import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner";
-import { WorkflowError } from "./workflow-error";
-import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants";
-import { listSkills, loadSkill } from "./skills";
+import { currentCookieHeader } from "./request-cookie.js";
+import { attachmentProviderFor } from "./attachments/scope.js";
+import { authHeaders, ollamaBase, getFailoverEndpoints } from "./settings.js";
+import { capsFor } from "./model-caps.js";
+import { relayBase } from "./relay.js";
+import { loadMcpConfig } from "./mcp-config.js";
+import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
+import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
+import { WorkflowError } from "./workflow-error.js";
+import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants.js";
+import { listSkills, loadSkill } from "./skills.js";
 
 /**
  * 同构运行时（Web/App 共用的服务端）：
@@ -54,7 +54,7 @@ import { listSkills, loadSkill } from "./skills";
  * active 项目切换后，cloudRuntime() 与 workspaceRoot（ESM live binding）随之切换。
  */
 
-export { defaultWorkspaceRoot } from "./runtime-constants";
+export { defaultWorkspaceRoot } from "./runtime-constants.js";
 export const dataDir = baseDataDir;
 
 /** active 项目的工作区路径（ESM live binding：切换项目时由 switchProject 更新，

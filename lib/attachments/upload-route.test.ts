@@ -17,8 +17,8 @@ vi.mock("@/lib/projects", () => ({
 vi.mock("@/lib/worktree", () => ({ worktreeForSession: () => undefined }));
 
 import { NextRequest } from "next/server";
-import { DELETE as deleteAttachment, GET as getAttachment } from "../../app/api/sessions/[id]/attachments/[attachmentId]/route";
-import { GET as listAttachments, POST as uploadAttachment } from "../../app/api/sessions/[id]/attachments/route";
+import { DELETE as deleteAttachment, GET as getAttachment } from "../../app/api/sessions/[id]/attachments/[attachmentId]/route.js";
+import { GET as listAttachments, POST as uploadAttachment } from "../../app/api/sessions/[id]/attachments/route.js";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 

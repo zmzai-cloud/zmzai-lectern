@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-import type { SqliteAttachmentStore } from "./store";
+import type { SqliteAttachmentStore } from "./store.js";
 
 /** 读 blob 全部字节；文件不存在或读取失败返回 null（历史消息仍要能渲染，§12）。 */
 export function readBlobBytes(store: SqliteAttachmentStore, sha256: string): Uint8Array | null {

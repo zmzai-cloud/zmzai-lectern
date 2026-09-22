@@ -21,9 +21,9 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { ChatProjector } from "./chat-projector";
-import { presentTask, sessionListOutcome, sessionStatusFor, taskNotice, toTaskView } from "./task-presentation";
-import type { TaskBlockerView, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
+import { ChatProjector } from "./chat-projector.js";
+import { presentTask, sessionListOutcome, sessionStatusFor, taskNotice, toTaskView } from "./task-presentation.js";
+import type { TaskBlockerView, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types.js";
 
 const repoFile = (relative: string) => readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), "utf8");
 

@@ -1,4 +1,4 @@
-import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary, TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types";
+import type { Artifact, LecternEvent, Part, SelectedSkill, TranscriptMessage, SessionSummary, TaskBlockerView, TaskCriterionStatus, TaskLifecycleStatus, TaskRecordView, TaskStepView } from "./types.js";
 
 /** blocker kind → 生命周期状态。与 framework `lifecycleForBlocker` 同构。
  *

@@ -10,7 +10,7 @@ vi.mock("@/lib/relay", () => ({ resolveModel: state.resolve, sessionCookieName: 
 vi.mock("@/lib/runtime", () => ({ runtimeFor: state.runtimeFor }));
 vi.mock("@/lib/worktree", () => ({ createWorktree: state.worktree, worktreeForSession: state.existingWorktree }));
 vi.mock("@zmzai/agent-framework", () => ({}));
-import { POST } from "../app/api/sessions/route";
+import { POST } from "../app/api/sessions/route.js";
 
 beforeEach(() => {
   vi.resetAllMocks();

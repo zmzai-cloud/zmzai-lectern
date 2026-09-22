@@ -1,6 +1,6 @@
 import { resolve, sep } from "node:path";
 
-import { activeWorkspaceRoot } from "./runtime";
+import { activeWorkspaceRoot } from "./runtime.js";
 
 /**
  * 把用户提供的相对路径安全解析到 workspaceRoot 内。

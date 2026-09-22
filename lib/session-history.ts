@@ -1,6 +1,6 @@
-import type { LecternEvent, TranscriptMessage } from "./types";
+import type { LecternEvent, TranscriptMessage } from "./types.js";
 
-export type HistoryPage = { messages: TranscriptMessage[]; beforeCursor: string | null; afterCursor?: string | null; hasMoreAfter?: boolean; hasMoreBefore: boolean; historyRevision: number; snapshotSeq: number; stateEvents?: LecternEvent[]; readState?: import("./types").ReadState; /** 该水位上的任务契约（规格 3 §13.3）。undefined = 该分页没带，null = 服务端确认无任务。 */ task?: import("./types").TaskRecordView | null };
+export type HistoryPage = { messages: TranscriptMessage[]; beforeCursor: string | null; afterCursor?: string | null; hasMoreAfter?: boolean; hasMoreBefore: boolean; historyRevision: number; snapshotSeq: number; stateEvents?: LecternEvent[]; readState?: import("./types.js").ReadState; /** 该水位上的任务契约（规格 3 §13.3）。undefined = 该分页没带，null = 服务端确认无任务。 */ task?: import("./types.js").TaskRecordView | null };
 export type HistoryDirection = "older" | "newer" | "latest";
 export type HistoryState = {
   phase: "initial" | "older" | "newer" | "latest" | "ready";

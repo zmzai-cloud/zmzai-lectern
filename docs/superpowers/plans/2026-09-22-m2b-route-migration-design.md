@@ -74,11 +74,14 @@ POST /v1/commands/session               → createSession（已有）
 
 ## 5. 风险
 
-- R-1【spike 已做，2026-09-22】lib 链零 `@/` 别名、全相对导入（利好）；
-  但**全库是 bundler 风格无后缀导入**（`./limits` 而非 `./limits.js`），
-  NodeNext 编译不过——B1 前置一轮机械 codemod：给 lib/** 相对导入补
-  `.js` 后缀（Next 编译完全兼容，vitest 不受影响）。完成后 host 构建连带
-  lib（rootDir 提到仓根）即可拉起真实装配；globalThis/路径差异届时再验。
+- R-1【✅ 已解决，2026-09-22】spike→codemod→装配加载全链路完成：
+  lib 186 处相对导入补 `.js`（含 2 处目录导入→`/index.js`）、3 处 `@/lib`
+  别名改相对（emit 后的 JS 才能被 Node 解析）；host 构建改 bundler 解析
+  （emit 仍带后缀）+ DOM lib + dist 自挂 `type:module`。**实测**：
+  `host/dist/host/src/assembly.js` 在 Node 进程加载成功（runtimeFor/
+  sessionRuntime/listProjects/dataDirFor/resolveSessionOwner 全导出），
+  M2a smoke 6/6 + perf 基线复跑通过。globalThis/设置读取的真实拉起验证
+  随 B1 第一批端点实施。
 - R-2 事件/快照协议 B1 即需版本化 envelope（§6.4）——最小实现：帧加
   protocolVersion 字段，不动既有形状；
 - R-3 附件/终端是流式+长连接大户，B4 单独一轮做，不与 B1–B3 混排。

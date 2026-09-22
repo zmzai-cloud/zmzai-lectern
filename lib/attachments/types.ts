@@ -5,7 +5,7 @@
  * 存储记录都由同一组类型描述，避免历史上「图片一套、普通附件一套」的分叉再次发生。
  */
 
-import type { AttachmentKind } from "./limits";
+import type { AttachmentKind } from "./limits.js";
 
 /** 合并后的附件状态机（规格 §8）。图片与文档走同一状态流。 */
 export type ComposerAttachmentStatus = "preparing" | "uploading" | "processing" | "ready" | "error";

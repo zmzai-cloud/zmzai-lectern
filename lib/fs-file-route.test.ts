@@ -16,7 +16,7 @@ vi.mock("@/lib/runtime", () => ({ workspaceRootForSession: () => state.root }));
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { GET } from "../app/api/fs/file/route";
+import { GET } from "../app/api/fs/file/route.js";
 
 /** 与真实产物同形：零 NUL、几乎全是可打印 ASCII 的 PDF（ReportLab 的写法）。 */
 const ASCII_PDF = Buffer.from(

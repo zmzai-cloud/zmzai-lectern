@@ -8,12 +8,12 @@
  * 去重：同一验证快照下的重复工具结果、未变化 Git 状态、同一 artifact 不得重复注入。
  */
 
-import { fingerprintOf, REDACTED, redact, truncateToBytes } from "./sanitize";
+import { fingerprintOf, REDACTED, redact, truncateToBytes } from "./sanitize.js";
 import type {
   CommandRun,
   DeliveryAttempt,
   DeliverySnapshot,
-} from "./delivery-types";
+} from "./delivery-types.js";
 
 /** 命令尾部输出最多保留行数。 */
 export const COMMAND_TAIL_LINES = 20;

@@ -63,8 +63,8 @@ vi.mock("@/lib/runtime", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { POST as sendPromptRoute } from "../../app/api/sessions/[id]/prompt/route";
-import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
+import { POST as sendPromptRoute } from "../../app/api/sessions/[id]/prompt/route.js";
+import { attachmentStoreFor, type SqliteAttachmentStore } from "./store.js";
 
 const SESSION = "ses_prompt_target";
 const OTHER_SESSION = "ses_prompt_other";

@@ -1,4 +1,4 @@
-import type { SessionListItem } from "./types";
+import type { SessionListItem } from "./types.js";
 
 export type TaskActivity = Record<string, { kind: string; at: number }>;
 export function unreadTaskCount(sessions: SessionListItem[], activity?: TaskActivity): number {

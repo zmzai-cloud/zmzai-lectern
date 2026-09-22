@@ -5,8 +5,8 @@ import {
   commandTail,
   failureSummary,
   isDuplicateEvidence,
-} from "./evidence-packet";
-import type { CommandRun, DeliveryAttempt, DeliverySnapshot } from "./delivery-types";
+} from "./evidence-packet.js";
+import type { CommandRun, DeliveryAttempt, DeliverySnapshot } from "./delivery-types.js";
 
 const SNAPSHOT: DeliverySnapshot = {
   worktreeFingerprint: "fingerprint-1",

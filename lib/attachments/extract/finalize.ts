@@ -13,7 +13,7 @@
 
 import { EXTRACTION_LIMITS, EXTRACTION_VERSION, type ExtractedDocument, type ExtractedSection, type ExtractionLocator } from "@zmzai/agent-framework";
 
-import { noExtractableText } from "./errors";
+import { noExtractableText } from "./errors.js";
 
 export type SectionDraft = { id: string; locator: ExtractionLocator; text: string };
 

@@ -12,8 +12,8 @@ vi.mock("./projects", () => ({
   dataDirFor: (p: { id: string }) => join(state.data, p.id),
 }));
 vi.mock("./worktree", () => ({ worktreeForSession: state.worktree }));
-import { resolveSessionOwner } from "./session-owner";
-import { WorkflowError, withWorkflowErrors } from "./workflow-error";
+import { resolveSessionOwner } from "./session-owner.js";
+import { WorkflowError, withWorkflowErrors } from "./workflow-error.js";
 import { NextRequest } from "next/server";
 const api = vi.hoisted(() => ({ abort: vi.fn(), start: vi.fn() }));
 vi.mock("@/lib/runtime", () => ({
@@ -28,11 +28,11 @@ vi.mock("@/lib/runtime", () => ({
   activeWorkspaceRoot: () => state.projects[0].path,
   terminalManager: () => ({ start: api.start }),
 }));
-import { GET as messages } from "../app/api/sessions/[id]/messages/route";
-import { POST as abort } from "../app/api/sessions/[id]/abort/route";
-import { GET as readFile, PUT as saveFile } from "../app/api/fs/file/route";
-import { GET as checkpoints } from "../app/api/git/checkpoint/route";
-import { POST as startTerminal } from "../app/api/terminal/route";
+import { GET as messages } from "../app/api/sessions/[id]/messages/route.js";
+import { POST as abort } from "../app/api/sessions/[id]/abort/route.js";
+import { GET as readFile, PUT as saveFile } from "../app/api/fs/file/route.js";
+import { GET as checkpoints } from "../app/api/git/checkpoint/route.js";
+import { POST as startTerminal } from "../app/api/terminal/route.js";
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 let dir: string;
 

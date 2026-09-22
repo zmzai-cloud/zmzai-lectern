@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyFile, sanitizeFilename, validateClientFile, validateReferencePath } from "./classify";
-import { ATTACHMENT_LIMITS, acceptAttribute, formatBytes, formatForFilename, supportedFormatsSummary } from "./limits";
+import { classifyFile, sanitizeFilename, validateClientFile, validateReferencePath } from "./classify.js";
+import { ATTACHMENT_LIMITS, acceptAttribute, formatBytes, formatForFilename, supportedFormatsSummary } from "./limits.js";
 
 const MB = 1024 * 1024;
 

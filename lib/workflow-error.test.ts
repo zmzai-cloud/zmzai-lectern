@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { NextResponse } from "next/server";
-import { rethrowWorkflowError, withWorkflowErrors, WorkflowError } from "./workflow-error";
+import { rethrowWorkflowError, withWorkflowErrors, WorkflowError } from "./workflow-error.js";
 
 it("passes through NextResponse and streamed Response without consuming bodies", async () => {
   for (const response of [NextResponse.json({ ok: true }), new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("data: test\n\n")); c.close(); } }), { headers: { "content-type": "text/event-stream" } })]) {

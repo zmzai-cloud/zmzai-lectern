@@ -11,7 +11,7 @@ import {
   isGitRepo,
   materializeDeliveryCommit,
   worktreeFingerprint,
-} from "./delivery-git";
+} from "./delivery-git.js";
 
 let dir: string;
 const dirs: string[] = [];

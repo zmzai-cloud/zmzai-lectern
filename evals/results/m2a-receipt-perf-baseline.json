@@ -1,6 +1,6 @@
 {
   "schema": "lectern.evals.results/1",
-  "generated_at": "2026-09-22T06:53:12.770Z",
+  "generated_at": "2026-09-22T07:52:30.953Z",
   "suite": "deterministic",
   "system_under_test": {
     "name": "m2a-host-minimal",
@@ -23,9 +23,9 @@
     "unverified": 0
   },
   "metrics": {
-    "p50_ms": 7.789208999999914,
-    "p95_ms": 15.668334000000016,
-    "max_ms": 36.28287499999999,
+    "p50_ms": 8.608666999999969,
+    "p95_ms": 15.22566699999993,
+    "max_ms": 24.492832999999905,
     "gate": "p95 <= 300ms",
     "gate_pass": true
   }

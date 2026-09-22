@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { canvasKindOf, canvasKindOfMediaType, isCanvasRenderable, CANVAS_KIND_LABEL } from "./canvas-kind";
-import { isPreviewable, previewableOf } from "./task-presentation";
+import { canvasKindOf, canvasKindOfMediaType, isCanvasRenderable, CANVAS_KIND_LABEL } from "./canvas-kind.js";
+import { isPreviewable, previewableOf } from "./task-presentation.js";
 
 describe("canvasKindOf：画布的三种渲染方式", () => {
   it.each([

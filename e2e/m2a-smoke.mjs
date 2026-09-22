@@ -88,7 +88,7 @@ async function post(pathname, body, init = {}) {
 
 async function main() {
   // ---- 启动 Host（工具延迟 2500ms 制造 A02 的执行中窗口）----
-  host = spawn("node", [path.join(root, "host/dist/index.js")], {
+  host = spawn("node", [path.join(root, "host/dist/host/src/index.js")], {
     env: { ...process.env, LECTERN_HOST_DATA: dataDir, LECTERN_HOST_WORKSPACE: workspace, LECTERN_HOST_TOOL_DELAY_MS: "2500" },
     stdio: "ignore",
     detached: true,
@@ -111,7 +111,9 @@ async function main() {
   void token;
 
   // ---- A02：prompt 触发 2.5s 工具，期间 kill -9 Next，重启后恢复 ----
-  const a02 = (await (await post("/api/m2a/prompt", { sessionId: session, requestId: "m2a-a02", text: "杀掉 Next 期间执行工具" })).json());
+  const a02Res = await post("/api/m2a/prompt", { sessionId: session, requestId: "m2a-a02", text: "杀掉 Next 期间执行工具" });
+  const a02 = await a02Res.json();
+  log("a02-receipt", JSON.stringify(a02).slice(0, 140));
   await new Promise((r) => setTimeout(r, 400)); // 工具执行中
   process.kill(-nextProc.pid, "SIGKILL"); // 进程组：pnpm 包装杀掉后 next dev 不能孤儿化
   await new Promise((r) => setTimeout(r, 300));

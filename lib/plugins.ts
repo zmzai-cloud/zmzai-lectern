@@ -8,7 +8,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from
 import { parsePluginManifest } from "@zmzai/agent-framework";
 import { basename, resolve } from "node:path";
 
-import { dataDir } from "./runtime-constants";
+import { dataDir } from "./runtime-constants.js";
 
 export type PluginInfo = {
   name: string;

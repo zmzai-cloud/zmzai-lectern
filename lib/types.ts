@@ -1,6 +1,6 @@
 // 与 @zmzai/agent-framework 事件契约对应的本地类型（UI 层不直接依赖引擎包）
 
-import type { AttachmentKind } from "./attachments/limits";
+import type { AttachmentKind } from "./attachments/limits.js";
 
 /** 附件类型统一从 lib/types 出口（规格 2 §15.1），避免组件到处 deep import。 */
 export type {
@@ -12,8 +12,8 @@ export type {
   ComposerAttachmentStatus,
   InputAttachmentRef,
   WorkspaceReference,
-} from "./attachments/types";
-export type { AttachmentKind, AttachmentFormat } from "./attachments/limits";
+} from "./attachments/types.js";
+export type { AttachmentKind, AttachmentFormat } from "./attachments/limits.js";
 
 export type ModelRef = { providerId: string; modelId: string };
 export type ReadState = { lastReadMessageSeq: number; latestMessageSeq: number; unreadCount: number; historyRevision: number };

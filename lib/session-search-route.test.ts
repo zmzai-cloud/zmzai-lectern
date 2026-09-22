@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({ projects: vi.fn(), open: vi.fn(), activeStore: { listSessions: vi.fn(), getMessages: vi.fn() } }));
 vi.mock("@/lib/runtime", () => ({ cloudRuntime: () => ({ store: mocks.activeStore }) }));
 vi.mock("@/lib/projects", () => ({ getActiveProject: () => ({ id: "a" }), listProjects: mocks.projects, projectStore: mocks.open }));
-import { GET } from "../app/api/sessions/search/route";
+import { GET } from "../app/api/sessions/search/route.js";
 
 const sessions = (prefix: string, count: number) => Array.from({ length: count }, (_, i) => ({ id: `${prefix}${i}`, title: `${prefix}${i}`, time: {} }));
 const messages = async () => [{ parts: [{ type: "text", text: "Needle in transcript" }] }];

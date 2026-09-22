@@ -10,11 +10,11 @@
  * 引用「第 137 行」时用户能在 Excel 里找到同一行。
  */
 
-import type { SectionDraft } from "./finalize";
-import { finalizeDocument, splitLongText } from "./finalize";
+import type { SectionDraft } from "./finalize.js";
+import { finalizeDocument, splitLongText } from "./finalize.js";
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { corrupted } from "./errors";
+import { corrupted } from "./errors.js";
 
 /** 每个分节覆盖的记录数：小到模型能按「行区间」精准读取，大到不会产生上千个分节。 */
 const RECORDS_PER_SECTION = 200;

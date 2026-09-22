@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { capsFor, primeModelCaps, primedModelCount } from "./model-caps";
+import { capsFor, primeModelCaps, primedModelCount } from "./model-caps.js";
 
 /** 缓存挂在 globalThis 上（进程级共享），测试间必须重置。 */
 function reset() {

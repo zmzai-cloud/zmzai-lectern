@@ -14,10 +14,10 @@
  * 并列出缺失页」）。加密与结构损坏才是整份失败。
  */
 
-import { ATTACHMENT_LIMITS } from "../limits";
-import { ExtractionFailure, classifyThrown, noExtractableText } from "./errors";
-import type { SectionDraft } from "./finalize";
-import { finalizeDocument, splitLongText } from "./finalize";
+import { ATTACHMENT_LIMITS } from "../limits.js";
+import { ExtractionFailure, classifyThrown, noExtractableText } from "./errors.js";
+import type { SectionDraft } from "./finalize.js";
+import { finalizeDocument, splitLongText } from "./finalize.js";
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
 /** 整份 PDF 的解析时间预算。超时后返回已解析的部分页并写明（§13「解析器必须有时间限制」）。 */

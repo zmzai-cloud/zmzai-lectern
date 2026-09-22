@@ -7,10 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Vite 的内置模块枚举在部分 Node 版本上不含 node:sqlite（与 session-owner.test.ts 同一处理）。
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
 
-import { docxOf, paragraph, pdfOf } from "./extract/fixtures";
-import { extractAttachment } from "./extract/queue";
-import { EXTRACTOR_VERSION } from "./extract";
-import { SqliteAttachmentStore } from "./store";
+import { docxOf, paragraph, pdfOf } from "./extract/fixtures.js";
+import { extractAttachment } from "./extract/queue.js";
+import { EXTRACTOR_VERSION } from "./extract/index.js";
+import { SqliteAttachmentStore } from "./store.js";
 
 let dir: string;
 let store: SqliteAttachmentStore;

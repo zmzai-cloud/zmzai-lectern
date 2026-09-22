@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { client } from "./client";
-import { ReadDwell } from "./read-dwell";
-import type { ReadState } from "./types";
+import { client } from "./client.js";
+import { ReadDwell } from "./read-dwell.js";
+import type { ReadState } from "./types.js";
 
 export function useSessionReadState(sessionId: string | null, root: RefObject<HTMLDivElement | null>, canRead: boolean, latestVisibleSeq: number, revisionHint: number) {
   const [state, setState] = useState<ReadState | null>(null);

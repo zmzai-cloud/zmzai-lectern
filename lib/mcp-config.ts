@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { parsePluginManifest, parsePluginMcp, type PluginMcpServer } from "@zmzai/agent-framework";
 import { resolve } from "node:path";
 
-import { dataDir } from "./runtime-constants";
+import { dataDir } from "./runtime-constants.js";
 
 export type McpConfigResult = {
   entries: { name: string; spec: PluginMcpServer }[];

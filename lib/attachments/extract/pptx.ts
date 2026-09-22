@@ -17,11 +17,11 @@
 
 import type { ExtractedDocument } from "@zmzai/agent-framework";
 
-import { ExtractionFailure } from "./errors";
-import type { SectionDraft } from "./finalize";
-import { finalizeDocument, splitLongText } from "./finalize";
-import { attributeOf, decodeXml, tagBlocks, tagTexts } from "./xml";
-import { gateZipBytes, readZipEntries, type ZipEntry } from "./zip";
+import { ExtractionFailure } from "./errors.js";
+import type { SectionDraft } from "./finalize.js";
+import { finalizeDocument, splitLongText } from "./finalize.js";
+import { attributeOf, decodeXml, tagBlocks, tagTexts } from "./xml.js";
+import { gateZipBytes, readZipEntries, type ZipEntry } from "./zip.js";
 
 /** 幻灯片数上限（真实演示极少超过；超出时截断并写明）。 */
 const MAX_SLIDES = 500;

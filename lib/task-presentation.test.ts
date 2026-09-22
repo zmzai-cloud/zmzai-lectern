@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveTaskPresentation,
   type PresentationContext,
-} from "./task-presentation";
+} from "./task-presentation.js";
 
 /** 构造一个「空/空闲」基线上下文，测试里按需覆盖字段。 */
 function ctx(overrides: Partial<PresentationContext> = {}): PresentationContext {

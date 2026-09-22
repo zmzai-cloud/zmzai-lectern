@@ -27,10 +27,10 @@ vi.mock("@/lib/worktree", () => ({ worktreeForSession: () => undefined }));
 import type { AttachmentProvider } from "@zmzai/agent-framework";
 import { createAttachmentTools } from "@zmzai/agent-framework";
 
-import { pdfOf } from "./extract/fixtures";
-import { extractAttachment } from "./extract/queue";
-import { attachmentProviderFor } from "./scope";
-import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
+import { pdfOf } from "./extract/fixtures.js";
+import { extractAttachment } from "./extract/queue.js";
+import { attachmentProviderFor } from "./scope.js";
+import { attachmentStoreFor, type SqliteAttachmentStore } from "./store.js";
 
 const SESSION = "ses_pipeline";
 let root: string;

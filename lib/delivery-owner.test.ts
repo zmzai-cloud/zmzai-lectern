@@ -9,7 +9,7 @@ const fixture = vi.hoisted(() => ({ dir: "", owner: vi.fn() }));
 vi.mock("./runtime-constants", () => ({ get dataDir() { return fixture.dir; } }));
 vi.mock("./session-owner", () => ({ resolveSessionOwner: fixture.owner }));
 vi.mock("./worktree", () => ({ worktreeForSession: () => null }));
-import { beginAttempt, getOrCreateDelivery, resolveOwner } from "./delivery";
+import { beginAttempt, getOrCreateDelivery, resolveOwner } from "./delivery.js";
 
 fixture.dir = mkdtempSync(join(tmpdir(), "lectern-delivery-owner-"));
 fixture.owner.mockImplementation((sessionId: string) => ({

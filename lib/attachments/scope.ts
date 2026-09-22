@@ -6,13 +6,13 @@
  * 会话 id 都必须立刻被观察到（与 `resolveSessionOwner` 同一条原则）。
  */
 
-import { dataDirFor, getActiveProject } from "@/lib/projects";
-import { resolveSessionOwner } from "@/lib/session-owner";
+import { dataDirFor, getActiveProject } from "../projects.js";
+import { resolveSessionOwner } from "../session-owner.js";
 import { validateExtractedDocument, type AttachmentProvider, type InputAttachmentRef } from "@zmzai/agent-framework";
 
-import { EXTRACTOR_VERSION, type ExtractionCachePayload } from "./extract";
-import { DRAFT_SESSION_ID } from "./limits";
-import { attachmentStoreFor, type SqliteAttachmentStore } from "./store";
+import { EXTRACTOR_VERSION, type ExtractionCachePayload } from "./extract/index.js";
+import { DRAFT_SESSION_ID } from "./limits.js";
+import { attachmentStoreFor, type SqliteAttachmentStore } from "./store.js";
 
 export type AttachmentScope = {
   /** 实际作用域：真实会话 id，或草稿作用域 `__draft__`。 */

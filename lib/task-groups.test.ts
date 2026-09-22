@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groupTasks, taskGroup, unreadTaskCount } from "./task-groups";
-import type { SessionListItem } from "./types";
+import { groupTasks, taskGroup, unreadTaskCount } from "./task-groups.js";
+import type { SessionListItem } from "./types.js";
 
 const task = (id: string, extra: Partial<SessionListItem> = {}): SessionListItem => ({
   id, title: id, agent: "default", model: { providerId: "openai", modelId: "test" },

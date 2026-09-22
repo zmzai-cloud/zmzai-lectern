@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { ChatProjector, EMPTY_CHAT_VIEW, MESSAGE_CACHE_LIMIT, transcriptToEvents } from "./chat-projector";
-import type { Artifact } from "./types";
+import { ChatProjector, EMPTY_CHAT_VIEW, MESSAGE_CACHE_LIMIT, transcriptToEvents } from "./chat-projector.js";
+import type { Artifact } from "./types.js";
 
 it("bounds 10,000 streamed messages without evicting independent task snapshots", () => {
   const projector = new ChatProjector();

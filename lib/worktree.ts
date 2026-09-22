@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { dataDir } from "./runtime-constants";
-import { WorkflowError } from "./workflow-error";
+import { dataDir } from "./runtime-constants.js";
+import { WorkflowError } from "./workflow-error.js";
 
 /**
  * 会话级 git worktree 隔离（robustness-plan §9）：

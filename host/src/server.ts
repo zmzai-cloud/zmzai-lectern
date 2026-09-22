@@ -50,6 +50,7 @@ export type HostServerOptions = {
     resumeTask?(sessionId: string): Promise<boolean>;
     compact?(sessionId: string): Promise<{ ok: boolean; reason?: string }>;
     markRead?(sessionId: string, messageSeq: number, revision: number): Promise<unknown>;
+    rewind?(sessionId: string, messageId: string, text?: string): Promise<{ ok: boolean; status?: number; error?: string; code?: string }>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -177,6 +178,25 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/rewind") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const messageId = typeof body.messageId === "string" ? body.messageId : "";
+          const text = typeof body.text === "string" && body.text ? body.text : undefined;
+          if (!sessionId || !messageId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 与 messageId 必填" });
+            return;
+          }
+          const rewindImpl = options.realRuntime?.rewind;
+          if (!rewindImpl) {
+            send(res, 404, { error: "NOT_FOUND", message: "后端未提供 rewind" });
+            return;
+          }
+          const outcome = await rewindImpl(sessionId, messageId, text);
+          if (outcome.ok) send(res, 200, { ok: true });
+          else send(res, outcome.status ?? 500, { error: outcome.error, ...(outcome.code ? { code: outcome.code } : {}) });
           return;
         }
         if (req.method === "POST" && url.pathname === "/v1/commands/compact") {

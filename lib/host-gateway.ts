@@ -69,7 +69,8 @@ export async function hostGateway(request: Request): Promise<Response | null> {
     // 只提取 muzhi_session 单值（spec §5.3：不转发全部浏览器 cookie）
     const cookie = request.headers.get("cookie") ?? "";
     const match = /(?:^|;\s*)muzhi_session=([^;]+)/.exec(cookie);
-    if (match) reqHeaders["x-lectern-credential"] = decodeURIComponent(match[1]!);
+    // 全 header 形式转发（与 ALS 存储一致，authHeaders/resolveModel 直接可用）
+    if (match) reqHeaders["x-lectern-credential"] = `muzhi_session=${decodeURIComponent(match[1]!)}`;
   }
   const res = await fetch(target, { method: request.method, headers: reqHeaders, body, signal: request.signal });
   const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/json; charset=utf-8" });

@@ -39,6 +39,15 @@ try {
   const readState = await fetch(`${base}/v1/sessions/${session.id}/read-state`, { headers: H });
   const usage = await (await fetch(`${base}/v1/sessions/${session.id}/usage`, { headers: H })).json();
   const gone = await fetch(`${base}/v1/sessions/ses_none/messages`, { headers: H });
+  // B3 rewind：回溯种子消息 → ok:true 且消息被截断（重发经标准管道受理；
+  // 真实模型出败属 relay 凭据范畴，不影响 rewind 语义判定）
+  let rewound = { ok: false, error: "未执行" };
+  try {
+    rewound = await (await fetch(`${base}/v1/commands/rewind`, { method: "POST", headers: { ...H, "content-type": "application/json" }, body: JSON.stringify({ sessionId: session.id, messageId: mid }) })).json();
+  } catch (e) {
+    rewound = { ok: false, error: String(e) };
+  }
+  const afterRewind = await (await fetch(`${base}/v1/sessions/${session.id}/messages`, { headers: H })).json();
   const listed = await (await fetch(`${base}/v1/sessions?userId=b1-user`, { headers: H })).json();
   const other = await (await fetch(`${base}/v1/sessions?userId=elsewhere`, { headers: H })).json();
   const noToken = await fetch(`${base}/v1/sessions?userId=b1-user`);
@@ -47,6 +56,8 @@ try {
   const searchHit = Array.isArray(search?.results) ? search.results.length > 0 : search?.hits?.length > 0;
   const readOk = readState.status === 200 || readState.status === 404; // 实现可选
   const usageHit = usage?.tokens?.input === 12;
+  const rewindOk = rewound.ok === true;
+  const truncated = Array.isArray(afterRewind) && afterRewind.every((entry) => entry.info?.id !== mid);
   const ok = health.ok !== false
     && listed.sessions.some((sn) => sn.id === session.id)
     && other.sessions.every((sn) => sn.id !== session.id)
@@ -55,8 +66,10 @@ try {
     && (searchHit === undefined || searchHit !== false)
     && readOk
     && usageHit
-    && gone.status === 404;
-  console.log(`[m2b-real] ${ok ? "PASS" : "FAIL"}：列表/隔离/401=${listed.sessions.some((sn) => sn.id === session.id)}/${other.sessions.every((sn) => sn.id !== session.id)}/${noToken.status}；messages=${msgHit}；search=${String(searchHit)}；read-state=${readState.status}；usage(input=12)=${usageHit}；不存在会话=${gone.status}`);
+    && gone.status === 404
+    && rewindOk
+    && truncated;
+  console.log(`[m2b-real] ${ok ? "PASS" : "FAIL"}：列表/隔离/401=${listed.sessions.some((sn) => sn.id === session.id)}/${other.sessions.every((sn) => sn.id !== session.id)}/${noToken.status}；messages=${msgHit}；search=${String(searchHit)}；read-state=${readState.status}；usage(input=12)=${usageHit}；不存在会话=${gone.status}；rewind=${rewindOk}；截断=${truncated}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   try { process.kill(-host.pid, "SIGKILL"); } catch { /* 已退出 */ }

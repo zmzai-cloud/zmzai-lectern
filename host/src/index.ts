@@ -36,6 +36,22 @@ try {
     abort: (sessionId) => rt.runner.abort(sessionId),
     resumeTask: (sessionId) => rt.runner.resumeTask(sessionId),
     compact: (sessionId) => rt.runner.compactSession(sessionId),
+    rewind: async (sessionId, messageId, text) => {
+      const { executeRewind } = await import("../../lib/rewind-flow.js");
+      const { credentialFor } = await import("./server.js");
+      try {
+        const outcome = await executeRewind({
+          sessionId,
+          messageId,
+          ...(text ? { text } : {}),
+          cookieHeader: credentialFor(sessionId) ?? null,
+          runtime: rt as never,
+        });
+        return outcome.ok ? { ok: true } : { ok: false, status: outcome.status, error: outcome.error, ...(outcome.code ? { code: outcome.code } : {}) };
+      } catch (error) {
+        return { ok: false, status: 500, error: error instanceof Error ? error.message : String(error) };
+      }
+    },
     markRead: (sessionId, messageSeq, revision) => {
       const fn = store.markRead;
       if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));

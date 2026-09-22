@@ -1,3 +1,17 @@
+# Lectern 变更记录
+
+## 0.7.0 —— M2c：独立 Lectern Host 上线（B0 进程架构切换）
+
+**架构变更（本版本核心）**：Agent 运行时从 Next.js 进程整体迁入独立的 Lectern Host 进程。页面刷新、Next 服务重启不再中断任务；Electron 应用退出时有序收尾（Host 先停新命令、收任务树与终端，10s 上限强杀兜底）。
+
+- **Host 生命周期**：`host.lock` 活锁互斥（不删锁接管）；异常退出 60s/3 次自动重启上限，超限弹窗报障；`/v1/shutdown` 有序停止。
+- **路由族全量迁移（20 条）**：sessions 只读族（列表/消息/搜索/读状态/用量）、命令族（prompt/abort/permission/task）、状态操作族（compact/read-state/rewind——回溯复合流抽入 lib 双端共用）、附件族（字节流直通+安全头透传）、终端族（PTY 七端点）、MCP 状态。`pnpm arch:check` 架构门禁落地。
+- **credentialRef 鉴权链（spec §5.3）**：网关只提取 `muzhi_session` 单值经内部头转发，Host 内存表→模型流按会话取用；不落日志/事件，进程重启即失效。
+- **SSE 水位校验（A08）**：`since` 超过最新 seq 返回 409 CURSOR_STALE 显式重同步。
+- **性能基线**：durable receipt p95 15.7ms（门槛 300ms）。
+- **回滚逃生门**：`LECTERN_LEGACY_RUNTIME=1` 回退进程内 Runtime（已实测：flag off 时旧 handler 原样服务）。
+- 内嵌 `@zmzai/agent-framework` 升至 0.10.0（M1：Runner 六单元拆分、TOCTOU 修复、CompactionStore 跨 Attempt、ToolContract+toolCallId 台账、modelCaps 键改 ModelRef）。
+
 # Changelog
 
 ## 0.5.1 — 2026-09-07

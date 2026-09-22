@@ -1,6 +1,6 @@
 {
   "name": "zmzai-lectern",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "Lectern — Web / Desktop 同构的 Agent 工作台（Next.js 单页 + Electron 壳）",
   "main": "electron/main.cjs",
@@ -108,6 +108,9 @@
     "files": [
       "electron/**",
       ".next/standalone/**",
+      "host/dist/**",
+      "!host/dist/**/*.md",
+      "!host/dist/**/README*",
       "!**/.env",
       "!**/.env.*",
       "!.next/standalone/.next/cache/**",

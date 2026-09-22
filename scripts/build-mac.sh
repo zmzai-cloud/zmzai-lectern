@@ -19,6 +19,11 @@ guard_mv() {
 echo "==> [0/5] 清理历史打包产物（避免 dist 累积旧版本 dmg/zip）"
 bash scripts/clean-dist.sh
 
+echo "==> [0/5] host build（M2c-S16：Host dist 进打包资源）"
+pnpm host:build || { echo "❌ host:build 失败，中止打包" >&2; exit 1; }
+[ -f host/dist/host/src/index.js ] || { echo "❌ host/dist/host/src/index.js 缺失" >&2; exit 1; }
+echo '{"type":"module"}' > host/dist/package.json
+
 echo "==> [1/5] next build（生产构建，含 standalone 输出）"
 # next build 的默认堆上限按可用内存推导（本机 64GB 也只给到 ~4GB），实测跑到
 # 「Reached heap limit Allocation failed」直接中止（exit 134），崩在打包第一步。

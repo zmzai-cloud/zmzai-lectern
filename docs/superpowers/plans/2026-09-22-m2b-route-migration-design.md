@@ -1,6 +1,6 @@
 # M2b 设计：路由族分批迁移到 Host
 
-- 日期：2026-09-22；状态：**R-1/B1/B2 已实施**（见 §6 实施结果）
+- 日期：2026-09-22；状态：**B1–B4 全部实施完成，路由迁移主体收官**（见 §6）
 - 对应规格：§5.4（路由迁移清单）、§5.3（credentialRef）、§6（命令/事件协议）、§17 M2b 行
 - 前置：M2a 收口（S9–S12 全绿）；spec M2 纪律——**批次在隔离验证环境跑，未全部迁完不切生产入口**（双写红线）
 
@@ -94,6 +94,8 @@ POST /v1/commands/session               → createSession（已有）
 | R-1 前置 | `8d1e844` | lib 186 处导入补 .js + 3 处别名改相对；host 连带编译真实装配（bundler 解析 + dist type:module） |
 | B1 只读族 | `32cbda6`/`2891025` | 五端点经真实 runtimeFor；网关路由表 + /api/sessions 接线；进程级双验证 |
 | B2 命令族 | `aa16098`/`fcc938a`/`305b1d0`/`b8565ac` | prompt/abort/permission/task 四命令端点 + 网关 POST（rewriteBody + cookie 单值提取）；credentialRef 全链（内存表→streamFnFor→ALS 回退优先级）；495/495 |
+| B3 状态操作 | `42b227e`/`b7886a2` | compact/read-state 端点；SSE 水位 409 CURSOR_STALE（A08）；rewind 复合流抽 lib/rewind-flow（守卫→截断→事件→重发→重绑）双端共用；496/496 |
+| B4 附件/终端/mcp | `4b76809`/`93b0713`/`9c62a7f` | 附件三端点（字节流直通+安全头白名单）；terminal 七端点（PTY）；mcp 状态/rescan；worktree 查询；gateway-check 十一项全过 |
 
 实测与验证：real-check（五只读端点）、gateway-check（五项：列表/隔离/prompt
 带 cookie/abort/task）、M2a smoke 双模式 6/6、credential 优先级 2 单测、
@@ -105,5 +107,11 @@ POST /v1/commands/session               → createSession（已有）
 3. 行号删除误吞 modelProvider——装配静默降级，被进程级脚本当场抓获；
 4. 网关检查须插到目标 method 的 handler（task 路由 GET 有 POST 漏）。
 
-遗留：B3（compact/rewind）、B4（terminal/MCP/附件族）；relay 真实凭据的
-credential 端到端联调待有凭据环境；m2a 网关路由的生产 UI 接入随 M2c。
+遗留（按设计有意留旧面，非遗漏）：worktree 写操作（merge/discard，spec §10
+归 W1 重做）；multipart 上传适配（UI 通路，随 M2c）；terminal/stream（UI
+现用轮询读，迁移收益低，随 M2c 评估）。relay 真实凭据的 credential 端到端
+联调待有凭据环境。
+
+B4 排障记录（commit 可溯）：gateway 检查曾被误插进 JSDoc 注释块（create
+静默走旧 handler，靠响应形状差异定位）；kill 为发信号语义，status 收敛
+依赖 shell 退出时序，不进验证硬门槛。

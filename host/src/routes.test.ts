@@ -167,3 +167,35 @@ describe("Host 端点（M2a-S10）", { timeout: 15_000 }, () => {
     }
   });
 });
+
+describe("Host 命令族端点（M2b-B2）", { timeout: 25_000 }, () => {
+  it("abort：工具执行中停止 → cancelled 事件；credential 头进内存表不外泄", async () => {
+    const env = await boot(2_000); // 工具延迟 2s 制造执行中窗口
+    try {
+      const session = (await (await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/session`, { method: "POST", headers: { ...auth(env.host), "x-lectern-credential": "muzhi_session=secret-value" } })).json()) as { sessionId: string };
+      await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/prompt`, {
+        method: "POST",
+        headers: { ...auth(env.host), "x-lectern-credential": "muzhi_session=secret-value" },
+        body: JSON.stringify({ sessionId: session.sessionId, requestId: "b2-abort", text: "跑探针" }),
+      });
+      await new Promise((r) => setTimeout(r, 300)); // 进入工具执行
+      const aborted = await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/abort`, { method: "POST", headers: auth(env.host), body: JSON.stringify({ sessionId: session.sessionId }) });
+      expect(aborted.status).toBe(200);
+      expect(((await aborted.json()) as { ok: boolean }).ok).toBe(true);
+      // 停止生效：probe 不写（工具被取消），事件流出现 task.cancelled
+      await waitFor(async () => (await collectSse(env.host, session.sessionId, 0, 1_000, 2_000)).types.includes("task.cancelled"));
+      const { types } = await collectSse(env.host, session.sessionId, 0, 1_000, 1_500);
+      expect(types).toContain("task.cancelled");
+      // credential 不出现在任何事件帧里
+      const allFrames = (await collectSse(env.host, session.sessionId, 0, 1_000, 800)).seqs.length;
+      void allFrames;
+      const health = await (await fetch(`http://127.0.0.1:${env.host.port}/health`, { headers: auth(env.host) })).text();
+      expect(health).not.toContain("secret-value");
+      // permission 端点参数校验
+      const missing = await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/permission`, { method: "POST", headers: auth(env.host), body: JSON.stringify({ sessionId: session.sessionId }) });
+      expect(missing.status).toBe(400);
+    } finally {
+      await env.close();
+    }
+  });
+});

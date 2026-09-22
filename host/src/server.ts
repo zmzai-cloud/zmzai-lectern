@@ -46,6 +46,8 @@ export type HostServerOptions = {
   realRuntime?: {
     listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]>;
     messages(sessionId: string): Promise<unknown[]>;
+    abort?(sessionId: string): Promise<void>;
+    replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
     usage?(sessionId: string): Promise<unknown>;
@@ -68,6 +70,15 @@ async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, un
 type IncomingMessageLike = AsyncIterable<unknown> & { headers: Record<string, string | string[] | undefined> };
 
 export type RealRuntimeFace = NonNullable<HostServerOptions["realRuntime"]>;
+
+/** credentialRef（spec §5.3 的 B2 子集）：Next 网关只提取 muzhi_session 单值
+ *  经 x-lectern-credential 头转发，Host 存内存表供模型装配取用。
+ *  不落日志、不进事件、不写 store；进程重启即失效（重新登录恢复）。 */
+const credentialRefs = new Map<string, string>();
+
+export function credentialFor(sessionId: string): string | undefined {
+  return credentialRefs.get(sessionId);
+}
 
 function send(res: ServerResponseLike, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -165,8 +176,47 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           send(res, 200, { sessionId: await rt.createSession() });
           return;
         }
+        if (req.method === "POST" && url.pathname === "/v1/commands/abort") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          if (!sessionId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" });
+            return;
+          }
+          const abortImpl = options.realRuntime?.abort ?? rt.runner.abort.bind(rt.runner);
+          try {
+            await abortImpl(sessionId);
+            send(res, 200, { ok: true });
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/permission") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const requestId = typeof body.requestId === "string" ? body.requestId : "";
+          if (!sessionId || !requestId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 与 requestId 必填" });
+            return;
+          }
+          const replyImpl = options.realRuntime?.replyPermission
+            ?? ((sid: string, rid: string, reply: unknown, feedback?: string) => rt.runner.replyPermission(sid, rid, reply as never, feedback));
+          try {
+            const handled = await replyImpl(sessionId, requestId, body.reply, typeof body.feedback === "string" ? body.feedback : undefined);
+            send(res, 200, { handled });
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
         if (req.method === "POST" && url.pathname === "/v1/commands/prompt") {
           const body = await readJsonBody(req);
+          // credentialRef：网关提取的 muzhi_session 单值（存在才记；不落日志）
+          const credentialHeader = req.headers["x-lectern-credential"];
+          if (typeof body.sessionId === "string" && body.sessionId && typeof credentialHeader === "string" && credentialHeader) {
+            credentialRefs.set(body.sessionId, credentialHeader);
+          }
           const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
           const text = typeof body.text === "string" ? body.text.trim() : "";
           if (!sessionId || !text) {

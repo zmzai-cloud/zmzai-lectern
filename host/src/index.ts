@@ -31,6 +31,8 @@ try {
   const store = rt.store;
   realRuntime = {
     listSessions: (filter) => store.listSessions(filter),
+    abort: (sessionId) => rt.runner.abort(sessionId),
+    replyPermission: (sessionId, requestId, reply, feedback) => rt.runner.replyPermission(sessionId, requestId, reply as never, feedback),
     messages: async (sessionId) => {
       const session = await store.getSession(sessionId);
       if (!session) throw new Error("SESSION_NOT_FOUND");

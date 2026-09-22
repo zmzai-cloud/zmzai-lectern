@@ -1,5 +1,18 @@
 # Lectern 变更记录
 
+## 0.9.0 —— M3/M4：子代理持久协调 + B0 收官
+
+**本版本完成 B0 全部目标**（spec `2026-09-21-lectern-host-and-subagents-design.md`）：独立 Host、命令/状态边界、可并行可控可恢复的子代理能力。
+
+- **子代理五工具（spec §8.1）**：`agent_spawn`（立即返回 childId 不等待）、`agent_list`、`agent_send`（mailbox 幂等投递、终态拒绝）、`agent_wait`（首个终态 ≤30s）、`agent_cancel`（幂等取消树）。旧 `task` 工具保持兼容（spawn+wait 串行语义）。
+- **持久协调（spec §8.2）**：SubagentRecord 11 态状态机（CAS）+ mailbox 双 SQLite 表；限额队列（每根任务 3 / 全局 6，根间轮转根内 FIFO，env 可配）；spawn 幂等（同 requestId 同 child）。
+- **父任务 parked 机制（spec §8.2 调度状态）**：父轮次结束但必要子代理未终态 → 释放父并发槽、Task 保持 running；子结果入邮箱与唤醒意图同事务、水位幂等合并（多子同时完成一个父唤醒）；终态父拒绝自动复活。
+- **父验证门禁（spec §9.4）**：消费 ≠ 接受——`subagentPending` 进完成判定，子代理自称成功不能换来 delivered（A36）；consumeState（pending_review/accepted/rejected）与执行状态正交。
+- **权限/取消**：子权限 = 父上限 ∩ preset；read_only 模式写路径全拒；取消沿协调器递归全后代。
+- 内嵌 `@zmzai/agent-framework` 升至 0.11.0（子代理全模块 + M1 六单元拆分 + TOCTOU 修复 + CompactionStore + ToolContract）。
+
+**M4 发版检查**：framework 579/579 + lectern 496/496 + gateway-check 十一项 + real-check 八项全绿；arch-check 门禁 0 违规；A01–A04/A08/A13/A14/A18/A24/A28/A29/A36 逐项落地。真实模型基线重测按评测后置决策归 E 阶段（不阻塞本发版，spec §17.0）。
+
 ## 0.7.0 —— M2c：独立 Lectern Host 上线（B0 进程架构切换）
 
 **架构变更（本版本核心）**：Agent 运行时从 Next.js 进程整体迁入独立的 Lectern Host 进程。页面刷新、Next 服务重启不再中断任务；Electron 应用退出时有序收尾（Host 先停新命令、收任务树与终端，10s 上限强杀兜底）。

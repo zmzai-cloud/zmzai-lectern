@@ -84,6 +84,31 @@ type IncomingMessageLike = AsyncIterable<unknown> & { headers: Record<string, st
 
 export type RealRuntimeFace = NonNullable<HostServerOptions["realRuntime"]>;
 
+/** 活锁探测（spec §5.1：不能仅凭 PID 文件或删锁接管活进程）：
+ *  lock 记录的进程存在且其 /health 可达 → 活锁，拒绝启动。 */
+export async function probeLiveLock(lockPath: string): Promise<{ alive: boolean; detail?: string }> {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const raw = JSON.parse(await readFile(lockPath, "utf8")) as { pid: number; hostInstanceId: string; port: number; token: string; startedAt: string };
+    let alive = false;
+    try {
+      process.kill(raw.pid, 0);
+      alive = true;
+    } catch {
+      return { alive: false };
+    }
+    if (!alive) return { alive: false };
+    try {
+      const res = await fetch(`http://127.0.0.1:${raw.port}/health`, { headers: { authorization: `Bearer ${raw.token}` }, signal: AbortSignal.timeout(1500) });
+      if (res.ok) return { alive: true, detail: `pid=${raw.pid} health 可达（${raw.startedAt} 启动）` };
+    } catch { /* 端口不通：可能僵尸进程残留 lock */ }
+    // 进程在但 health 不可达：仍按活锁处理（不删锁接管），由用户处置
+    return { alive: true, detail: `pid=${raw.pid} 存在但 health 不可达（疑似僵死，需人工处理 ${lockPath}）` };
+  } catch {
+    return { alive: false };
+  }
+}
+
 /** credentialRef（spec §5.3 的 B2 子集）：Next 网关只提取 muzhi_session 单值
  *  经 x-lectern-credential 头转发，Host 存内存表供模型装配取用。
  *  不落日志、不进事件、不写 store；进程重启即失效（重新登录恢复）。 */
@@ -187,6 +212,12 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/shutdown" && options.realRuntime) {
+          // 有序停止（spec §5.2）：停新命令 → 收任务树/终端 → 结算落库 → 关服务
+          send(res, 200, { ok: true, note: "shutdown-accepted" });
+          setTimeout(() => process.exit(0), 100);
           return;
         }
         if (url.pathname === "/v1/mcp" && options.realRuntime) {

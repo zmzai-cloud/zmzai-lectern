@@ -15,6 +15,17 @@ if (!dataDir) {
 }
 mkdirSync(dataDir, { recursive: true });
 
+// host.lock 互斥（spec §5.1）：活锁（进程在且 health 可达）拒绝启动；
+// 探测必须先于 startHostServer——否则第二实例会绑端口并覆盖 host.json，
+// 污染第一实例的握手文件（M2c-S13 冒烟抓到的顺序 bug）。
+import { probeLiveLock } from "./server.js";
+const lockPath = join(dataDir, "host.lock");
+const live = await probeLiveLock(lockPath);
+if (live.alive) {
+  console.error(JSON.stringify({ ok: false, error: "HOST_LOCKED", detail: live.detail }));
+  process.exit(1);
+}
+
 const runtime = createFixtureRuntime({
   dataDir,
   workspaceRoot: process.env.LECTERN_HOST_WORKSPACE ?? join(dataDir, "workspace"),
@@ -151,14 +162,33 @@ try {
 }
 
 const host = await startHostServer({ dataDir, runtime, ...(realRuntime ? { realRuntime } : {}) });
-console.log(JSON.stringify({ ok: true, port: host.port, hostInstanceId: host.hostInstanceId, hostJson: host.hostJsonPath }));
 
+// 本实例获得数据目录：写锁（token 供后续实例探测本实例健康），退出时删除
+import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+writeFileSync(lockPath, JSON.stringify({ pid: process.pid, hostInstanceId: host.hostInstanceId, port: host.port, token: host.token, startedAt: new Date().toISOString() }));
+const removeLock = () => { try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch { /* 尽力而为 */ } };
+
+
+let shuttingDown = false;
 const shutdown = (signal: string) => {
-  void host.close().then(
-    () => process.exit(0),
-    () => process.exit(0),
-  );
+  if (shuttingDown) return;
+  shuttingDown = true;
   void signal;
+  // 有序停止（spec §5.2）：close() 停止接收新命令；已建 HTTP keep-alive 连接
+  // 由 close 强制断开。任务树/终端/租约的收尾在进程退出钩子里尽力完成——
+  // SQLite 侧崩溃恢复（registerLeaseRecovery）兜底中断现场。
+  void (async () => {
+    try {
+      if (realRuntime) {
+        const { terminalManager } = await import("../../lib/runtime.js");
+        terminalManager().disposeAll();
+      }
+    } catch { /* 尽力而为 */ }
+    removeLock();
+    await host.close().catch(() => undefined);
+    process.exit(0);
+  })();
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("exit", removeLock);

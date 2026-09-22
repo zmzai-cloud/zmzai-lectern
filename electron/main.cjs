@@ -272,12 +272,16 @@ function ensureWebServer() {
   const serverCwd = process.platform === "win32" ? process.resourcesPath : userData;
   fs.mkdirSync(userData, { recursive: true });
   // standalone server.js 不解析 -p 参数，端口走 PORT 环境变量
+  ensureHostProcess(userData, dataDir);
   webProcess = utilityProcess.fork(serverEntry, [], {
     cwd: serverCwd,
     env: {
       ...process.env,
       NODE_ENV: "production",
       PORT: String(WEB_PORT),
+      // M2c-S15：armed 默认化——GATEWAY 指向 Host 握手文件（Host 未启动或
+      // LEGACY 模式时不注入，网关休眠走进程内 Runtime）
+      ...(hostJsonPath && fs.existsSync(hostJsonPath) ? { LECTERN_HOST_GATEWAY: hostJsonPath, LECTERN_HOST_BOOTSTRAP: hostJsonPath } : {}),
       HOSTNAME: "127.0.0.1",
       // 会话与工作区必须显式落用户目录，不依赖服务 cwd 或安装目录可写性。
       // LECTERN_DATA_DIR / LECTERN_WORKSPACE 是 lib/runtime-constants 实际读取的变量；
@@ -306,6 +310,83 @@ function ensureWebServer() {
     if (code !== 0 && !app.isQuitting) console.error(`[harness] 内嵌服务退出码 ${code}`);
   });
   console.log(`[lectern] 内嵌服务日志：${logPath}`);
+}
+
+/** M2c-S13：Host 进程（Lectern Host，spec §5）。生产模式下与 Next 并行 fork；
+ *  dev 由 scripts/dev-host.sh 外部拉起（Main 不 fork，next dev 保持纯 UI 模式）。
+ *  armed 注入：GATEWAY/BOOTSTRAP 指向 host.json → Next 网关默认走 Host；
+ *  LECTERN_LEGACY_RUNTIME=1 时不注入（回滚逃生门，旧进程内 Runtime 服务）。
+ *  重启护栏（spec §5.2）：异常退出 60s 窗口内最多 3 次，超限弹窗报障不循环。 */
+let hostProcess = null;
+let hostRestartTimes = [];
+let hostJsonPath = "";
+
+function ensureHostProcess(userData, dataDir) {
+  if (!app.isPackaged) return;
+  if (process.env.LECTERN_LEGACY_RUNTIME === "1") {
+    console.log("[lectern] LECTERN_LEGACY_RUNTIME=1：跳过 Host，走进程内 Runtime（回滚模式）");
+    return;
+  }
+  const hostEntry = path.join(app.getAppPath(), "host", "dist", "host", "src", "index.js");
+  if (!fs.existsSync(hostEntry)) {
+    console.error(`[lectern] Host 入口缺失：${hostEntry}（打包内容不完整）`);
+    return;
+  }
+  const hostDataDir = path.join(dataDir, "host");
+  fs.mkdirSync(hostDataDir, { recursive: true });
+  hostJsonPath = path.join(hostDataDir, "host.json");
+  const hostLog = openWebLog(userData); // 复用 web 日志通道（合流 <userData>/logs/web.log）
+  spawnHost(hostEntry, hostDataDir, hostLog);
+}
+
+function spawnHost(hostEntry, hostDataDir, hostLog) {
+  hostProcess = utilityProcess.fork(hostEntry, [], {
+    cwd: hostDataDir,
+    env: {
+      ...process.env,
+      LECTERN_HOST_DATA: hostDataDir,
+      LECTERN_WORKSPACE: path.join(path.dirname(hostDataDir), "workspace"),
+    },
+    stdio: "pipe",
+  });
+  hostProcess.stdout?.on("data", (chunk) => hostLog(chunk));
+  hostProcess.stderr?.on("data", (chunk) => hostLog(chunk));
+  hostProcess.on("exit", (code) => {
+    hostLog(`[host] Host 退出 code=${code}\n`);
+    if (code !== 0 && !app.isQuitting) restartHostGuarded(hostEntry, hostDataDir, hostLog);
+  });
+}
+
+function restartHostGuarded(hostEntry, hostDataDir, hostLog) {
+  const now = Date.now();
+  hostRestartTimes = hostRestartTimes.filter((t) => now - t < 60_000);
+  if (hostRestartTimes.length >= 3) {
+    hostLog("[host] 60s 内异常退出已达 3 次，停止自动重启（spec §5.2）\n");
+    const { dialog } = require("electron");
+    dialog.showErrorBox("Lectern Host 故障", "Host 进程在 60 秒内异常退出 3 次，已停止自动重启。\n请查看日志后重启应用（<userData>/logs/web.log）。");
+    return;
+  }
+  hostRestartTimes.push(now);
+  hostLog(`[host] 异常退出，自动重启（第 ${hostRestartTimes.length}/3 次）\n`);
+  spawnHost(hostEntry, hostDataDir, hostLog);
+}
+
+/** Host 有序停止：HTTP graceful（停新命令/收终端）→ 8s 兜底 SIGKILL。 */
+async function stopHostProcess() {
+  if (!hostProcess) return;
+  try {
+    const lock = fs.existsSync(hostJsonPath) ? JSON.parse(fs.readFileSync(hostJsonPath, "utf8")) : null;
+    if (lock?.port && lock?.token) {
+      await fetch(`http://127.0.0.1:${lock.port}/v1/shutdown`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${lock.token}` },
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => undefined);
+    }
+  } catch { /* 尽力而为 */ }
+  try { hostProcess.kill(); } catch { /* 已退出 */ }
+  await new Promise((r) => setTimeout(r, 500));
+  try { if (hostProcess?.pid) process.kill(hostProcess.pid, "SIGKILL"); } catch { /* 已退出 */ }
 }
 
 /** 等待 Next.js 就绪（dev 下 next dev 编译首屏较慢，最长等 120s）。 */
@@ -466,6 +547,7 @@ app.on("before-quit", (event) => {
       console.warn(`[lectern] 优雅收尾未完成，硬杀兜底：${err?.message ?? err}`);
     }
     gracefulDone = true;
+    await stopHostProcess().catch(() => undefined);
     webProcess?.kill();
     app.exit(0);
   })();

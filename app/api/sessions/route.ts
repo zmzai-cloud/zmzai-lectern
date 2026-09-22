@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isSessionActive, isSessionAwaitingPermission } from "@zmzai/agent-framework";
@@ -27,6 +28,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const project = getActiveProject();
   const runtime = cloudRuntime();
   // 跨项目聚合（P1 会话稳定性：重启后找回任意项目的历史会话）：?all=1 时

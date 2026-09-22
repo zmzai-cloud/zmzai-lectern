@@ -14,6 +14,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock("node:fs", () => ({ existsSync: () => true, mkdirSync: vi.fn(), watch: vi.fn() }));
 vi.mock("@zmzai/agent-framework", () => ({
   createAgentRuntime: fixture.create,
+  SubagentCoordinator: class { constructor() {} },
   createSqliteSessionStore: () => ({}), createSqliteEventLog: () => ({}),
   createOpenAiModelProvider: () => ({ getModel: () => ({}) }),
   createGitTools: fixture.gitTools, createTerminalTools: fixture.terminalTools,

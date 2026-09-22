@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { resolve } from "node:path";
 import {
   createAgentRuntime,
+  SubagentCoordinator,
   createAttachmentTools,
   createSqliteSessionStore,
   createSqliteEventLog,
@@ -261,6 +262,8 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。
+  // late-bind holder：runtime 构造后回填 runner 引用（协调器的 runChild 用）
+  const registryHolder: { runner?: { runAttempt(session: import("@zmzai/agent-framework").SessionInfo, input: { text: string; agent?: string }): Promise<unknown>; abort(sessionId: string): Promise<void> } } = {};
   const localTools = [...baseLocalTools];
 
   // MCP server 懒启动：不阻塞首个 prompt；单 server 失败不影响其它（statuses 透出）
@@ -321,6 +324,29 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     sandbox: { kind: "subprocess", workspaceRoot: wsRoot },
     localTools,
     capabilities: { repoMap: { workspaceRoot: wsRoot }, subagents: 1 },
+      // M3-S21：子代理协调器——runner 的 spawnSubagent 协调路径预建子会话后
+      // 交 coordinator 登记；runChild/abortChild late-bind 到本 runtime 的
+      // runner（构造时 runtime 尚未存在，经 holder 闭包引用）
+      subagentCoordinator: new SubagentCoordinator({
+        store: sessionStore,
+        registry: undefined as never, // 预建路径（runner 侧 stamp）不使用 registry
+        createChildSession: async () => {
+          throw new Error("runner 预建路径不应调 createChildSession");
+        },
+        runChild: async (childId, prompt) => {
+          const childSession = await sessionStore.getSession(childId);
+          if (!childSession) throw new Error(`子会话不存在：${childId}`);
+          await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).runAttempt(childSession, { text: prompt, agent: childSession.agent });
+          return "completed";
+        },
+        abortChild: async (childId) => {
+          await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).abort(childId);
+        },
+        limits: {
+          perRoot: Number(process.env.LECTERN_SUBAGENT_PER_ROOT ?? "3"),
+          global: Number(process.env.LECTERN_SUBAGENT_GLOBAL ?? "6"),
+        },
+      }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠
     runnerOptions: {
       // B2：Host 模式凭据通道——ALS 不可用时按 sessionId 取 credentialRef
@@ -355,6 +381,11 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       },
     },
   });
+  registryHolder.runner = runtime.runner;
+  (registryHolder as { resolveRunner?: () => unknown }).resolveRunner = () => {
+    if (!registryHolder.runner) throw new Error("runner 未初始化");
+    return registryHolder.runner;
+  };
   cache.set(cacheKey, runtime);
   return runtime;
 }

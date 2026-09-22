@@ -51,6 +51,9 @@ export type HostServerOptions = {
     compact?(sessionId: string): Promise<{ ok: boolean; reason?: string }>;
     markRead?(sessionId: string, messageSeq: number, revision: number): Promise<unknown>;
     rewind?(sessionId: string, messageId: string, text?: string): Promise<{ ok: boolean; status?: number; error?: string; code?: string }>;
+    attachmentUpload?(sessionId: string, input: { filename: string; mediaType: string; bytes: Buffer }): Promise<unknown>;
+    attachmentReceipt?(sessionId: string, attachmentId: string): Promise<unknown>;
+    attachmentRaw?(sessionId: string, attachmentId: string, download: boolean): Promise<unknown>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -178,6 +181,69 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/attachment") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const filename = typeof body.filename === "string" ? body.filename : "";
+          const mediaType = typeof body.mediaType === "string" ? body.mediaType : "application/octet-stream";
+          const bytes = typeof body.bytesBase64 === "string" ? Buffer.from(body.bytesBase64, "base64") : null;
+          if (!sessionId || !filename || !bytes || bytes.length === 0) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId/filename/bytesBase64 必填" });
+            return;
+          }
+          const upload = options.realRuntime?.attachmentUpload;
+          if (!upload) {
+            send(res, 404, { error: "NOT_FOUND", message: "后端未提供附件上传" });
+            return;
+          }
+          try {
+            send(res, 200, await upload(sessionId, { filename, mediaType, bytes }));
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
+        const attMatch = /^\/v1\/attachments\/([^/]+)(\/raw)?$/.exec(url.pathname);
+        if (req.method === "GET" && attMatch && options.realRuntime) {
+          const sessionId = url.searchParams.get("sessionId") ?? "";
+          if (!sessionId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" });
+            return;
+          }
+          try {
+            if (attMatch[2]) {
+              const raw = (await options.realRuntime.attachmentRaw?.(sessionId, decodeURIComponent(attMatch[1]), url.searchParams.get("download") === "1")) as
+                | { kind: "not_found" | "gone"; message: string; status: number }
+                | { kind: "raw"; mediaType: string; size: number; filename: string; disposition: string; stream: import("node:stream").Readable }
+                | undefined;
+              if (!raw || raw.kind !== "raw") {
+                const miss = raw as { status?: number; message?: string; kind?: string } | undefined;
+                send(res, miss?.status ?? 404, { error: miss?.message ?? "附件不存在", ...(miss?.kind === "gone" ? { code: "not_found" } : {}) });
+                return;
+              }
+              res.writeHead(200, {
+                "content-type": raw.mediaType,
+                "content-length": String(raw.size),
+                "content-disposition": `${raw.disposition}; filename="${raw.filename.replace(/[^ -~]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(raw.filename)}`,
+                "cache-control": "private, max-age=0, must-revalidate",
+                "x-content-type-options": "nosniff",
+                "cross-origin-resource-policy": "same-origin",
+                "content-security-policy": "default-src 'none'; sandbox; frame-ancestors 'none'",
+              });
+              raw.stream.pipe(res);
+              return;
+            }
+            const receipt = await options.realRuntime.attachmentReceipt?.(sessionId, decodeURIComponent(attMatch[1]));
+            if (!receipt || (receipt as { kind?: string }).kind === "not_found") {
+              send(res, 404, { error: "附件不存在或不属于该会话", code: "not_found" });
+              return;
+            }
+            send(res, 200, receipt);
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
           return;
         }
         if (req.method === "POST" && url.pathname === "/v1/commands/rewind") {

@@ -52,6 +52,29 @@ try {
         return { ok: false, status: 500, error: error instanceof Error ? error.message : String(error) };
       }
     },
+    attachmentUpload: async (sessionId, input) => {
+      const { attachmentScopeFor } = await import("../../lib/attachments/scope.js");
+      const scope = attachmentScopeFor(sessionId);
+      const kind = /^image\//.test(input.mediaType) ? "image" : input.mediaType === "text/plain" || input.mediaType === "text/markdown" ? "text" : "document";
+      return scope.store.put({ ...input, kind, sessionId: scope.sessionId } as never) as unknown;
+    },
+    attachmentReceipt: async (sessionId, attachmentId) => {
+      const { attachmentScopeFor } = await import("../../lib/attachments/scope.js");
+      const scope = attachmentScopeFor(sessionId);
+      const record = scope.store.getScoped(attachmentId, scope.sessionId);
+      if (!record) return { kind: "not_found" };
+      return { kind: "receipt", attachment: record, availability: scope.store.blobExists(record.id) };
+    },
+    attachmentRaw: async (sessionId, attachmentId, download) => {
+      const { attachmentScopeFor } = await import("../../lib/attachments/scope.js");
+      const scope = attachmentScopeFor(sessionId);
+      const record = scope.store.getScoped(attachmentId, scope.sessionId);
+      if (!record) return { kind: "not_found" as const, message: "附件不存在或不属于该会话", status: 404 };
+      const opened = scope.store.open(record.id);
+      if (!opened) return { kind: "gone" as const, message: "附件文件已不可用", status: 410 };
+      const inline = /^(text\/plain|text\/markdown|image\/png|image\/jpeg|image\/webp|application\/pdf)$/i.test(record.mediaType);
+      return { kind: "raw" as const, mediaType: record.mediaType, size: record.size, filename: record.filename, disposition: download || !inline ? "attachment" : "inline", stream: opened.stream };
+    },
     markRead: (sessionId, messageSeq, revision) => {
       const fn = store.markRead;
       if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));

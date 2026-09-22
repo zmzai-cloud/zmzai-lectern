@@ -9,8 +9,10 @@ import { hostBootstrap } from "./m2a-host.js";
 export type GatewayRoute = {
   method: string;
   pattern: RegExp;
-  hostPath: (groups: string[]) => string;
+  hostPath?: (groups: string[]) => string;
   passQuery?: boolean;
+  /** 完整 URL 构造（含 query 注入）；返回后强制指向 Host 端口。 */
+  hostUrl?: (groups: string[], url: URL) => URL;
   /** POST 路由：把路径参数并入 body（Host 命令面以 sessionId 为准）。 */
   rewriteBody?: (groups: string[], body: Record<string, unknown>) => Record<string, unknown>;
   /** true = 从请求 Cookie 提取 muzhi_session 单值，以 x-lectern-credential
@@ -31,6 +33,13 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/task$/, hostPath: () => "/v1/commands/task", rewriteBody: (g, b) => ({ action: b.action, sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/compact$/, hostPath: () => "/v1/commands/compact", rewriteBody: (g) => ({ sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: () => "/v1/commands/read-state", rewriteBody: (g, b) => ({ messageSeq: b.messageSeq, revision: b.revision, sessionId: g[0] }) },
+  // B4：附件（下载字节流直通；Next 的 ?raw=1 转为 Host /raw 路径）
+  { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/attachments\/([^/]+)$/, hostUrl: (g, url) => {
+      const raw = url.searchParams.get("raw") === "1";
+      const q = new URLSearchParams({ sessionId: g[0] });
+      if (url.searchParams.get("download") === "1") q.set("download", "1");
+      return new URL(`/v1/attachments/${g[1]}${raw ? "/raw" : ""}?${q}`, "http://127.0.0.1");
+    } },
 ];
 
 export function gatewayArmed(): boolean {
@@ -56,8 +65,11 @@ export async function hostGateway(request: Request): Promise<Response | null> {
   // 验证环境：host.json 路径可被 LECTERN_HOST_GATEWAY 显式覆盖（与
   // LECTERN_HOST_BOOTSTRAP 分离，网关与 m2a 实验路由互不耦合）
   const boot = JSON.parse((await import("node:fs")).readFileSync(override, "utf8")) as { port: number; token: string };
-  const target = new URL(`http://127.0.0.1:${boot.port}${hit.route.hostPath(hit.groups)}`);
-  if (hit.route.passQuery) target.search = url.search;
+  const target = hit.route.hostUrl
+    ? hit.route.hostUrl(hit.groups, url)
+    : new URL(`http://127.0.0.1:${boot.port}${hit.route.hostPath!(hit.groups)}`);
+  if (hit.route.hostUrl) target.host = `127.0.0.1:${boot.port}`;
+  else if (hit.route.passQuery) target.search = url.search;
   const reqHeaders: Record<string, string> = { authorization: `Bearer ${boot.token}` };
   let body: string | undefined;
   if (hit.route.rewriteBody) {
@@ -74,6 +86,11 @@ export async function hostGateway(request: Request): Promise<Response | null> {
   }
   const res = await fetch(target, { method: request.method, headers: reqHeaders, body, signal: request.signal });
   const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/json; charset=utf-8" });
-  if (res.headers.get("cache-control")) headers.set("cache-control", res.headers.get("cache-control")!);
+  // 透传白名单：缓存策略 + 附件安全头（spec §13：nosniff/sandbox/私有缓存
+  // 必须随字节流一起到达浏览器，网关不得剥掉）
+  for (const name of ["cache-control", "content-disposition", "x-content-type-options", "cross-origin-resource-policy", "content-security-policy", "content-length"]) {
+    const value = res.headers.get(name);
+    if (value) headers.set(name, value);
+  }
   return new Response(res.body, { status: res.status, headers });
 }

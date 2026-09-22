@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { NextResponse, type NextRequest } from "next/server";
 import { Readable } from "node:stream";
 
@@ -21,6 +22,8 @@ function contentDisposition(filename: string, disposition: "inline" | "attachmen
 }
 
 async function handleGET(request: NextRequest, ctx: { params: Promise<{ id: string; attachmentId: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id, attachmentId } = await ctx.params;
   const scope = attachmentScopeFor(id);
   const record = scope.store.getScoped(attachmentId, scope.sessionId);

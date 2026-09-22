@@ -8,6 +8,8 @@ import { createFrameworkSession, createSqliteSessionStore } from "@zmzai/agent-f
 
 const root = process.cwd();
 const PORT = 3178;
+const base0 = () => `http://127.0.0.1:${JSON.parse(readFileSync(path.join(dataDir, "host.json"), "utf8")).port}`;
+const H0 = () => ({ authorization: `Bearer ${JSON.parse(readFileSync(path.join(dataDir, "host.json"), "utf8")).token}` });
 const dataDir = mkdtempSync(path.join(tmpdir(), "m2b-gw-data-"));
 const workspace = mkdtempSync(path.join(tmpdir(), "m2b-gw-ws-"));
 const host = spawn("node", [path.join(root, "host/dist/host/src/index.js")], {
@@ -40,8 +42,16 @@ try {
   const taskOk = tasked.status === 200;
   const compacted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/compact`, { method: "POST" });
   const compactOk = compacted.status === 200;
-  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}`);
+  // B4：附件上传（Host 命令）→ 生产路径下载字节一致 + 安全头
+  const payload = Buffer.from("B4 attachment streaming check — 附件字节流验证");
+  const uploaded = await (await fetch(`http://127.0.0.1:${PORT}/api/m2a/health`).then(() => fetch(`${base0()}/v1/commands/attachment`, { method: "POST", headers: { ...H0(), "content-type": "application/json" }, body: JSON.stringify({ sessionId: session.id, filename: "b4-check.txt", mediaType: "text/plain", bytesBase64: payload.toString("base64") }) }))).json();
+  const attId = uploaded?.id ?? uploaded?.attachment?.id;
+  const downloaded = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/attachments/${attId}?raw=1`);
+  const bytes = Buffer.from(await downloaded.arrayBuffer());
+  const attOk = downloaded.status === 200 && bytes.equals(payload) && downloaded.headers.get("x-content-type-options") === "nosniff";
+  if (!attOk) console.log("[att-debug] uploaded=", JSON.stringify(uploaded).slice(0, 120), "dlStatus=", downloaded.status, "len=", bytes.length);
+  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk && attOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}；附件流=${attOk}(${bytes.length}B)`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

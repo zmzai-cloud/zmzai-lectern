@@ -36,7 +36,8 @@
     "build:mac": "bash scripts/build-mac.sh",
     "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",
     "build:win:cross": "bash scripts/build-win-cross.sh",
-    "build:win:cross:upload": "bash scripts/build-win-cross.sh --upload"
+    "build:win:cross:upload": "bash scripts/build-win-cross.sh --upload",
+    "host:build": "tsc -p host/tsconfig.json"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

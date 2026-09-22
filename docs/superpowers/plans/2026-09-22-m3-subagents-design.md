@@ -1,6 +1,6 @@
 # M3 设计：子代理持久协调（B0 最后核心块）
 
-- 日期：2026-09-22；状态：设计稿，供 review 后实施
+- 日期：2026-09-22；状态：**S17–S22 全部实施完成**（见 §5 实施结果）
 - 对应规格：§8 全节（工具接口/持久模型/并发写权/权限取消预算/UI 最小闭环）、§9.4（任务契约与父级验证）
 - 前置：M1 拆分后 AttemptExecutor 持有 spawnSubagent 回调（collabs 注入）；framework 0.10.0 已含 ToolContract（effect/concurrency 声明面就绪）
 - 现状基线：spawnSubagent 同步 await 子 runLoop 至终态（串行、句柄即抛）；SessionRunner.runAttempt 是嵌套子运行的现有入口；task 工具 35 行串行封装
@@ -79,3 +79,21 @@ type SubagentRecord = {
 - R-1 parked/mailbox 的唤醒合并是 M3 最深水区——S19 单独一轮，先事务图后代码；
 - R-2 子 run 复用 SessionRunner 的 globalThis activeRuns 键冲突（父子同进程）——childSessionId 键已天然分离，但 abort 树要沿 coordinator 走不能裸调全局表；
 - R-3 UI 子会话只读展开（§8.5）依赖现有 childSession transcript 可读——S21 验证，缺则补 `/v1/sessions/:id/messages?childOf=` 过滤。
+
+
+## 5. 实施结果（2026-09-22，均已推送）
+
+| Slice | 提交 | 结果 |
+| --- | --- | --- |
+| S17 双表 | `9cb238ea` | subagents + subagent_messages（spawn 唯一索引/messageId 去重）；CAS + 11 态状态机；4 用例 |
+| S18 协调器 | `93fbb1b5` | spawn 立即返回/list/send/wait(首终态 ≤30s)/cancel/cancelTree；pump 根间轮转根内 FIFO（3/6）；A13 并发区间重叠实测 |
+| S19 parked | `4f32e785` | shouldPark/parkParent（TaskRecord.parkedReason 调度标记）/onChildTerminal（邮箱+唤醒同事务、Set 语义水位合并）/drainParentMailbox（consumedByParent 仅纳入一次）/canAutoResume（终态父不复活）；A28/A29 |
+| S20 工具面 | `c4ee1453` | agent_* 五工具 + 旧 task 兼容封装；SUBAGENTS_UNSUPPORTED 明确降级 |
+| S21 装配 | `5df3669a`/`ba4c4e6e`/`bc9b3d4` | runner/executor/createAgentRuntime 三层接线；coordinator.spawn 预建 childSessionId（避免 stamp 后二次建会话）；Lectern late-bind 装配；**framework 0.11.0 发包** |
+| S22 父验证 | `28d612d4` | CompletionRuntimeState.subagentPending 进完成判定（消费 ≠ 接受，A36）；consumeState CAS 与执行状态正交 |
+
+最终计数：framework 579/579 + lectern 496/496 + gateway-check 十一项 + real-check 八项全绿。
+
+设计偏差记录：S21 接线时发现 spawn 的预建会话问题（runner 侧权限 stamp 后 coordinator 又建一个）——接口加 childSessionId 参数解决，runner 保持 stamp 职责、coordinator 保持登记调度职责；协调器放 framework 的决策经装配验证成立（Host 零改动获得能力）。
+
+遗留（B0 边界内不再做）：跨根 Task 写权完整版（M4）、子代理 UI 面板细化（现有 subagent.* 事件桥已透出生命周期）、跨 Host 重启重放（spec §8.4 明示不做）。

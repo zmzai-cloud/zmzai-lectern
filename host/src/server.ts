@@ -41,6 +41,8 @@ export type HostServerOptions = {
   hostInstanceId?: string;
   /** M2a fixture 执行链（S10+）。缺省时仅 /health 可用。 */
   runtime?: FixtureRuntime;
+  /** B1：真实 runtime 的只读面（sessions 列表）。缺省时端点 404。 */
+  realRuntime?: { listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]> };
 };
 
 async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, unknown>> {
@@ -103,10 +105,24 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           protocolVersion: HOST_PROTOCOL_VERSION,
           hostInstanceId,
           schemaVersion: HOST_SCHEMA_VERSION,
-          capabilities: { commands: options.runtime ? ["prompt", "session"] : [], events: !!options.runtime },
+          capabilities: { commands: options.runtime ? ["prompt", "session"] : [], events: !!options.runtime, ...(options.realRuntime ? { sessions: true } : {}) },
           uptimeMs: Date.now() - startedAt,
         };
         send(res, 200, handshake);
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/v1/sessions" && options.realRuntime) {
+        const userId = url.searchParams.get("userId") ?? "";
+        const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
+        if (!userId) {
+          send(res, 400, { error: "INVALID_INPUT", message: "userId 必填" });
+          return;
+        }
+        try {
+          send(res, 200, { sessions: await options.realRuntime.listSessions(workspaceId ? { userId, workspaceId } : { userId }) });
+        } catch (error) {
+          send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+        }
         return;
       }
       if (options.runtime) {

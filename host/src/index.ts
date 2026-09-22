@@ -93,6 +93,24 @@ try {
       // readAll = 大游标 read（ring 全量）
       return mgr.read(id, 0);
     },
+    mcpStatus: async () => {
+      const { mcpStatusFor, defaultWorkspaceRoot } = await import("../../lib/runtime.js");
+      const state = mcpStatusFor(defaultWorkspaceRoot);
+      return { statuses: state.statuses, configErrors: state.configErrors, sources: state.sources };
+    },
+    mcpRescan: async () => {
+      const { mcpRescan, defaultWorkspaceRoot } = await import("../../lib/runtime.js");
+      const state = await mcpRescan(defaultWorkspaceRoot);
+      return { statuses: state.statuses, configErrors: state.configErrors, sources: state.sources };
+    },
+    worktreeStatus: async (sessionId) => {
+      const { workspaceRootForSession } = await import("../../lib/runtime.js");
+      const { worktreeForSession, worktreeCommits } = await import("../../lib/worktree.js");
+      workspaceRootForSession(sessionId);
+      const wt = worktreeForSession(sessionId);
+      if (!wt) return { enabled: false };
+      return { enabled: true, path: wt.path, branch: wt.branch, commits: await worktreeCommits(sessionId) };
+    },
     markRead: (sessionId, messageSeq, revision) => {
       const fn = store.markRead;
       if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));

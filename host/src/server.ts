@@ -57,6 +57,9 @@ export type HostServerOptions = {
     terminalList?(): Promise<unknown>;
     terminalCreate?(cwd: string, cols: number, rows: number): Promise<unknown>;
     terminalOp?(id: string, op: "write" | "resize" | "kill" | "read" | "readAll", payload?: unknown): Promise<unknown>;
+    mcpStatus?(): Promise<unknown>;
+    mcpRescan?(): Promise<unknown>;
+    worktreeStatus?(sessionId: string): Promise<unknown>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -184,6 +187,27 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        if (url.pathname === "/v1/mcp" && options.realRuntime) {
+          if (req.method === "GET") {
+            if (!options.realRuntime.mcpStatus) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 mcp" }); return; }
+            try { send(res, 200, await options.realRuntime.mcpStatus()); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
+            return;
+          }
+          if (req.method === "POST") {
+            if (!options.realRuntime.mcpRescan) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 mcp rescan" }); return; }
+            try { send(res, 200, await options.realRuntime.mcpRescan()); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
+            return;
+          }
+        }
+        const wtMatch = /^\/v1\/sessions\/([^/]+)\/worktree$/.exec(url.pathname);
+        if (req.method === "GET" && wtMatch && options.realRuntime) {
+          const sessionId = decodeURIComponent(wtMatch[1] ?? "");
+          if (!sessionId) { send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" }); return; }
+          const impl = options.realRuntime.worktreeStatus;
+          if (!impl) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 worktree 查询" }); return; }
+          try { send(res, 200, await impl(sessionId)); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
           return;
         }
         if (req.method === "GET" && url.pathname === "/v1/terminal") {

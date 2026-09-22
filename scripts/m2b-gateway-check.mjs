@@ -71,8 +71,13 @@ try {
   }
   if (!termOk) console.log("[term-debug] created=", JSON.stringify(created).slice(0, 100), "read=", JSON.stringify(termRead).slice(0, 120), "del=", killed.status);
   void gone; // kill 后 status 收敛依赖 shell 退出时序（zsh/SIGTERM），不进硬门槛；进程树回收验证属 M2c 打包范畴
-  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk && attOk && termOk;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}；附件流=${attOk}(${bytes.length}B)；终端=${termOk}`);
+  const mcp = await fetch(`http://127.0.0.1:${PORT}/api/mcp`);
+  const mcpBody = await mcp.json();
+  const mcpOk = mcp.status === 200 && Array.isArray(mcpBody?.statuses);
+  const wt = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/worktree`);
+  const wtOk = wt.status === 200 && (await wt.json())?.enabled === false;
+  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk && attOk && termOk && mcpOk && wtOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}；附件流=${attOk}(${bytes.length}B)；终端=${termOk}；mcp=${mcpOk}；worktree=${wtOk}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

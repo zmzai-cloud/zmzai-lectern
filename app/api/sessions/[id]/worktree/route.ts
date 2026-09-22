@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { withWorkflowErrors } from "@/lib/workflow-error";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -10,7 +11,9 @@ export const runtime = "nodejs";
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 /** GET /api/sessions/[id]/worktree — 隔离副本状态（enabled/路径/分支/领先提交数）。 */
-async function handleGET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handleGET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
   workspaceRootForSession(id);

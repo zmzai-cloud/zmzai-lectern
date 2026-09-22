@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -14,7 +15,9 @@ type McpStatusResponse = {
 };
 
 /** MCP server 连接态（设置弹窗透出）。 */
-export async function GET() {
+export async function GET(request: Request) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const state = mcpStatusFor(getActiveProject().path);
   return NextResponse.json({
     statuses: state.statuses,
@@ -24,7 +27,9 @@ export async function GET() {
 }
 
 /** 重新扫描 MCP 配置（修改 mcp.json 后触发重建）。 */
-export async function POST(_request: NextRequest) {
+export async function POST(request: NextRequest) {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   try {
     const state = await mcpRescan(getActiveProject().path);
     return NextResponse.json({

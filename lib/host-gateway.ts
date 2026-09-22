@@ -47,6 +47,11 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   { method: "DELETE", pattern: /^\/api\/terminal\/([^/]+)$/, hostPath: (g) => `/v1/terminal/${g[0]}`, rewriteBody: (g) => ({ op: "kill" }) },
   { method: "GET", pattern: /^\/api\/terminal\/([^/]+)\/read$/, hostPath: (g) => `/v1/terminal/${g[0]}` },
   { method: "GET", pattern: /^\/api\/terminal\/read-all$/, hostPath: () => "/v1/terminal/__all__" },
+  // B4：mcp 状态（GET/POST rescan）与 worktree 查询（merge/discard 写操作留
+  // 旧 handler——spec §10 将 worktree 整合归 W1 重做，M2b 只迁查询）
+  { method: "GET", pattern: /^\/api\/mcp$/, hostPath: () => "/v1/mcp" },
+  { method: "POST", pattern: /^\/api\/mcp$/, hostPath: () => "/v1/mcp" },
+  { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/worktree$/, hostPath: (g) => `/v1/sessions/${g[0]}/worktree` },
 ];
 
 export function gatewayArmed(): boolean {

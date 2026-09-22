@@ -1,4 +1,6 @@
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { createFixtureRuntime } from "./runtime.js";
 import { startHostServer } from "./server.js";
 
 /** Host 进程入口（M2a dev 拓扑）。
@@ -12,7 +14,12 @@ if (!dataDir) {
 }
 mkdirSync(dataDir, { recursive: true });
 
-const host = await startHostServer({ dataDir });
+const runtime = createFixtureRuntime({
+  dataDir,
+  workspaceRoot: process.env.LECTERN_HOST_WORKSPACE ?? join(dataDir, "workspace"),
+  toolDelayMs: Number(process.env.LECTERN_HOST_TOOL_DELAY_MS ?? "0"),
+});
+const host = await startHostServer({ dataDir, runtime });
 console.log(JSON.stringify({ ok: true, port: host.port, hostInstanceId: host.hostInstanceId, hostJson: host.hostJsonPath }));
 
 const shutdown = (signal: string) => {

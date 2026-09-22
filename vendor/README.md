@@ -1,7 +1,7 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.9.0.tgz` is the published npm package
-`@zmzai/agent-framework@0.9.0`, vendored here so desktop builds and clean
+`zmzai-agent-framework-0.10.0.tgz` is the published npm package
+`@zmzai/agent-framework@0.10.0`, vendored here so desktop builds and clean
 installs resolve the framework without depending on registry access. The tarball
 is byte-identical to the registry artifact; the framework repository is the
 source of truth and its `main` matches this version.

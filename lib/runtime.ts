@@ -271,7 +271,9 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       headers: async () => authHeaders(currentCookieHeader()),
       // 真实模型能力：查进程内缓存（由 /api/models 与 resolveModel 链路灌入）。
       // 未命中回落 provider 默认的 128k/16k——与不配置时行为一致。
-      modelCaps: (modelId) => capsFor(modelId),
+      // W9：framework 0.10.0 起按完整 ModelRef 查询能力（同 modelId 跨
+      // provider 不串用）。目录当前仍按 modelId 匹配，签名先行对齐。
+      modelCaps: (ref) => capsFor(ref.modelId),
       // 路由降级（N2a）：主端点首个流事件即报错时依次切备用端点；函数形式每请求求值，
       // 设置页增删改降级端点即时生效（无需重启）。
       failoverEndpoints: () => failoverEndpoints(),

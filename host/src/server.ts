@@ -48,6 +48,8 @@ export type HostServerOptions = {
     messages(sessionId: string): Promise<unknown[]>;
     abort?(sessionId: string): Promise<void>;
     resumeTask?(sessionId: string): Promise<boolean>;
+    compact?(sessionId: string): Promise<{ ok: boolean; reason?: string }>;
+    markRead?(sessionId: string, messageSeq: number, revision: number): Promise<unknown>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -177,6 +179,42 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           send(res, 200, { sessionId: await rt.createSession() });
           return;
         }
+        if (req.method === "POST" && url.pathname === "/v1/commands/compact") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          if (!sessionId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" });
+            return;
+          }
+          const compactImpl = options.realRuntime?.compact ?? ((sid: string) => rt.runner.compactSession(sid));
+          try {
+            send(res, 200, await compactImpl(sessionId));
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/commands/read-state") {
+          const body = await readJsonBody(req);
+          const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+          const messageSeq = Number(body.messageSeq);
+          const revision = Number(body.revision ?? 1);
+          if (!sessionId || !Number.isFinite(messageSeq) || !Number.isFinite(revision)) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId/messageSeq/revision 必填" });
+            return;
+          }
+          const markImpl = options.realRuntime?.markRead;
+          if (!markImpl) {
+            send(res, 404, { error: "NOT_FOUND", message: "后端未提供 read-state 写" });
+            return;
+          }
+          try {
+            send(res, 200, await markImpl(sessionId, Math.floor(messageSeq), Math.floor(revision)));
+          } catch (error) {
+            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+          }
+          return;
+        }
         if (req.method === "POST" && url.pathname === "/v1/commands/task") {
           const body = await readJsonBody(req);
           const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
@@ -263,6 +301,13 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           }
           const sinceRaw = Number(url.searchParams.get("since") ?? "0");
           const sinceSeq = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0;
+          // A08：水位失效（since 超过最新 seq，如 rewind 后游标前跳）显式 409，
+          // 客户端重新取快照——不能把缺口后的事件当已完整应用
+          const latest = await rt.eventLog.count(sessionId).catch(() => 0);
+          if (sinceSeq > latest) {
+            send(res, 409, { error: "CURSOR_STALE", message: "事件水位已失效，请重新加载会话快照" });
+            return;
+          }
           res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
           const abort = new AbortController();
           req.on("close", () => abort.abort());

@@ -218,3 +218,22 @@ describe("credentialRef 通道（M2b-B2）", () => {
     }
   });
 });
+
+describe("SSE 水位与状态操作（M2b-B3）", () => {
+  it("A08：since 超过最新 seq → 409 显式重同步；compact 端点可达", async () => {
+    const env = await boot();
+    try {
+      const session = (await (await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/session`, { method: "POST", headers: auth(env.host) })).json()) as { sessionId: string };
+      await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/prompt`, { method: "POST", headers: auth(env.host), body: JSON.stringify({ sessionId: session.sessionId, requestId: "b3-a08", text: "跑探针" }) });
+      await waitFor(async () => (await readFile(path.join(env.workspace, "probe.log"), "utf8").catch(() => "")).includes("m2a-probe"));
+      const stale = await fetch(`http://127.0.0.1:${env.host.port}/v1/events?sessionId=${session.sessionId}&since=99999`, { headers: auth(env.host) });
+      expect(stale.status).toBe(409);
+      expect(((await stale.json()) as { error: string }).error).toBe("CURSOR_STALE");
+      const compacted = await fetch(`http://127.0.0.1:${env.host.port}/v1/commands/compact`, { method: "POST", headers: auth(env.host), body: JSON.stringify({ sessionId: session.sessionId }) });
+      expect(compacted.status).toBe(200);
+      expect(((await compacted.json()) as { reason?: string }).reason).toBe("compaction-disabled"); // fixture 未配摘要模型，如实报告
+    } finally {
+      await env.close();
+    }
+  });
+});

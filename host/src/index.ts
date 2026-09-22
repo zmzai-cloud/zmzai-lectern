@@ -35,6 +35,12 @@ try {
     listSessions: (filter) => store.listSessions(filter),
     abort: (sessionId) => rt.runner.abort(sessionId),
     resumeTask: (sessionId) => rt.runner.resumeTask(sessionId),
+    compact: (sessionId) => rt.runner.compactSession(sessionId),
+    markRead: (sessionId, messageSeq, revision) => {
+      const fn = store.markRead;
+      if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));
+      return fn.call(store, sessionId, messageSeq, revision);
+    },
     replyPermission: (sessionId, requestId, reply, feedback) => rt.runner.replyPermission(sessionId, requestId, reply as never, feedback),
     messages: async (sessionId) => {
       const session = await store.getSession(sessionId);

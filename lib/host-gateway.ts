@@ -29,6 +29,8 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/abort$/, hostPath: () => "/v1/commands/abort", rewriteBody: (g, b) => ({ ...b, sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/permission$/, hostPath: () => "/v1/commands/permission", rewriteBody: (g, b) => ({ ...b, sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/task$/, hostPath: () => "/v1/commands/task", rewriteBody: (g, b) => ({ action: b.action, sessionId: g[0] }) },
+  { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/compact$/, hostPath: () => "/v1/commands/compact", rewriteBody: (g) => ({ sessionId: g[0] }) },
+  { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: () => "/v1/commands/read-state", rewriteBody: (g, b) => ({ messageSeq: b.messageSeq, revision: b.revision, sessionId: g[0] }) },
 ];
 
 export function gatewayArmed(): boolean {

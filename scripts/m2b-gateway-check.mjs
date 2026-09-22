@@ -38,8 +38,10 @@ try {
   const abortOk = aborted.status === 200;
   const tasked = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/task`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "resume" }) });
   const taskOk = tasked.status === 200;
-  const ok = listed && isolated && viaCommand && abortOk && taskOk;
-  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}`);
+  const compacted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/compact`, { method: "POST" });
+  const compactOk = compacted.status === 200;
+  const ok = listed && isolated && viaCommand && abortOk && taskOk && compactOk;
+  console.log(`[m2b-gateway] ${ok ? "PASS" : "FAIL"}：列表=${listed}；隔离=${isolated}；prompt(cookie→credential)=${viaCommand}；abort=${abortOk}；task(resume)=${taskOk}；compact=${compactOk}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   for (const p of [next, host]) try { process.kill(-p.pid, "SIGKILL"); } catch { /* 已退出 */ }

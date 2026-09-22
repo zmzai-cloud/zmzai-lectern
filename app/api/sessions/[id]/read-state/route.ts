@@ -1,3 +1,4 @@
+import { hostGateway } from "@/lib/host-gateway";
 import { type NextRequest } from "next/server";
 import { sessionRuntime } from "@/lib/runtime";
 import { WorkflowError, withWorkflowErrors } from "@/lib/workflow-error";
@@ -14,6 +15,8 @@ export const GET = withWorkflowErrors(async (_request: NextRequest, ctx: Context
 });
 
 export const PUT = withWorkflowErrors(async (request: NextRequest, ctx: Context) => {
+  const gateway = await hostGateway(request as unknown as Request);
+  if (gateway) return gateway;
   const { id } = await ctx.params;
   const store = sessionRuntime(id).store;
   const body = await request.json().catch(() => null);

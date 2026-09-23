@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFixtureRuntime } from "./runtime.js";
-import { credentialFor, startHostServer, type HostHandle } from "./server.js";
+import { credentialFor, startHostServer, type HostHandle, type HostServerOptions } from "./server.js";
 
 /** M2a-S10 集成：发送 → Host → 工具 → 持久化 → SSE 重放；A03/A04 在 Host 层。 */
 async function boot(toolDelayMs = 0): Promise<{ host: HostHandle; close(): Promise<void>; dataDir: string; workspace: string }> {
@@ -215,6 +215,63 @@ describe("credentialRef 通道（M2b-B2）", () => {
       expect(credentialFor("ses_other")).toBeUndefined();
     } finally {
       await env.close();
+    }
+  });
+});
+
+describe("worktree 写操作端点（W1-S27-C）", () => {
+  it("POST /v1/sessions/:id/worktree：无 impl → 404；有 impl → 状态码与 body 透传；非法 action → 400", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "host-s27-data-"));
+    const workspace = await mkdtemp(path.join(tmpdir(), "host-s27-ws-"));
+    const runtime = createFixtureRuntime({ dataDir, workspaceRoot: workspace });
+    // realRuntime face 存在但未实现 worktreeAction → 404；action 校验先于实现检查
+    const host = await startHostServer({ dataDir, runtime, realRuntime: {} as HostServerOptions["realRuntime"] });
+    try {
+      const none = await fetch(`http://127.0.0.1:${host.port}/v1/sessions/ses_x/worktree`, {
+        method: "POST", headers: auth(host), body: JSON.stringify({ action: "merge" }),
+      });
+      expect(none.status).toBe(404); // fixture face 未实现写操作
+
+      const bad = await fetch(`http://127.0.0.1:${host.port}/v1/sessions/ses_x/worktree`, {
+        method: "POST", headers: auth(host), body: JSON.stringify({ action: "reset" }),
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      await host.close();
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /v1/sessions/:id/worktree：impl 透传 ok/output/status（409 拒绝语义保留）", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "host-s27b-data-"));
+    const workspace = await mkdtemp(path.join(tmpdir(), "host-s27b-ws-"));
+    const runtime = createFixtureRuntime({ dataDir, workspaceRoot: workspace });
+    const calls: [string, string][] = [];
+    const worktreeAction = async (sessionId: string, action: "merge" | "discard") => {
+      calls.push([sessionId, action]);
+      return action === "merge"
+        ? { ok: false, output: "会话没有隔离副本", status: 409 }
+        : { ok: true, output: "隔离副本已丢弃", status: 200 };
+    };
+    const host = await startHostServer({ dataDir, runtime, realRuntime: { worktreeAction } as HostServerOptions["realRuntime"] });
+    try {
+      const refused = await fetch(`http://127.0.0.1:${host.port}/v1/sessions/ses_y/worktree`, {
+        method: "POST", headers: auth(host), body: JSON.stringify({ action: "merge" }),
+      });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({ ok: false, output: "会话没有隔离副本" });
+
+      const ok2 = await fetch(`http://127.0.0.1:${host.port}/v1/sessions/ses_y/worktree`, {
+        method: "POST", headers: auth(host), body: JSON.stringify({ action: "discard" }),
+      });
+      expect(ok2.status).toBe(200);
+      expect(await ok2.json()).toMatchObject({ ok: true, output: "隔离副本已丢弃" });
+      expect(calls).toEqual([["ses_y", "merge"], ["ses_y", "discard"]]);
+    } finally {
+      await host.close();
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
     }
   });
 });

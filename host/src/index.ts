@@ -122,6 +122,11 @@ try {
       if (!wt) return { enabled: false };
       return { enabled: true, path: wt.path, branch: wt.branch, commits: await worktreeCommits(sessionId) };
     },
+    worktreeAction: async (sessionId, action) => {
+      // W1-S27 写路径收敛：与 Next 路由共用同一动作层（交付门+整合序列+删序查返回码）
+      const { mergeSessionWorkspace, discardSessionWorkspace } = await import("../../lib/workspace-actions.js");
+      return action === "merge" ? mergeSessionWorkspace(sessionId) : discardSessionWorkspace(sessionId);
+    },
     markRead: (sessionId, messageSeq, revision) => {
       const fn = store.markRead;
       if (!fn) return Promise.reject(new Error("NOT_IMPLEMENTED"));

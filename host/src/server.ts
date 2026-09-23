@@ -60,6 +60,8 @@ export type HostServerOptions = {
     mcpStatus?(): Promise<unknown>;
     mcpRescan?(): Promise<unknown>;
     worktreeStatus?(sessionId: string): Promise<unknown>;
+    /** W1-S27：合并回目标 / 丢弃副本（动作层 { ok, output, status }）。 */
+    worktreeAction?(sessionId: string, action: "merge" | "discard"): Promise<unknown>;
     replyPermission?(sessionId: string, requestId: string, reply: unknown, feedback?: string): Promise<boolean>;
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
@@ -239,6 +241,21 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           const impl = options.realRuntime.worktreeStatus;
           if (!impl) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 worktree 查询" }); return; }
           try { send(res, 200, await impl(sessionId)); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
+          return;
+        }
+        if (req.method === "POST" && wtMatch && options.realRuntime) {
+          const sessionId = decodeURIComponent(wtMatch[1] ?? "");
+          if (!sessionId) { send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" }); return; }
+          try {
+            const body = await readJsonBody(req);
+            const action = body.action;
+            // 非法请求先拒（与 Next 路由同序：action 校验先于实现可用性）
+            if (action !== "merge" && action !== "discard") { send(res, 400, { error: "INVALID_INPUT", message: "action 必须是 merge 或 discard" }); return; }
+            const impl = options.realRuntime.worktreeAction;
+            if (!impl) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 worktree 写操作" }); return; }
+            const result = (await impl(sessionId, action)) as { ok: boolean; output: string; status?: number };
+            send(res, result.status ?? (result.ok ? 200 : 409), { ok: result.ok, output: result.output });
+          } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
           return;
         }
         if (req.method === "GET" && url.pathname === "/v1/terminal") {

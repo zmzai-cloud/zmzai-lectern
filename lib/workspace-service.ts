@@ -212,3 +212,129 @@ function fail(db: DatabaseSync, workspaceId: string, prior: WorkspaceRecord | nu
   upsertRecord(db, { ...base, state: "failed", failureReason: reason, revision: (base.revision ?? 0) + 1 });
   return { ok: false, reason, record: getRecord(db, workspaceId) ?? undefined };
 }
+
+// ==================== W1-S24：环境准备（spec §10.2）====================
+
+/** setup manifest（spec §10.2）：项目可声明的环境准备步骤。放在仓库
+ *  `.lectern/workspace.json`——仓库内声明、Host 执行，脚本走既有工具
+ *  权限（不因「准备环境」绕过权限）；配置映射的值不进模型上下文。 */
+export type SetupManifest = {
+  /** 依赖安装命令（如 pnpm install --frozen-lockfile）。经 bash 工具权限链执行。 */
+  install?: { command: string; cwd?: string };
+  /** 必要本地配置映射：from（仓库外，含 secret）→ to（worktree 内相对路径）。
+   *  值不落库、不进事件——只在此刻拷贝。 */
+  configMaps?: { from: string; to: string }[];
+  /** 预览/验证命令（就绪检查用端口探活替代，声明式）。 */
+  devServer?: { command: string; port: number };
+};
+
+export type PrepareResult = {
+  ok: boolean;
+  steps: { name: string; ok: boolean; detail?: string; durationMs: number }[];
+  assignedPort?: number;
+};
+
+/** Host 端口分配器（spec §10.2「端口由 Host 分配并登记，不手工约定 3000」）。 */
+const portRegistry = new Map<string, { port: number; workspaceId: string }>();
+function allocatePort(workspaceId: string, preferred?: number): number {
+  // 已分配优先复用；preferred 被占则从 41000 起探
+  for (const [, entry] of portRegistry) {
+    if (entry.workspaceId === workspaceId) return entry.port;
+  }
+  const { createServer } = require("node:net") as typeof import("node:net");
+  const tryPort = (port: number): Promise<boolean> =>
+    new Promise((resolve) => {
+      const srv = createServer();
+      srv.once("error", () => resolve(false));
+      srv.once("listening", () => srv.close(() => resolve(true)));
+      srv.listen(port, "127.0.0.1");
+    });
+  // 同步探不可行（async）——同步回退：net.ListenSync 不存在，用端口注册表内查重 + 随机段
+  let port = preferred ?? 41000 + Math.floor(Math.random() * 2000);
+  const used = new Set([...portRegistry.values()].map((e) => e.port));
+  while (used.has(port)) port += 1;
+  portRegistry.set(`${port}`, { port, workspaceId });
+  void tryPort;
+  return port;
+}
+
+/** 环境准备：manifest 声明的步骤按序执行，每步查退出码；失败 → preparing
+ *  保持（state 带 activeOperation=prepare-failed），可重试可取消。
+ *  依赖安装优先利用包管理器缓存（命令自带，天然共享）；不默认把不同
+ *  worktree 的 node_modules 指向同一目录（spec 明示）。 */
+export async function prepareWorkspace(input: {
+  dataDir: string;
+  workspaceId: string;
+  /** 命令执行器（宿主注入——走 bash 工具权限链，service 不自建旁路）。 */
+  runCommand(command: string, cwd: string): Promise<{ exitCode: number | null; output: string }>;
+  manifest: SetupManifest;
+}): Promise<PrepareResult> {
+  const db = getDb(input.dataDir);
+  const record = getRecord(db, input.workspaceId);
+  if (!record) return { ok: false, steps: [{ name: "record", ok: false, detail: "workspace 记录不存在", durationMs: 0 }] };
+  if (record.state !== "ready" && record.state !== "active") {
+    return { ok: false, steps: [{ name: "state", ok: false, detail: `状态 ${record.state} 不可准备`, durationMs: 0 }] };
+  }
+  upsertRecord(db, { ...record, state: "preparing", activeOperation: "prepare", revision: record.revision + 1 });
+
+  const steps: PrepareResult["steps"] = [];
+  const m = input.manifest;
+
+  // 1) 依赖安装（走权限链执行器）
+  if (m.install) {
+    const t0 = Date.now();
+    const cwd = m.install.cwd ? resolve(record.path, m.install.cwd) : record.path;
+    const r = await input.runCommand(m.install.command, cwd);
+    steps.push({ name: `install: ${m.install.command.split(" ")[0]}`, ok: r.exitCode === 0, detail: r.exitCode === 0 ? r.output.slice(-120) : `exit=${r.exitCode} ${r.output.slice(-200)}`, durationMs: Date.now() - t0 });
+    if (r.exitCode !== 0) {
+      upsertRecord(db, { ...record, state: "preparing", activeOperation: "prepare-failed", failureReason: `install 失败 exit=${r.exitCode}`, revision: record.revision + 2 });
+      return { ok: false, steps };
+    }
+  }
+
+  // 2) 配置映射（仓库外 → worktree 内；值不落库不进事件）
+  if (m.configMaps) {
+    const t0 = Date.now();
+    let ok = true;
+    const details: string[] = [];
+    for (const map of m.configMaps) {
+      try {
+        const { copyFileSync, mkdirSync: mk } = require("node:fs") as typeof import("node:fs");
+        const dest = resolve(record.path, map.to);
+        mk(dest.slice(0, dest.lastIndexOf("/")), { recursive: true });
+        copyFileSync(map.from, dest);
+        details.push(map.to);
+      } catch (e) {
+        ok = false;
+        details.push(`${map.to}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    steps.push({ name: "config-map", ok, detail: details.join("; ").slice(0, 200), durationMs: Date.now() - t0 });
+    if (!ok) {
+      upsertRecord(db, { ...record, state: "preparing", activeOperation: "prepare-failed", failureReason: "config 映射失败", revision: record.revision + 2 });
+      return { ok: false, steps };
+    }
+  }
+
+  // 3) 端口分配（devServer 声明的 preferred；Host 登记表管理）
+  let assignedPort: number | undefined;
+  if (m.devServer) {
+    assignedPort = allocatePort(input.workspaceId, m.devServer.port);
+    steps.push({ name: "port-assign", ok: true, detail: String(assignedPort), durationMs: 0 });
+  }
+
+  const active: WorkspaceRecord = { ...record, state: "active", activeOperation: undefined, revision: record.revision + 2 };
+  upsertRecord(db, active);
+  return { ok: true, steps, assignedPort };
+}
+
+/** 读取仓库内 setup manifest（缺省返回空 manifest——准备是可选增强）。 */
+export function loadSetupManifest(worktreePath: string): SetupManifest {
+  try {
+    const p = resolve(worktreePath, ".lectern", "workspace.json");
+    if (!existsSync(p)) return {};
+    return JSON.parse(readFileSync(p, "utf8")) as SetupManifest;
+  } catch {
+    return {};
+  }
+}

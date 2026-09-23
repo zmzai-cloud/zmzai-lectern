@@ -69,3 +69,19 @@ type WorktreeRecord = {
 - R-1 整合序列的 FF-only 与现有交付 CAS 的语义合并——S26 单独一轮，先事务图；
 - R-2 旧 worktrees.db 迁移的未知态记录——按 archived 处理并在 UI 可见，不猜；
 - R-3 Windows 路径/盘符差异的 Git 行为（本机不可验证）——代码按 path 库写，真机验证标未验证。
+
+## 5. 实施结果（2026-09-23 收官）
+
+S23–S27 全部完成并推送；测试 504→520（+16），typecheck 0。
+
+| # | 提交 | 内容与偏差 |
+| --- | --- | --- |
+| S23 | `bfcf8c9` | 按设计；实测发现第五宗罪：worktree add -b 缺 baseCommit 起点则 specified_ref 静默从 HEAD 建分支，已修 |
+| S24 | `fe0752a` | 按设计；命令经宿主注入执行器走 bash 工具权限链 |
+| S25 | `a659e5a` | 按设计；指纹=sha256(headCommit+porcelain+文件内容摘要) |
+| S26 | `9bcf427` | 按设计；容器目录须进 .git/info/exclude（否则目标 clean 检查被自身 worktree 卡死）；未 checkout 路径 update-ref 前必须后代校验 |
+| S27 | `0d0fac3`/`3d88f5b`/`69fb7b1` | 三刀：A=多轮交付锚点（integrationSource 四象限去重）+sourceCommit 覆盖+归档+旧表导入+读面双读；B=写路径收敛（workspace-actions 动作层+mergeAttemptCas 委托 integrate+三路由切换，两套合并并存清偿）；C=Host POST worktree+网关表 |
+
+- markReadyForReview 为实施中新增的审查态入口（整合门槛 ready_for_review 的正规转移）；
+- delivery snapshot 扩展 targetHeadSha（verify 时目标锚点，接受时目标推进→拒绝）；
+- 旧 lib/worktree.ts 保留只读双读面（workspace_records 优先/旧表 fallback），写函数无生产调用者。

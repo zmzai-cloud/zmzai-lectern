@@ -320,6 +320,28 @@ function ensureWebServer() {
 let hostProcess = null;
 let hostRestartTimes = [];
 let hostJsonPath = "";
+// V1-S3：浏览器 verifier endpoint（Electron 主进程自带 Chromium 驱动；
+// bootstrap 文件 hostDataDir/verifier.json 与 host.json 同模式，Main fork
+// Host 时注入 env；dev-host.sh 模式由脚本手动指向同一文件）
+let verifierHandle = null;
+let verifierJsonPath = "";
+
+function ensureVerifierServer(hostDataDir) {
+  try {
+    const { startVerifierServer } = require("./verifier.cjs");
+    startVerifierServer().then((handle) => {
+      verifierHandle = handle;
+      verifierJsonPath = path.join(hostDataDir, "verifier.json");
+      fs.writeFileSync(verifierJsonPath, JSON.stringify({ port: handle.port, token: handle.token }, null, 2));
+      console.log(`[lectern] verifier endpoint 127.0.0.1:${handle.port}`);
+    }).catch((err) => {
+      // 起不来不阻塞应用：Host 侧读不到 bootstrap → 验证 run 如实 unavailable
+      console.error("[lectern] verifier 启动失败（浏览器验证将 unavailable）:", err?.message ?? err);
+    });
+  } catch (err) {
+    console.error("[lectern] verifier 模块加载失败:", err?.message ?? err);
+  }
+}
 
 function ensureHostProcess(userData, dataDir) {
   if (!app.isPackaged) return;
@@ -336,6 +358,7 @@ function ensureHostProcess(userData, dataDir) {
   fs.mkdirSync(hostDataDir, { recursive: true });
   hostJsonPath = path.join(hostDataDir, "host.json");
   const hostLog = openWebLog(userData); // 复用 web 日志通道（合流 <userData>/logs/web.log）
+  ensureVerifierServer(hostDataDir);
   spawnHost(hostEntry, hostDataDir, hostLog);
 }
 
@@ -346,6 +369,9 @@ function spawnHost(hostEntry, hostDataDir, hostLog) {
       ...process.env,
       LECTERN_HOST_DATA: hostDataDir,
       LECTERN_WORKSPACE: path.join(path.dirname(hostDataDir), "workspace"),
+      // V1-S3：浏览器 verifier bootstrap（文件由 ensureVerifierServer 异步写；
+      // Host 侧惰性读取，时序天然解耦）
+      ...(verifierJsonPath && fs.existsSync(verifierJsonPath) ? { LECTERN_VERIFIER_BOOTSTRAP: verifierJsonPath } : {}),
     },
     stdio: "pipe",
   });
@@ -548,6 +574,10 @@ app.on("before-quit", (event) => {
     }
     gracefulDone = true;
     await stopHostProcess().catch(() => undefined);
+    try {
+      verifierHandle?.closeAll();
+      verifierHandle?.server.close();
+    } catch { /* 已关闭 */ }
     webProcess?.kill();
     app.exit(0);
   })();

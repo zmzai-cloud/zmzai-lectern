@@ -64,7 +64,7 @@ export type CommandRun = {
   id: string;
   deliveryAttemptId: string;
   /** agent / verification / service / browser_qa。P0 只实现 agent 与 verification。 */
-  kind: "agent" | "verification" | "service" | "browser_qa";
+  kind: "agent" | "verification" | "service" | "browser_qa" | "computer_use";
   /** required 命令只能来自用户批准的 plan；advisory 为 Agent 其它命令。 */
   requirement: "required" | "advisory";
   label: string;

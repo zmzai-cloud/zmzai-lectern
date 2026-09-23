@@ -1,14 +1,20 @@
+import { createRequire } from "node:module";
 import { beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
+
 const state = vi.hoisted(() => ({
   active: { id: "a", name: "A", path: "/workspace/a" },
-  resolve: vi.fn(), create: vi.fn(), worktree: vi.fn(), existingWorktree: vi.fn(), getSession: vi.fn(), runtimeFor: vi.fn(),
+  resolve: vi.fn(), create: vi.fn(), createWorkspace: vi.fn(), existingWorktree: vi.fn(), getSession: vi.fn(), runtimeFor: vi.fn(),
 }));
 vi.mock("@/lib/projects", () => ({ getActiveProject: () => state.active }));
 vi.mock("@/lib/relay", () => ({ resolveModel: state.resolve, sessionCookieName: "test_session" }));
 vi.mock("@/lib/runtime", () => ({ runtimeFor: state.runtimeFor }));
-vi.mock("@/lib/worktree", () => ({ createWorktree: state.worktree, worktreeForSession: state.existingWorktree }));
+vi.mock("@/lib/worktree", () => ({ worktreeForSession: state.existingWorktree }));
+// W1-S27 起 sessions route 的 isolate 走 WorkspaceService（旧 createWorktree 不再被调用）
+vi.mock("@/lib/workspace-service", () => ({ createWorkspace: state.createWorkspace }));
+vi.mock("@/lib/runtime-constants", () => ({ get dataDir() { return "/tmp/lectern-test-data"; } }));
 vi.mock("@zmzai/agent-framework", () => ({}));
 import { POST } from "../app/api/sessions/route.js";
 
@@ -19,7 +25,9 @@ beforeEach(() => {
   state.existingWorktree.mockReturnValue(null);
   state.runtimeFor.mockReturnValue({ createSession: state.create,store: { getSession: state.getSession } });
   state.create.mockResolvedValue({ id: "created_session" });
-  state.worktree.mockResolvedValue({ ok: true, record: { path: "/workspace/a/.lectern-worktrees/created_session", branch: "lectern/created_session" } });
+  state.createWorkspace.mockResolvedValue({
+    ok: true, record: { path: "/workspace/a/.lectern-worktrees/created_session", branch: "lectern/wt/created_session" },
+  });
 });
 
 it("pins the project through model resolution and isolated worktree creation", async () => {
@@ -33,8 +41,10 @@ it("pins the project through model resolution and isolated worktree creation", a
   expect(response.status).toBe(200);
   expect(state.runtimeFor).toHaveBeenCalledTimes(1);
   expect(state.runtimeFor).toHaveBeenCalledWith("/workspace/a");
-  expect(state.worktree).toHaveBeenCalledTimes(1);
-  expect(state.worktree).toHaveBeenCalledWith("created_session", "/workspace/a");
+  expect(state.createWorkspace).toHaveBeenCalledTimes(1);
+  expect(state.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+    projectId: "a", projectPath: "/workspace/a", sessionId: "created_session",
+  }));
   expect(await response.json()).toMatchObject({ projectId: "a", projectName: "A", isolation: { enabled: true } });
 });
 
@@ -45,5 +55,5 @@ it("does not change projects while the request body is being read", async () => 
     return { isolate: true, model: { providerId: "test", modelId: "test" } };
   });
   expect((await POST(request)).status).toBe(200);
-  expect(state.worktree).toHaveBeenCalledWith("created_session", "/workspace/a");
+  expect(state.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({ projectPath: "/workspace/a" }));
 });

@@ -10,6 +10,7 @@ import CommandPalette, { type Command } from "@/components/CommandPalette";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
 import SessionList from "@/components/SessionList";
 import TaskContextStrip from "@/components/TaskContextStrip";
+import ComputerUseIndicator from "@/components/ComputerUseIndicator";
 import TaskBarActions from "@/components/TaskBarActions";
 import ChatView from "@/components/ChatView";
 import WorkbenchPanel from "@/components/WorkbenchPanel";
@@ -1215,6 +1216,8 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
+      {/* C1：桌面控制常驻指示条（spec §12.2：正在控制的应用 + 停止入口；无 lease 不渲染） */}
+      <ComputerUseIndicator />
       <header className="lectern-titlebar flex h-12 shrink-0 items-stretch">
         <div className="lectern-window-controls flex shrink-0 items-center gap-2 px-3" style={{ width: !compactPanels && sidebarOpen ? sidebarWidth + 6 : inElectron && isMac ? 144 : 56 }}>
           <button type="button" onClick={toggleSidebar} title={sidebarVisible ? "收起会话栏" : "展开会话栏"} aria-label={sidebarVisible ? "收起会话栏" : "展开会话栏"} aria-expanded={sidebarVisible} className="titlebar-button">

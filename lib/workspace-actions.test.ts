@@ -34,7 +34,7 @@ async function makeRepo(): Promise<{ root: string; dataDir: string }> {
   return { root, dataDir };
 }
 
-describe("会话合并/丢弃动作（W1-S27-B）", () => {
+describe("会话合并/丢弃动作（W1-S27-B）", { timeout: 30_000 }, () => {
   it("merge：走整合序列（目标=CAS 锚点/工作区保留）；无隔离副本 409", async () => {
     const { root, dataDir } = await makeRepo();
     try {

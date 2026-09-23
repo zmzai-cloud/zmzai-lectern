@@ -108,6 +108,17 @@ function startTrayPolling() {
 /** 全局快捷键 ⌘⇧H：唤起/隐藏主窗（桌面端区别于网页的存在感所在）。 */
 function registerGlobalShortcut() {
   if (process.platform !== "darwin") return;
+  // C1：computer use 紧急停止（独立于模型循环，spec §12.2）——清队列撤销租约
+  globalShortcut.register("CommandOrControl+Shift+Backspace", () => {
+    fetch(`${WEB_URL}/api/deliveries/computer-use`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "stop" }),
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => undefined);
+    const { dialog } = require("electron");
+    void dialog; // 静默停止（不打断用户）；指示条 15s 内自动消失，也可手动点停
+  });
   globalShortcut.register("CommandOrControl+Shift+H", () => {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return createWindow();

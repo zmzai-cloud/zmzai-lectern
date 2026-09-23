@@ -11,7 +11,7 @@ const rtFixture = vi.hoisted(() => ({ dir: "" }));
 vi.mock("./runtime-constants", () => ({ get dataDir() { return rtFixture.dir; } }));
 const ownerFixture = vi.hoisted(() => ({ owner: vi.fn() }));
 vi.mock("./session-owner", () => ({ resolveSessionOwner: ownerFixture.owner }));
-import { runBrowserVerificationForSession } from "./browser-orchestrator.js";
+import { runBrowserVerificationForSession, runBrowserQaWithOneRetry } from "./browser-orchestrator.js";
 import { saveVerificationPlan, listRunsForAttempt, type BrowserVerifierAdapter } from "./browser-verification.js";
 import { createWorkspace } from "./workspace-service.js";
 import { listServicesForWorkspace, type ServiceDeps } from "./service-instance.js";
@@ -167,5 +167,126 @@ describe("浏览器验证编排层（V1-S4 / V01·V04·§11.2 执行序）", () 
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe("一次修复闭环（V1-S5 / V03）", () => {
+  function statefulVerifier(): BrowserVerifierAdapter & { setAll: (s: "passed" | "failed") => void } {
+    const state = { all: "failed" as "passed" | "failed" };
+    return {
+      setAll: (s) => { state.all = s; },
+      openContext: async () => ({ ok: true, browserContextId: "ctx" }),
+      runStep: async () => ({ status: state.all, consoleErrors: 0 }),
+      captureScreenshot: async () => ({ artifactRef: "shot.png" }),
+      closeContext: async () => undefined,
+    };
+  }
+
+  it("首败 → 修复一次 → 重验通过：新 attempt ready_for_review，旧 attempt superseded（旧成功证据失效）", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v5a";
+    const attempt1 = await setup(sessionId, svc.port);
+    const delivery = await import("./delivery.js");
+    const verifier = statefulVerifier();
+    let repaired = 0;
+
+    const out = await runBrowserQaWithOneRetry({
+      sessionId, deps: makeDeps(svc.port), verifier,
+      repair: async () => { repaired += 1; verifier.setAll("passed"); return true; },
+    });
+    expect(out.outcome).toBe("passed");
+    if (out.outcome !== "passed") return;
+    // 旧 attempt 被 supersede（旧证据失效锚点）
+    const old = delivery.getAttempt(attempt1);
+    expect(old?.supersededAt).toBeTruthy();
+    expect(old?.status).not.toBe("accepted");
+    // 新 active attempt = ready_for_review
+    const d = delivery.getDeliveryForSession(sessionId);
+    const active = d ? delivery.getAttempt(d.activeAttemptId!) : null;
+    expect(active?.status).toBe("ready_for_review");
+    expect(active?.id).not.toBe(attempt1);
+    expect(repaired).toBe(1);
+  });
+
+  it("第二次仍失败 → verification_failed 停手，repair 只调一次（修复有界，V03）", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v5b";
+    await setup(sessionId, svc.port);
+    const delivery = await import("./delivery.js");
+    let repaired = 0;
+    const out = await runBrowserQaWithOneRetry({
+      sessionId, deps: makeDeps(svc.port),
+      verifier: statefulVerifier(), // 恒失败
+      repair: async () => { repaired += 1; return true; },
+    });
+    expect(out.outcome).toBe("verification-failed");
+    if (out.outcome !== "verification-failed") return;
+    expect(out.repairedOnce).toBe(true);
+    expect(repaired).toBe(1); // 不循环自修
+    const d = delivery.getDeliveryForSession(sessionId);
+    const active = d ? delivery.getAttempt(d.activeAttemptId!) : null;
+    expect(active?.status).toBe("verification_failed");
+  });
+
+  it("repair 放弃（false）→ 直接 verification-failed，不起第二跑", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v5c";
+    await setup(sessionId, svc.port);
+    const verifier = statefulVerifier();
+    const out = await runBrowserQaWithOneRetry({
+      sessionId, deps: makeDeps(svc.port), verifier,
+      repair: async () => false,
+    });
+    expect(out.outcome).toBe("verification-failed");
+    if (out.outcome !== "verification-failed") return;
+    expect(out.repairedOnce).toBe(false);
+    expect(verifier.openContext === undefined).toBe(false); // 首跑真实执行过
+  });
+
+  it("unavailable 不触发修复循环（环境原因 ≠ 可修复失败）", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v5d";
+    await setup(sessionId, svc.port);
+    let repaired = 0;
+    const out = await runBrowserQaWithOneRetry({
+      sessionId, deps: makeDeps(svc.port),
+      verifier: {
+        openContext: async () => ({ ok: false, reason: "无可用显示器" }),
+        runStep: async () => ({ status: "unavailable" }),
+        captureScreenshot: async () => ({}),
+        closeContext: async () => undefined,
+      },
+      repair: async () => { repaired += 1; return true; },
+    });
+    expect(out.outcome).toBe("unavailable");
+    expect(repaired).toBe(0);
+  });
+
+  it("验证过程中源码变化 → stale（通过不作数，需重新验证，V03 前半）", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v5e";
+    await setup(sessionId, svc.port);
+    const delivery = await import("./delivery.js");
+    // run 进行中改 worktree 源码（验证中源码变化）
+    const d0 = delivery.getDeliveryForSession(sessionId);
+    const att = d0 ? delivery.getAttempt(d0.activeAttemptId!) : null;
+    const root = att?.effectiveWorkspaceRoot;
+    const verifier: BrowserVerifierAdapter = {
+      openContext: async () => ({ ok: true, browserContextId: "ctx" }),
+      runStep: async () => {
+        if (root) writeFileSync(path.join(root, "src-live.txt"), "验证中被改");
+        return { status: "passed", consoleErrors: 0 };
+      },
+      captureScreenshot: async () => ({ artifactRef: "shot.png" }),
+      closeContext: async () => undefined,
+    };
+    const out = await runBrowserQaWithOneRetry({ sessionId, deps: makeDeps(svc.port), verifier });
+    expect(out.outcome).toBe("stale");
+    if (out.outcome === "stale") expect(out.detail).toContain("变化");
   });
 });

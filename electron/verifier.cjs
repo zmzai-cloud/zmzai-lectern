@@ -89,31 +89,33 @@ function domScript(step) {
 
 async function runStep(ctx, step, serviceOrigin) {
   const wc = ctx.win.webContents;
-  const beforeErrors = ctx.consoleErrors;
+  // consoleErrors 语义：context 累计 console error 数（步骤执行时观察值）。
+  // 不做步骤级差分——console-message 的 IPC 派发与 loadURL resolve 存在
+  // 时序竞争，差分会在 goto 之后恒 0。
   try {
     if (step.kind === "assert_network") {
       // 失败资源数断言：value = 允许阈值（默认 0）
       const limit = Number(step.value) >= 0 ? Number(step.value) : 0;
       if (ctx.resourceFailures > limit) {
-        return { status: "failed", detail: `资源失败 ${ctx.resourceFailures} > 阈值 ${limit}`, resourceFailures: ctx.resourceFailures };
+        return { status: "failed", detail: `资源失败 ${ctx.resourceFailures} > 阈值 ${limit}`, resourceFailures: ctx.resourceFailures, consoleErrors: ctx.consoleErrors };
       }
-      return { status: "passed", detail: `资源失败 ${ctx.resourceFailures}/${limit}`, resourceFailures: ctx.resourceFailures };
+      return { status: "passed", detail: `资源失败 ${ctx.resourceFailures}/${limit}`, resourceFailures: ctx.resourceFailures, consoleErrors: ctx.consoleErrors };
     }
     if (step.kind === "goto") {
       const url = /^https?:\/\//.test(String(step.target ?? "")) ? String(step.target) : `${serviceOrigin ?? ""}${step.target ?? "/"}`;
       if (!/^https?:\/\//.test(url)) return { status: "unavailable", detail: "无 serviceOrigin 且 target 非绝对 URL" };
       await wc.loadURL(url);
-      return { status: "passed", detail: url };
+      return { status: "passed", detail: url, consoleErrors: ctx.consoleErrors };
     }
     const raw = await wc.executeJavaScript(domScript(step), true);
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     return {
       status: parsed.status === "passed" || parsed.status === "failed" ? parsed.status : "unavailable",
       ...(parsed.detail ? { detail: String(parsed.detail).slice(0, 240) } : {}),
-      consoleErrors: ctx.consoleErrors - beforeErrors,
+      consoleErrors: ctx.consoleErrors,
     };
   } catch (error) {
-    return { status: "unavailable", detail: String(error?.message ?? error).slice(0, 240), consoleErrors: ctx.consoleErrors - beforeErrors };
+    return { status: "unavailable", detail: String(error?.message ?? error).slice(0, 240), consoleErrors: ctx.consoleErrors };
   }
 }
 
@@ -144,9 +146,12 @@ async function startVerifierServer() {
           },
         });
         const ctx = { win, consoleErrors: 0, resourceFailures: 0 };
-        win.webContents.on("console-message", (_e, level) => {
-          // Electron level：0 verbose /1 info /2 warning /3 error（新版给字符串名）
-          const lv = typeof level === "string" ? { warning: 2, error: 3 }[level] ?? 0 : Number(level);
+        win.webContents.on("console-message", (ev, legacyLevel) => {
+          // Electron level：0 verbose /1 info /2 warning /3 error。新旧两种签名：
+          // 新版事件对象自带 level（字符串名）；旧版位置参数（数字）。
+          const raw = ev && typeof ev === "object" && "level" in ev ? ev.level : legacyLevel;
+          const lv = typeof raw === "string" ? { warning: 2, error: 3 }[raw] ?? 0 : Number(raw);
+          console.log("[verifier-dbg]", Date.now(), "console-message level=", JSON.stringify(raw), "total=", ctx.consoleErrors + 1);
           if (lv >= 2) ctx.consoleErrors += 1;
         });
         win.webContents.on("did-fail-resource-load", () => { ctx.resourceFailures += 1; });
@@ -162,6 +167,7 @@ async function startVerifierServer() {
       const ctx = contexts.get(String(body.browserContextId ?? ""));
       if (!ctx) return send(res, 404, { error: "context 不存在" });
       const result = await runStep(ctx, body.step ?? {}, body.serviceOrigin);
+      result._dbg = { at: Date.now(), kind: body.step?.kind, total: ctx.consoleErrors };
       return send(res, 200, result);
     }
 

@@ -524,6 +524,23 @@ export function markSnapshotStale(attemptId: string): DeliveryAttempt {
   return attempt;
 }
 
+/** 浏览器 QA 终态转换（V1-S5，spec §11.2.5/§11.2.6）：全部 required 通过
+ *  → ready_for_review；QA 失败（一次修复后仍失败）→ verification_failed。
+ *  只对 active attempt 有效；unavailable 不落此门（保持 unverified 语义）。 */
+export function finishWithBrowserQa(attemptId: string, passed: boolean): DeliveryAttempt {
+  const attempt = getAttempt(attemptId);
+  if (!attempt) throw new Error("attempt 不存在");
+  const delivery = getDb().prepare("SELECT active_attempt_id FROM deliveries WHERE id = ?").get(attempt.deliveryId) as { active_attempt_id: string | null } | undefined;
+  if (delivery?.active_attempt_id !== attemptId) throw new Error("仅 active attempt 可落浏览器 QA 终态");
+  const next: DeliveryStatus = passed ? "ready_for_review" : "verification_failed";
+  if (attempt.status === next) return attempt; // 幂等
+  assertTransition(attempt.status, next);
+  attempt.status = next;
+  attempt.updatedAt = new Date().toISOString();
+  writeAttempt(attempt);
+  return attempt;
+}
+
 /** 取消 attempt（running/verifying -> cancelled）。 */
 export function cancelAttempt(attemptId: string): DeliveryAttempt {
   const attempt = getAttempt(attemptId);

@@ -73,3 +73,99 @@ export async function runBrowserVerificationForSession(input: {
 
   return { ok: true, run, service };
 }
+
+// ===== V1-S5：一次修复闭环（spec §11.2.6 / V03）=====
+
+export type BrowserQaOutcome =
+  | { outcome: "passed"; run: BrowserVerificationRun }
+  | { outcome: "verification-failed"; run: BrowserVerificationRun; repairedOnce: boolean }
+  | { outcome: "unavailable"; run: BrowserVerificationRun }
+  | { outcome: "stale"; detail: string };
+
+/** 首次 required 浏览器 QA 失败 → 同根预算内修复**一次**（repair 回调，生产=
+ *  agent 续跑修代码）→ 新 attempt 重验（supersede 使旧成功证据失效，快照
+ *  重拍）；第二次失败 → verification_failed 停手，不循环自修。
+ *  修复计数独立于 §9 任务策略。unavailable 不触发修复循环（环境原因，
+ *  保持 unverified 语义）；重验/收尾前核快照仍有效（验证中源码变化 → stale）。 */
+export async function runBrowserQaWithOneRetry(input: {
+  sessionId: string;
+  deps: ServiceDeps;
+  verifier?: import("./browser-verification.js").BrowserVerifierAdapter;
+  /** 修复动作；返回 false = 放弃修复直接终态。 */
+  repair?: (failureSummary: string) => Promise<boolean>;
+}): Promise<BrowserQaOutcome> {
+  const delivery = await import("./delivery.js");
+
+  const activeOf = () => {
+    const d = getDeliveryForSession(input.sessionId);
+    return d ? getActiveAttempt(d.id) : null;
+  };
+  const runOnce = async () => {
+    const out = await runBrowserVerificationForSession({ sessionId: input.sessionId, deps: input.deps, verifier: input.verifier });
+    if (!out.ok) return { kind: "orchestration-failed" as const, detail: `${out.reason}: ${out.detail ?? ""}` };
+    return { kind: "run" as const, run: out.run };
+  };
+
+  const first = await runOnce();
+  if (first.kind === "orchestration-failed") {
+    // 无 plan/无 workspace/服务起不来等编排前置失败：不进修复循环，如实返回
+    return { outcome: "stale", detail: `编排前置失败：${first.detail}`.slice(0, 240) };
+  }
+  if (first.run.status === "passed") {
+    const attempt = activeOf();
+    if (attempt) {
+      // 收尾前核对快照仍有效（验证过程中源码被改 → 旧通过不作数）
+      if (!(await delivery.isSnapshotStillValid(attempt))) {
+        return { outcome: "stale", detail: "验证过程中源码已变化（快照失效），需重新验证" };
+      }
+      delivery.finishWithBrowserQa(attempt.id, true);
+    }
+    return { outcome: "passed", run: first.run };
+  }
+  if (first.run.status === "unavailable") {
+    return { outcome: "unavailable", run: first.run }; // 环境原因不触发修复（spec §11.2.7）
+  }
+
+  // required 失败 → 修复一次
+  const failedSteps = first.run.steps.filter((s) => s.requirement === "required" && s.status === "failed");
+  const failureSummary = `浏览器 QA required 失败 ${failedSteps.length} 项：${failedSteps.map((s) => `${s.kind}@${s.viewport?.width ?? "?"}x${s.viewport?.height ?? "?"} ${s.detail ?? ""}`).join("；").slice(0, 400)}`;
+  const oldAttempt = activeOf();
+  if (!input.repair || !(await input.repair(failureSummary))) {
+    if (oldAttempt) delivery.finishWithBrowserQa(oldAttempt.id, false);
+    return { outcome: "verification-failed", run: first.run, repairedOnce: false };
+  }
+
+  // 新 attempt（supersede 旧 → 旧成功证据失效）+ 新快照 + 同 plan（降级守卫
+  // 拒绝任何 required 降级——修复只能改实现，不能改验收标准）
+  const owner = delivery.resolveOwner(input.sessionId)!;
+  const newAttempt = delivery.beginAttempt(owner, `run_repair_${Date.now().toString(36)}`);
+  await delivery.transitionToVerifying(newAttempt.id);
+  const priorPlan = getLatestPlan(oldAttempt?.id ?? "");
+  if (priorPlan) {
+    const saved = saveVerificationPlanPublic(newAttempt.id, { steps: priorPlan.steps, viewports: priorPlan.viewports });
+    if (!saved.ok) {
+      return { outcome: "stale", detail: `重试 plan 保存被拒（${saved.reason}）：修复不得降低验收标准` };
+    }
+  }
+
+  const second = await runOnce();
+  if (second.kind === "orchestration-failed") {
+    delivery.cancelAttempt(newAttempt.id);
+    return { outcome: "verification-failed", run: first.run, repairedOnce: true };
+  }
+  const attempt2 = activeOf();
+  if (second.run.status === "passed" && attempt2) {
+    if (!(await delivery.isSnapshotStillValid(attempt2))) {
+      return { outcome: "stale", detail: "重验过程中源码已变化（快照失效），需重新验证" };
+    }
+    delivery.finishWithBrowserQa(attempt2.id, true);
+    return { outcome: "passed", run: second.run };
+  }
+  // 第二次失败（或 unavailable——环境原因也停手，修复预算已用完）：终态
+  if (attempt2 && second.run.status !== "unavailable") delivery.finishWithBrowserQa(attempt2.id, false);
+  if (attempt2 && second.run.status === "unavailable") delivery.cancelAttempt(attempt2.id);
+  return { outcome: "verification-failed", run: second.run, repairedOnce: true };
+}
+
+// saveVerificationPlan 从 browser-verification 引入（避免循环依赖的重导出噪音）
+import { saveVerificationPlan as saveVerificationPlanPublic } from "./browser-verification.js";

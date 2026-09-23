@@ -56,7 +56,9 @@ const deliveryDataDir = () => join(resolve(dataDir), "deliveries");
 
 let db: DatabaseSync | null = null;
 
-function getDb(): DatabaseSync {
+/** deliveries.db 连接（browser-verification 等交付族模块共享同一句柄，
+ *  避免同进程多实例写同一文件的锁冲突）。 */
+export function getDb(): DatabaseSync {
   if (db) return db;
   mkdirSync(deliveryDataDir(), { recursive: true });
   db = new DatabaseSync(join(deliveryDataDir(), "deliveries.db"));

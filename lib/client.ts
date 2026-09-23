@@ -361,6 +361,10 @@ export const client = {
       j<{ ok: boolean; attempt?: DeliveryAttempt; runs?: CommandRunView[]; valid?: boolean | null; merge?: { mergeCommitSha: string; baseRef: string }; error?: string; detail?: string }>(r),
     ),
 
+  /** V1-S6：浏览器验证面（plan/runs/run 与截图引用）。 */
+  browserQa: <T>(sessionId: string, action: "plan" | "runs" | "run", payload?: Record<string, unknown>) =>
+    post("/api/deliveries/browser-qa", { sessionId, action, ...payload }).then((r) => j<T>(r)),
+
   keyStatus: () => fetch("/api/settings/key").then((r) => j<KeyStatus>(r)),
 
   keySave: (key: string, ollamaUrl?: string | null) =>

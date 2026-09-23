@@ -104,3 +104,18 @@ UI（审查页展示 run/截图/分项证据）不在 V1 放行条件内，作�
 - R-2 Electron 隐藏窗口在 CI/headless 环境不可用 —— e2e 真实 fixture 只在本机 Electron 模式跑（dev/web 模式 vitest 全覆盖逻辑层），不伪报覆盖；
 - R-3 视觉断言 rubric 的模型观察项稳定性 —— 首版只做机器可判定项（尺寸/可见性/文本），模型观察项记 advisory；
 - R-4 登录态 partition 与凭据隔离 —— 默认全隔离，复用 profile 需显式授权（UI 后置时先只有隔离面）。
+
+## 7. 实施结果（2026-09-23 收官）
+
+S1–S5 全部完成并推送；vitest 530→552（+22），真实 Chromium e2e 12/12 ALL PASS。
+
+| # | 提交 | 内容与偏差 |
+| --- | --- | --- |
+| S1 | `3618293` | 按设计；降级守卫按 kind\|target\|value 签名匹配（非 index） |
+| S2 | `ad051ca` | 按设计；worktreeFingerprint 排除只滤 untracked（tracked 源码永不排除），未传 exclude 逐字节保持旧算法防存量快照全 stale |
+| S3 | `e639f2d` | 按设计；adapter 惰性读 bootstrap 解 Main 后起时序（R-1 落地） |
+| S4 | `d357fc3` | 按设计；编排层 workspace 检查先于 plan（无隔离工作区不谈浏览器验证） |
+| S5 | `660ed23` | 按设计；e2e 揪出 consoleErrors 必须为 context 累计值（IPC 派发晚于 loadURL resolve，步骤差分在 goto 后恒 0） |
+
+- 后置批次（设计 §4 已声明）：UI 审查页证据展示 + API/Host 接线 → V1-S6 单独推进；plan 的 agent 产生方与 repair 的 agent 接线随 S6/后续批次。
+- R-3 落地口径：assert_visual 首版仅机器可判定子集（可见性+尺寸）。

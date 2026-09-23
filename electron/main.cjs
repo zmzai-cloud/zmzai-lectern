@@ -282,6 +282,10 @@ function ensureWebServer() {
       // M2c-S15：armed 默认化——GATEWAY 指向 Host 握手文件（Host 未启动或
       // LEGACY 模式时不注入，网关休眠走进程内 Runtime）
       ...(hostJsonPath && fs.existsSync(hostJsonPath) ? { LECTERN_HOST_GATEWAY: hostJsonPath, LECTERN_HOST_BOOTSTRAP: hostJsonPath } : {}),
+      // V1-S6：浏览器 verifier bootstrap 也注入 web 进程（deliveries 面在 Next
+      // 进程内执行——deliveries 库在 Next 侧，browser-qa 跨进程会双库裂脑；
+      // 文件由 ensureVerifierServer await 落盘，此处不再查存在性）
+      ...(verifierJsonPath ? { LECTERN_VERIFIER_BOOTSTRAP: verifierJsonPath } : {}),
       HOSTNAME: "127.0.0.1",
       // 会话与工作区必须显式落用户目录，不依赖服务 cwd 或安装目录可写性。
       // LECTERN_DATA_DIR / LECTERN_WORKSPACE 是 lib/runtime-constants 实际读取的变量；
@@ -326,20 +330,18 @@ let hostJsonPath = "";
 let verifierHandle = null;
 let verifierJsonPath = "";
 
-function ensureVerifierServer(hostDataDir) {
+async function ensureVerifierServer(hostDataDir) {
+  if (verifierHandle) return; // 幂等
+  verifierJsonPath = path.join(hostDataDir, "verifier.json"); // 先定路径：fork env 注入不依赖落盘完成
   try {
     const { startVerifierServer } = require("./verifier.cjs");
-    startVerifierServer().then((handle) => {
-      verifierHandle = handle;
-      verifierJsonPath = path.join(hostDataDir, "verifier.json");
-      fs.writeFileSync(verifierJsonPath, JSON.stringify({ port: handle.port, token: handle.token }, null, 2));
-      console.log(`[lectern] verifier endpoint 127.0.0.1:${handle.port}`);
-    }).catch((err) => {
-      // 起不来不阻塞应用：Host 侧读不到 bootstrap → 验证 run 如实 unavailable
-      console.error("[lectern] verifier 启动失败（浏览器验证将 unavailable）:", err?.message ?? err);
-    });
+    const handle = await startVerifierServer();
+    verifierHandle = handle;
+    fs.writeFileSync(verifierJsonPath, JSON.stringify({ port: handle.port, token: handle.token }, null, 2));
+    console.log(`[lectern] verifier endpoint 127.0.0.1:${handle.port}`);
   } catch (err) {
-    console.error("[lectern] verifier 模块加载失败:", err?.message ?? err);
+    // 起不来不阻塞应用：读不到 bootstrap → 验证 run 如实 unavailable（不伪报）
+    console.error("[lectern] verifier 启动失败（浏览器验证将 unavailable）:", err?.message ?? err);
   }
 }
 
@@ -358,7 +360,6 @@ function ensureHostProcess(userData, dataDir) {
   fs.mkdirSync(hostDataDir, { recursive: true });
   hostJsonPath = path.join(hostDataDir, "host.json");
   const hostLog = openWebLog(userData); // 复用 web 日志通道（合流 <userData>/logs/web.log）
-  ensureVerifierServer(hostDataDir);
   spawnHost(hostEntry, hostDataDir, hostLog);
 }
 
@@ -534,6 +535,10 @@ app.whenReady().then(async () => {
     }
   }
 
+  // V1-S6：verifier 无条件起（dev:app/dev-host 模式浏览器验证也可用——
+  // verifier 只依赖 Electron，不依赖打包）。await 落盘后再 fork web/Host：
+  // env 注入是启动时快照，异步写盘会漏注入（时序竞态）。
+  await ensureVerifierServer(path.join(dataDir, "host"));
   ensureWebServer();
   await waitForWeb(WEB_URL);
   createWindow();

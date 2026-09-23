@@ -5,6 +5,7 @@ import { Button, cn } from "@zmzai/theme";
 
 import { client } from "@/lib/client";
 import type { CommandRunView, DeliveryAttempt, DeliveryStatus } from "@/lib/types";
+import type { BrowserVerificationRun } from "@/lib/browser-verification";
 
 /** 交付状态 → 展示标签 + 语义色。 */
 const STATUS_META: Record<DeliveryStatus, { label: string; cls: string }> = {
@@ -33,6 +34,19 @@ export default function DeliveryReview({ sessionId }: { sessionId: string | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snapshotValid, setSnapshotValid] = useState<boolean | null>(null);
+  // V1-S6：浏览器验证证据
+  const [browserRuns, setBrowserRuns] = useState<BrowserVerificationRun[]>([]);
+  const [qaBusy, setQaBusy] = useState(false);
+
+  const loadBrowserRuns = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const r = await client.browserQa<{ runs: BrowserVerificationRun[] }>(sessionId, "runs");
+      setBrowserRuns(r.runs ?? []);
+    } catch {
+      /* 未配 verifier/无 attempt 时静默（runs 为空即未验证） */
+    }
+  }, [sessionId]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -41,6 +55,7 @@ export default function DeliveryReview({ sessionId }: { sessionId: string | null
       const overview = await client.deliveryOverview(sessionId);
       setAttempt(overview.attempt);
       setRuns(overview.runs);
+      void loadBrowserRuns();
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
     } finally {
@@ -205,6 +220,90 @@ export default function DeliveryReview({ sessionId }: { sessionId: string | null
                   <div className="mt-0.5 truncate font-mono text-[0.625rem] text-ink-3" title={r.command}>
                     {r.command}
                   </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* 浏览器验证证据（V1：分项步骤/视口/截图） */}
+        <section>
+          <div className="flex items-center gap-2">
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-ink-3">浏览器验证</div>
+            <span className="flex-1" />
+            <button
+              type="button"
+              disabled={qaBusy || attempt.status !== "verifying"}
+              onClick={() => void (async () => {
+                setQaBusy(true);
+                try {
+                  await client.browserQa(sessionId, "run");
+                  await refresh();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "浏览器验证失败");
+                } finally {
+                  setQaBusy(false);
+                }
+              })()}
+              className="text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50"
+              title={attempt.status !== "verifying" ? "attempt 进入验证后可运行" : "执行浏览器 QA（含一次修复闭环）"}
+            >
+              {qaBusy ? "验证中…" : "运行浏览器验证"}
+            </button>
+          </div>
+          {browserRuns.length === 0 ? (
+            <div className="mt-1 text-[0.6875rem] text-ink-3">暂无浏览器验证记录</div>
+          ) : (
+            <ul className="mt-1 space-y-1.5">
+              {browserRuns.map((run) => (
+                <li key={run.id} className="rounded-sm bg-surface-2/60 px-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        run.status === "passed" ? "bg-success" : run.status === "failed" ? "bg-danger" : run.status === "running" ? "bg-live" : "bg-ink-3",
+                      )}
+                    />
+                    <span className="font-mono text-[0.6875rem] text-ink-2">
+                      {run.status === "passed" ? "通过" : run.status === "failed" ? "失败" : run.status === "unavailable" ? "不可用" : run.status}
+                    </span>
+                    <span className="font-mono text-[0.625rem] text-ink-3">plan v{run.planVersion}</span>
+                    {run.unavailableReason && (
+                      <span className="truncate text-[0.625rem] text-warning" title={run.unavailableReason}>{run.unavailableReason}</span>
+                    )}
+                  </div>
+                  {run.steps.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {run.steps.map((s) => (
+                        <div key={`${run.id}-${s.index}`} className="flex items-center gap-2 font-mono text-[0.625rem]">
+                          <span className={s.status === "passed" ? "text-success" : s.status === "failed" ? "text-danger" : "text-warning"}>
+                            {s.status === "passed" ? "✓" : s.status === "failed" ? "✗" : "!"}
+                          </span>
+                          <span className="text-ink-2">{s.kind}</span>
+                          {s.viewport && <span className="text-ink-3">{s.viewport.width}×{s.viewport.height}</span>}
+                          {s.requirement === "required" && <span className="text-ink-3">required</span>}
+                          {s.consoleErrors > 0 && <span className="text-warning">console×{s.consoleErrors}</span>}
+                          {s.detail && <span className="min-w-0 flex-1 truncate text-ink-3" title={s.detail}>{s.detail}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {run.evidenceRefs.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {run.evidenceRefs.map((ref) => (
+                        <a
+                          key={ref}
+                          href={`/api/deliveries/browser-screenshot?ref=${encodeURIComponent(ref)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-sm border border-line px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-3 transition-colors hover:text-ink"
+                          title={ref}
+                        >
+                          📷 {ref.split("/").pop()}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

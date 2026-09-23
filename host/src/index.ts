@@ -90,9 +90,15 @@ try {
       const { terminalManager } = await import("../../lib/runtime.js");
       return terminalManager().list();
     },
-    terminalCreate: async (cwd, cols, rows) => {
+    terminalCreate: async (cwd, cols, rows, command) => {
       const { terminalManager, defaultWorkspaceRoot } = await import("../../lib/runtime.js");
-      return terminalManager().start({ command: process.env.SHELL ?? "bash", cwd: cwd || defaultWorkspaceRoot, ...(cols ? { cols } : {}), ...(rows ? { rows } : {}) });
+      // command 模式（进程内 /api/terminal 契约：跑命令进程至退出）；
+      // 缺省交互 shell（M2b B4 面板终端场景）——两语义经网关透传 body 区分
+      return terminalManager().start({
+        command: command ?? (process.env.SHELL || "bash"),
+        cwd: cwd || defaultWorkspaceRoot,
+        ...(cols ? { cols } : {}), ...(rows ? { rows } : {}),
+      });
     },
     terminalOp: async (id, op, payload) => {
       const { terminalManager } = await import("../../lib/runtime.js");

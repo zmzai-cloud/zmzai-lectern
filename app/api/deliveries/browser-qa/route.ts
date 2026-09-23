@@ -1,7 +1,7 @@
 import { withWorkflowErrors, rethrowWorkflowError } from "@/lib/workflow-error";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { terminalManager } from "@/lib/runtime";
+import { terminalManager, sessionRuntime } from "@/lib/runtime";
 import { resolveOwner } from "@/lib/delivery";
 import { hostServiceDeps } from "@/lib/service-instance";
 import { verifierFromEnv } from "@/lib/browser-verifier-adapter";
@@ -67,11 +67,26 @@ async function handlePOST(request: NextRequest) {
       if (!active.verificationSnapshot) {
         return NextResponse.json({ error: "attempt 未进入验证（无快照）" }, { status: 409 });
       }
+      // repair 接线（V1 遗留项收口）：repair:"agent" 时以结构化失败证据续跑
+      // 同会话 agent 修代码（runner.prompt 等 run 完成），随后同根预算内重验一次；
+      // 缺省不修（用户新指令即第二次跑）
+      let repair: ((failureSummary: string) => Promise<boolean>) | undefined;
+      if (body.repair === "agent") {
+        repair = async (failureSummary: string) => {
+          const runtime = sessionRuntime(sessionId);
+          const info = await runtime.store.getSession(sessionId);
+          await runtime.runner.prompt(sessionId, {
+            text: `【浏览器验证修复】以下 required 断言失败，请修复源码（不要降低验收标准，VerificationPlan 由服务端守卫）：\n\n${failureSummary}\n\n修复完成后不要自行宣称通过，重验由系统执行。`,
+            agent: info?.agent,
+          });
+          return true;
+        };
+      }
       const result = await runBrowserQaWithOneRetry({
         sessionId,
         deps: hostServiceDeps(terminalManager()),
         verifier: verifierFromEnv() ?? undefined,
-        repair: undefined, // agent 修复接线前的显式不修（第二次跑=用户新指令）
+        ...(repair ? { repair } : {}),
       });
       return NextResponse.json({ ok: true, result });
     }

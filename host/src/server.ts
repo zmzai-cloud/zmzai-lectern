@@ -55,7 +55,7 @@ export type HostServerOptions = {
     attachmentReceipt?(sessionId: string, attachmentId: string): Promise<unknown>;
     attachmentRaw?(sessionId: string, attachmentId: string, download: boolean): Promise<unknown>;
     terminalList?(): Promise<unknown>;
-    terminalCreate?(cwd: string, cols: number, rows: number): Promise<unknown>;
+    terminalCreate?(cwd: string, cols: number, rows: number, command?: string): Promise<unknown>;
     terminalOp?(id: string, op: "write" | "resize" | "kill" | "read" | "readAll", payload?: unknown): Promise<unknown>;
     mcpStatus?(): Promise<unknown>;
     mcpRescan?(): Promise<unknown>;
@@ -277,7 +277,7 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             return;
           }
           try {
-            send(res, 200, await options.realRuntime.terminalCreate(typeof body.cwd === "string" ? body.cwd : "", Math.floor(Number(body.cols ?? 80)), Math.floor(Number(body.rows ?? 24))));
+            send(res, 200, await options.realRuntime.terminalCreate(typeof body.cwd === "string" ? body.cwd : "", Math.floor(Number(body.cols ?? 80)), Math.floor(Number(body.rows ?? 24)), typeof body.command === "string" ? body.command : undefined));
           } catch (error) {
             send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
           }

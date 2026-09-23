@@ -47,7 +47,7 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
     } },
   // B4：终端族（list/create/POST op/GET read）
   { method: "GET", pattern: /^\/api\/terminal$/, hostPath: () => "/v1/terminal" },
-  { method: "POST", pattern: /^\/api\/terminal$/, hostPath: () => "/v1/terminal" },
+  { method: "POST", pattern: /^\/api\/terminal$/, hostPath: () => "/v1/terminal", rewriteBody: (g, b) => b },
   { method: "POST", pattern: /^\/api\/terminal\/([^/]+)\/(input|resize)$/, hostPath: (g) => `/v1/terminal/${g[0]}`, rewriteBody: (g, b) => g[1] === "input" ? { op: "write", payload: { data: b.data } } : { op: "resize", payload: { cols: b.cols, rows: b.rows } } },
   { method: "DELETE", pattern: /^\/api\/terminal\/([^/]+)$/, hostPath: (g) => `/v1/terminal/${g[0]}`, rewriteBody: (g) => ({ op: "kill" }) },
   { method: "GET", pattern: /^\/api\/terminal\/([^/]+)\/read$/, hostPath: (g) => `/v1/terminal/${g[0]}` },

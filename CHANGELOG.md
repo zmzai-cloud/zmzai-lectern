@@ -1,5 +1,20 @@
 # Lectern 变更记录
 
+## 0.10.1 —— 0.10.0 收口：armed 终端链 + 浏览器验证 plan/repair 接线 + 线上发布
+
+- **armed 终端链修复**（0.10.0 packaged-smoke 挂账项）：Host `terminalCreate` 支持
+  command 模式（进程内 `/api/terminal` 契约——跑命令进程至退出；缺省仍交互 shell）；
+  网关 `POST /api/terminal` 补 body 透传（无 rewriteBody 的 POST 路由此前不带 body——
+  既有缺口，armed 下命令参数被吞、起成交互 shell 永不退出）。
+- **浏览器验证 Plan 产生方**：无显式 plan 但 setup manifest 已声明 devServer 时，
+  自动合成默认 plan（goto 根路由 + body 渲染断言，required）并落库——项目声明即
+  最低验收；AI/用户经 plan API 增补（降级守卫保证 required 只增不减）。
+- **修复闭环 agent 接线**：`browser-qa run` 支持 `repair:"agent"`——首次 required
+  失败时以结构化失败证据续跑同会话 agent 修代码（runner.prompt 等 run 完成），
+  随后同根预算内重验一次；缺省仍不修。
+- 发版链：OSS 上传（.env.release）+ GitHub Release + Windows 交叉构建（真机
+  验证仍标未验证，见 0.5.2 验证文档口径）。
+
 ## 0.10.0 —— W1/V1/C1：任务 worktree 全生命周期 + 浏览器验证 + macOS 桌面控制
 
 **本版本完成 B0 后三个扩展阶段**（spec §17.1）：W1 任务工作区、V1 浏览器验证与交付证据、C1 macOS computer use。

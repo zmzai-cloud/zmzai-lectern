@@ -290,3 +290,40 @@ describe("一次修复闭环（V1-S5 / V03）", () => {
     if (out.outcome === "stale") expect(out.detail).toContain("变化");
   });
 });
+
+describe("Plan 产生方：manifest 默认合成（V1 收口）", () => {
+  it("无显式 plan 但 devServer 已声明 → 合成默认 plan（goto+body）并跑通；无 devServer 无 plan → no-plan", async () => {
+    const svc = await serve(HTML);
+    closers.push(svc.close);
+    const sessionId = "ses_v1s7";
+    const attemptId = await setup(sessionId, svc.port); // setup 会存 plan——这里要无 plan 场景，删掉
+    const { getDb } = await import("./delivery.js");
+    getDb().prepare("DELETE FROM verification_plans WHERE attempt_id = ?").run(attemptId);
+
+    const out = await runBrowserVerificationForSession({ sessionId, deps: makeDeps(svc.port), verifier: mockVerifier() });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.run.status).toBe("passed");
+    expect(out.run.steps.map((s) => s.kind)).toEqual(["goto", "assert_dom"]); // 默认合成 plan
+    const { getLatestPlan } = await import("./browser-verification.js");
+    expect(getLatestPlan(attemptId)?.version).toBe(1); // 已落库（后续可增补更严断言）
+
+    // 无 plan 且无 devServer 声明 → no-plan 如实拒
+    const repo2 = mkdtempSync(path.join(tmpdir(), "v1-s7-noserver-"));
+    try {
+      execSync("git init -q -b main && git config user.email t@t && git config user.name t && echo app > a.txt && mkdir -p .lectern && git add . && git commit -qm init", { cwd: repo2, shell: "/bin/bash" }); // 无 manifest devServer
+      ownerFixture.owner.mockImplementation((sid: string) => ({ sessionId: sid, project: { id: "p", path: repo2 }, effectiveWorkspaceRoot: repo2 }));
+      const created = await createWorkspace({ dataDir: rtFixture.dir, projectId: "p", projectPath: repo2, sessionId: "ses_v1s8" });
+      expect(created.ok).toBe(true);
+      const delivery = await import("./delivery.js");
+      const owner = delivery.resolveOwner("ses_v1s8")!;
+      const att = delivery.beginAttempt(owner, "run_s7");
+      await delivery.transitionToVerifying(att.id);
+      const r = await runBrowserVerificationForSession({ sessionId: "ses_v1s8", deps: makeDeps(45001), verifier: mockVerifier() });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe("no-plan");
+    } finally {
+      await rm(repo2, { recursive: true, force: true });
+    }
+  });
+});

@@ -12,7 +12,7 @@ import { getAttempt, getDeliveryForSession, getActiveAttempt } from "./delivery.
 import { loadSetupManifest, workspaceRecordForSession } from "./workspace-service.js";
 import { findReusableService, startOwnedService, stopServiceInstance, type ServiceDeps, type ServiceInstance } from "./service-instance.js";
 import { verifierFromEnv } from "./browser-verifier-adapter.js";
-import { getLatestPlan, startBrowserVerificationRun, type BrowserVerificationRun } from "./browser-verification.js";
+import { getLatestPlan, saveVerificationPlan, startBrowserVerificationRun, type BrowserVerificationRun } from "./browser-verification.js";
 
 export type OrchestrationOutcome =
   | { ok: true; run: BrowserVerificationRun; service: ServiceInstance | null }
@@ -37,10 +37,24 @@ export async function runBrowserVerificationForSession(input: {
   // （先于 plan 检查——无隔离工作区是硬性前置，普通会话不谈浏览器验证）
   const ws = workspaceRecordForSession(dataDir, input.sessionId);
   if (!ws) return { ok: false, reason: "no-workspace", detail: "会话无隔离工作区（浏览器验证当前仅支持 workspace 会话）" };
-  const plan = getLatestPlan(attempt.id);
-  if (!plan) return { ok: false, reason: "no-plan", detail: "先为该 attempt 保存 VerificationPlan" };
   const manifest = loadSetupManifest(ws.path);
   const devServer = manifest.devServer;
+  // Plan 产生方：显式保存的 plan 优先；无 plan 但 devServer 已声明 → 合成
+  // 默认 plan（goto 根路由 + body 渲染存在断言，required）——项目声明即最低
+  // 验收，AI/用户可用 plan API 增补更严断言（降级守卫保证只增不减）
+  let plan = getLatestPlan(attempt.id);
+  if (!plan) {
+    if (!devServer) return { ok: false, reason: "no-plan", detail: "无 VerificationPlan 且 manifest 未声明 devServer" };
+    const synthesized = saveVerificationPlan(attempt.id, {
+      steps: [
+        { kind: "goto", target: "/", requirement: "required" },
+        { kind: "assert_dom", target: "body", requirement: "required" },
+      ],
+      viewports: [{ width: 1280, height: 800 }],
+    });
+    if (!synthesized.ok) return { ok: false, reason: "no-plan", detail: `默认 plan 保存失败：${synthesized.detail ?? synthesized.reason}` };
+    plan = synthesized.plan;
+  }
 
   // 服务解析（§11.2.2）：同 workspace+同指纹可核对复用 → owned 启动
   let service = findReusableService({ workspaceId: ws.workspaceId, snapshotFingerprint: snap.worktreeFingerprint });

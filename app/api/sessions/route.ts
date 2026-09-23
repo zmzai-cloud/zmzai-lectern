@@ -7,7 +7,9 @@ import { resolveModel, sessionCookieName } from "@/lib/relay";
 import { cloudRuntime, runtimeFor } from "@/lib/runtime";
 import { withWorkflowErrors, WorkflowError } from "@/lib/workflow-error";
 import { getActiveProject, listProjects, projectStore } from "@/lib/projects";
-import { createWorktree, worktreeForSession } from "@/lib/worktree";
+import { worktreeForSession } from "@/lib/worktree";
+import { createWorkspace } from "@/lib/workspace-service";
+import { dataDir } from "@/lib/runtime-constants";
 import type { SessionListItem } from "@/lib/types";
 import { toTaskView } from "@/lib/task-presentation";
 import { createHash, randomUUID } from "node:crypto";
@@ -104,14 +106,16 @@ async function handlePOST(request: NextRequest) {
   });
   const session = await runtime.store.getSession(sessionId) ?? created;
 
-  // 会话级 worktree 隔离（robustness-plan §9）：仅显式勾选「隔离副本」的会话创建 worktree；
-  // 非 git 项目 / git 失败时降级为普通会话并回传原因（渐进采用，不做一刀切）。
+  // 会话级 worktree 隔离（W1：WorkspaceService 创建序列接管——先登记再 Git、
+  // 核对读一致才 ready、失败保持 failed 不自动落回主工作区，spec §10.2）。
   const recorded = worktreeForSession(session.id);
   let isolation: { enabled: boolean; reason?: string; path?: string; branch?: string } = recorded
     ? { enabled: true,path: recorded.path,branch: recorded.branch }
     : { enabled: false };
-  if (body?.isolate) {
-    const result = await createWorktree(session.id, project.path);
+  if (body?.isolate && !recorded) {
+    const result = await createWorkspace({
+      dataDir, projectId: project.id, projectPath: project.path, sessionId: session.id,
+    });
     if (result.ok) {
       isolation = { enabled: true, path: result.record.path, branch: result.record.branch };
     } else {

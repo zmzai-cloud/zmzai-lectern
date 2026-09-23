@@ -23,6 +23,7 @@ import { resolveCwdWithin } from "./delivery-path.js";
 import { worktreeForSession } from "./worktree.js";
 import { resolveSessionOwner } from "./session-owner.js";
 import { WorkflowError } from "./workflow-error.js";
+import { integrateWorkspace, markReadyForReview, workspaceRecordForSession } from "./workspace-service.js";
 import {
   casUpdateRef,
   currentBranch,
@@ -48,6 +49,7 @@ import type {
   DeliveryStatus,
   TaskDelivery,
 } from "./delivery-types.js";
+
 
 /** 交付数据目录（delivery.db 与临时 index / 输出都放这里）。 */
 const deliveryDataDir = () => join(resolve(dataDir), "deliveries");
@@ -430,6 +432,16 @@ export async function transitionToVerifying(
     }
   }
 
+  // W1-S27：隔离会话补捕获整合目标 ref 的 HEAD（接受时的目标 CAS 锚点——
+  // 目标在验证后推进 → 拒绝重新验证，与 base 推进同语义，spec §11.2）
+  const wsRecord = workspaceRecordForSession(dataDir, attempt.sessionId);
+  if (wsRecord && !wsRecord.targetRef.startsWith("commit:")) {
+    const repoRoot = resolve(wsRecord.path, "..", "..");
+    const fullRef = wsRecord.targetRef.startsWith("refs/") ? wsRecord.targetRef : `refs/heads/${wsRecord.targetRef}`;
+    const targetHead = await git(repoRoot, ["rev-parse", "--verify", fullRef]);
+    if (targetHead.ok) snapshot.targetHeadSha = targetHead.stdout.trim();
+  }
+
   attempt.status = "verifying";
   attempt.verificationSnapshot = snapshot;
   attempt.changedPaths = changedPaths;
@@ -618,6 +630,44 @@ export async function mergeAttemptCas(attemptId: string, allowUnverified = false
     return { ok: false, reason: "snapshot_stale", detail: "worktree HEAD 已变化" };
   }
 
+  // ===== W1-S27 收敛：隔离会话（workspace 记录在案）的合并+推进委托
+  // WorkspaceService 整合序列（repo 锁/受管临时 worktree/FF-only/journal/重试去重）。
+  // evidence 约束仍由上面的既有前置检查承担（canAccept/快照有效/base 未动/HEAD 未变）；
+  // 整合目标 = 创建时固定的 targetRef（四宗罪之三：不跟随主目录当前分支），
+  // 目标 CAS 锚点 = 验证时捕获的 targetHeadSha（推进 → 拒绝重新验证）。 =====
+  const wsRecord = workspaceRecordForSession(dataDir, attempt.sessionId);
+  if (wsRecord) {
+    if (wsRecord.targetRef.startsWith("commit:")) {
+      return { ok: false, reason: "base_ref_moved", detail: "workspace 创建于 detached HEAD，无有效整合目标分支；请显式指定目标分支后接受" };
+    }
+    const repoRoot = resolve(wsRecord.path, "..", "..");
+    const fullRef = wsRecord.targetRef.startsWith("refs/") ? wsRecord.targetRef : `refs/heads/${wsRecord.targetRef}`;
+    const targetNow = await git(repoRoot, ["rev-parse", "--verify", fullRef]);
+    if (!targetNow.ok) return { ok: false, reason: "base_ref_moved", detail: `整合目标 ref 不存在：${wsRecord.targetRef}` };
+    const nowTip = targetNow.stdout.trim();
+    if (snap.targetHeadSha && nowTip !== snap.targetHeadSha) {
+      return { ok: false, reason: "base_ref_moved", detail: "整合目标分支已推进，请重新验证后再接受" };
+    }
+    // 交付验证完成 = 审查完成（幂等；integrated/integrating 由整合门槛自理）
+    markReadyForReview(dataDir, wsRecord.workspaceId);
+    const integrated = await integrateWorkspace(dataDir, wsRecord.workspaceId, {
+      expectedTargetCommit: nowTip,
+      targetRef: wsRecord.targetRef,
+      sourceCommit: snap.deliveryCommitSha, // 合并 immutable delivery commit，不是分支 tip
+    });
+    if (!integrated.ok) {
+      const mapped: DeliveryMergeRejectReason =
+        integrated.reason === "target-moved" || integrated.reason === "bad-target-ref" ? "base_ref_moved"
+        : integrated.reason === "target-dirty" ? "worktree_dirty"
+        : integrated.reason === "cas-failed" || integrated.reason === "not-fast-forward" ? "cas_failed"
+        : integrated.reason === "conflict" ? "integration_conflict"
+        : "integration_failed";
+      return { ok: false, reason: mapped, detail: integrated.record?.failureReason ?? integrated.reason };
+    }
+    return { ok: true, mergeCommitSha: integrated.record.integrationCommit ?? "", baseRef: wsRecord.targetRef };
+  }
+
+  // ===== 非 workspace 会话（普通主工作区，无隔离层）：维持既有直接 CAS =====
   // 从 immutable delivery commit 建 merge commit（--no-ff 保证记录 merge 节点）。
   const mergeCommit = await git(root, [
     "commit-tree",

@@ -7,7 +7,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { dataDirForId } from "@/lib/projects";
 import { applyModeRules, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { sessionStoreFor } from "@/lib/runtime";
-import { removeWorktree } from "@/lib/worktree";
+import { discardSessionWorkspace } from "@/lib/workspace-actions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,8 +59,9 @@ async function handleDELETE(_request: NextRequest, ctx: { params: Promise<{ id: 
   if (!found) throw new WorkflowError("NOT_FOUND", "会话不存在", 404);
   await found.store.deleteSession?.(id);
 
-  // 隔离副本会话：worktree 目录与分支一并清理（未合并的提交随分支丢弃）
-  await removeWorktree(id).catch(() => undefined);
+  // 隔离副本会话：工作区目录与分支一并清理（W1-S27 走 WorkspaceService 删序，
+  // 失败保留可修复记录；会话本体已删，清理失败不阻断删除响应）
+  await discardSessionWorkspace(id).catch(() => undefined);
 
   // 遗留 JSONL 清扫（store 未实现 deleteSession 的后端也能清到文件层）
   const dir = dataDirForId(found.projectId);

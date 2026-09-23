@@ -560,6 +560,18 @@ export async function adoptWorkspace(dataDir: string, sessionId: string): Promis
   return record;
 }
 
+/** 目标 ref 当前提交（路由/动作层在整合点击时刻取 CAS 锚点用；
+ *  targetRef 为 commit: 形式（detached 创建）或 ref 不存在 → null）。 */
+export async function currentTargetCommit(dataDir: string, workspaceId: string): Promise<string | null> {
+  const db = getDb(dataDir);
+  const record = getRecord(db, workspaceId);
+  if (!record || record.targetRef.startsWith("commit:")) return null;
+  const repoRoot = repoRootOfRecord(record);
+  const full = record.targetRef.startsWith("refs/") ? record.targetRef : `refs/heads/${record.targetRef}`;
+  const out = await git(repoRoot, ["rev-parse", "--verify", full]);
+  return out.ok ? out.stdout.trim() : null;
+}
+
 /** worktree list porcelain 输出是否包含目标路径（realpath 归一，macOS /var 前缀兼容）。 */
 function listContainsPath(porcelain: string, target: string): boolean {
   return porcelain.split("\n").some((line) => {

@@ -3,7 +3,8 @@ import { withWorkflowErrors } from "@/lib/workflow-error";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { sessionRuntime, workspaceRootForSession } from "@/lib/runtime";
-import { mergeWorktree, removeWorktree, worktreeCommits, worktreeForSession } from "@/lib/worktree";
+import { discardSessionWorkspace, mergeSessionWorkspace } from "@/lib/workspace-actions";
+import { worktreeCommits, worktreeForSession } from "@/lib/worktree";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +24,9 @@ async function handleGET(request: Request, ctx: { params: Promise<{ id: string }
   return NextResponse.json({ enabled: true, path: wt.path, branch: wt.branch, commits });
 }
 
-/** POST /api/sessions/[id]/worktree — 合并回主工作区（merge）或丢弃副本（discard）。 */
+/** POST /api/sessions/[id]/worktree — 合并回目标分支（merge）或丢弃副本（discard）。
+ *  W1-S27：写路径收敛进 WorkspaceService（交付门 + 整合序列 + 删序查返回码），
+ *  旧 mergeWorktree（跟随主目录当前分支/成功即删目录）不再被调用。 */
 async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!SAFE_ID.test(id)) return NextResponse.json({ error: "非法会话 id" }, { status: 400 });
@@ -36,12 +39,10 @@ async function handlePOST(request: NextRequest, ctx: { params: Promise<{ id: str
   const existing = await runtime.store.getSession(id);
   if (!existing) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
 
-  if (body.action === "discard") {
-    await removeWorktree(id);
-    return NextResponse.json({ ok: true, output: "隔离副本已丢弃" });
-  }
-  const result = await mergeWorktree(id);
-  return NextResponse.json(result, { status: result.ok ? 200 : 409 });
+  const result = body.action === "merge"
+    ? await mergeSessionWorkspace(id)
+    : await discardSessionWorkspace(id);
+  return NextResponse.json(result, { status: result.status });
 }
 
 export const GET = withWorkflowErrors(handleGET);

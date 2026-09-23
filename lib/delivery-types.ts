@@ -40,6 +40,9 @@ export type DeliverySnapshot = {
   baseHeadSha?: string;
   /** 验证时的 worktree HEAD。 */
   worktreeHeadSha?: string;
+  /** W1-S27：验证时整合目标 ref（workspace.targetRef）的 HEAD——
+   *  隔离会话接受时的目标 CAS 锚点（目标推进 → 拒绝重新验证）。 */
+  targetHeadSha?: string;
   /** 由 tracked + untracked 变更共同计算的工作区指纹。 */
   worktreeFingerprint: string;
   /** 实际使用的执行计划 hash（P0 未上线 plan 时为 null/undefined）。 */
@@ -136,4 +139,7 @@ export type DeliveryMergeRejectReason =
   | "no_delivery_commit"
   | "base_ref_moved"
   | "worktree_dirty"
-  | "cas_failed";
+  | "cas_failed"
+  /** W1-S27：整合序列（WorkspaceService.integrate）失败的映射结果。 */
+  | "integration_conflict"
+  | "integration_failed";

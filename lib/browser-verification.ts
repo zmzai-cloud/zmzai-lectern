@@ -64,19 +64,8 @@ export type BrowserVerificationRun = {
   endedAt?: string;
 };
 
-/** W1-S2 起使用的受管服务记录（spec §11.1；表与类型在此建好，解析逻辑 S2 落地）。 */
-export type ServiceInstance = {
-  id: string;
-  workspaceId: string;
-  attemptId?: string;
-  cwd: string;
-  declaredCommand: string;
-  processIdentity?: { pid: number; startedAt: string };
-  actualOrigin?: string;
-  healthCheck?: { at: string; ok: boolean; appIdentity?: string };
-  /** owned=Host 启动可停；borrowed=只绑定不停（spec §11.2.2/§11.3）。 */
-  owned: boolean;
-};
+import type { ServiceInstance } from "./service-instance.js";
+export type { ServiceInstance } from "./service-instance.js";
 
 // ===== 浏览器驱动 adapter（S3 落地 Electron 实现；测试注入 mock）=====
 
@@ -122,16 +111,6 @@ function ensureTables(db: DatabaseSync): void {
       ended_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_bvr_attempt ON browser_verification_runs(attempt_id);
-    CREATE TABLE IF NOT EXISTS service_instances (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      attempt_id TEXT,
-      cwd TEXT NOT NULL,
-      declared_command TEXT NOT NULL,
-      owned INTEGER NOT NULL,
-      json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
   `);
 }
 

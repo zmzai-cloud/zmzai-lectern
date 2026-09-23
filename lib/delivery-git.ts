@@ -56,13 +56,25 @@ export function toBranchRef(name: string): string {
   return `refs/heads/${name}`;
 }
 
-/** 生成目录树（不含 .git 与 worktree 容器）的稳定指纹。 */
-export async function worktreeFingerprint(cwd: string): Promise<string> {
+/** 生成目录树（不含 .git 与 worktree 容器）的稳定指纹。
+ *  exclude：开发服务器可写缓存目录（spec §11.2 末段「预先声明并排除」）——
+ *  这些路径的 untracked/变更不进指纹（服务跑起来写 .next 不能让快照恒 stale）；
+ *  **tracked 源码变更永不排除**（排除不能掩盖应用源码变化）。
+ *  未传 exclude 时逐字节保持旧算法（存量快照不因此失效）。 */
+export async function worktreeFingerprint(cwd: string, exclude?: string[]): Promise<string> {
   // --porcelain=v1 输出「状态 + 路径」；-z 用 NUL 分隔避免路径带空格/换行。
   // 覆盖 tracked 变更 + untracked 文件（含未暂存与已暂存），是快照的核心组成。
   const status = await git(cwd, ["status", "--porcelain=v1", "-z"]);
   if (!status.ok) return `error:${status.stderr.slice(0, 120)}`;
-  const raw = status.stdout;
+  let raw = status.stdout;
+  if (exclude && exclude.length > 0) {
+    const isExcluded = (p: string) => exclude.some((d) => p === d || p === `${d}/` || p.startsWith(`${d}/`));
+    // -z 每条记录以 \0 结尾「XY path\0」；只滤 untracked（??）——tracked 变更不排除
+    raw = raw.split("\0").filter((entry) => {
+      if (!entry.startsWith("?? ")) return true;
+      return !isExcluded(entry.slice(3));
+    }).map((e) => `${e}\0`).join("");
+  }
   const hash = createHash("sha256");
   hash.update(raw);
   return hash.digest("hex");

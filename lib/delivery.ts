@@ -23,7 +23,7 @@ import { resolveCwdWithin } from "./delivery-path.js";
 import { worktreeForSession } from "./worktree.js";
 import { resolveSessionOwner } from "./session-owner.js";
 import { WorkflowError } from "./workflow-error.js";
-import { integrateWorkspace, markReadyForReview, workspaceRecordForSession } from "./workspace-service.js";
+import { integrateWorkspace, markReadyForReview, workspaceRecordForSession, loadSetupManifest } from "./workspace-service.js";
 import {
   casUpdateRef,
   currentBranch,
@@ -408,13 +408,16 @@ export async function transitionToVerifying(
   const now = new Date().toISOString();
   const isGit = isGitRepo(root);
   const baseSha = isGit ? await headSha(root) : undefined;
-  const fingerprint = isGit ? await worktreeFingerprint(root) : await plainFingerprint(root);
+  // 可写缓存目录排除集：捕获时从 manifest 冻结（预先声明；事后扩大排除不生效）
+  const cacheExcludes = loadSetupManifest(root).devServer?.cacheDirs;
+  const fingerprint = isGit ? await worktreeFingerprint(root, cacheExcludes) : await plainFingerprint(root);
   // 变更文件是证据的一部分，必须由服务端从 git 推导，绝不信任客户端提交的路径。
   const changedPaths = isGit ? await listChangedPaths(root) : [];
 
   const snapshot: DeliverySnapshot = {
     ...(baseSha ? { baseHeadSha: baseSha, worktreeHeadSha: baseSha } : {}),
     worktreeFingerprint: fingerprint,
+    ...(cacheExcludes && cacheExcludes.length > 0 ? { cacheExcludes } : {}),
     capturedAt: now,
   };
 
@@ -569,7 +572,7 @@ export async function isSnapshotStillValid(attempt: DeliveryAttempt): Promise<bo
   if (!snap) return false;
   const root = attempt.effectiveWorkspaceRoot;
   if (!isGitRepo(root)) return false;
-  const current = await worktreeFingerprint(root);
+  const current = await worktreeFingerprint(root, snap.cacheExcludes);
   return current === snap.worktreeFingerprint;
 }
 
@@ -608,8 +611,8 @@ export async function mergeAttemptCas(attemptId: string, allowUnverified = false
   const root = attempt.effectiveWorkspaceRoot;
   if (!isGitRepo(root)) return { ok: false, reason: "not_git_repo" };
 
-  // 前置：快照仍相等（验证后工作区被改则拒绝）
-  const currentFingerprint = await worktreeFingerprint(root);
+  // 前置：快照仍相等（验证后工作区被改则拒绝；缓存目录按快照冻结集排除）
+  const currentFingerprint = await worktreeFingerprint(root, snap.cacheExcludes);
   if (currentFingerprint !== snap.worktreeFingerprint) {
     return { ok: false, reason: "snapshot_stale" };
   }

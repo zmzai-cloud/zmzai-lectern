@@ -255,8 +255,10 @@ export type SetupManifest = {
   /** 必要本地配置映射：from（仓库外，含 secret）→ to（worktree 内相对路径）。
    *  值不落库、不进事件——只在此刻拷贝。 */
   configMaps?: { from: string; to: string }[];
-  /** 预览/验证命令（就绪检查用端口探活替代，声明式）。 */
-  devServer?: { command: string; port: number };
+  /** 预览/验证命令（就绪检查用端口探活替代，声明式）。
+   *  cacheDirs：开发服务器可写缓存目录（.next/dist 等）——V1 起预先声明并
+   *  排除出源代码 fingerprint（spec §11.2 末段），不用「忽略生成物」掩盖源码变化。 */
+  devServer?: { command: string; port: number; cacheDirs?: string[] };
 };
 
 export type PrepareResult = {
@@ -267,7 +269,7 @@ export type PrepareResult = {
 
 /** Host 端口分配器（spec §10.2「端口由 Host 分配并登记，不手工约定 3000」）。 */
 const portRegistry = new Map<string, { port: number; workspaceId: string }>();
-function allocatePort(workspaceId: string, preferred?: number): number {
+export function allocatePort(workspaceId: string, preferred?: number): number {
   // 已分配优先复用；preferred 被占则从 41000 起探
   for (const [, entry] of portRegistry) {
     if (entry.workspaceId === workspaceId) return entry.port;

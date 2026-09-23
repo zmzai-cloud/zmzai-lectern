@@ -43,6 +43,9 @@ export type DeliverySnapshot = {
   /** W1-S27：验证时整合目标 ref（workspace.targetRef）的 HEAD——
    *  隔离会话接受时的目标 CAS 锚点（目标推进 → 拒绝重新验证）。 */
   targetHeadSha?: string;
+  /** V1-S2：捕获时从 setup manifest 冻结的可写缓存目录排除集（spec §11.2
+   *  末段「预先声明」——核对用快照里的冻结值，事后改 manifest 扩大排除无效）。 */
+  cacheExcludes?: string[];
   /** 由 tracked + untracked 变更共同计算的工作区指纹。 */
   worktreeFingerprint: string;
   /** 实际使用的执行计划 hash（P0 未上线 plan 时为 null/undefined）。 */

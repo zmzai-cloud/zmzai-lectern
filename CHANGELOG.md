@@ -1,5 +1,38 @@
 # Lectern 变更记录
 
+## 0.10.0 —— W1/V1/C1：任务 worktree 全生命周期 + 浏览器验证 + macOS 桌面控制
+
+**本版本完成 B0 后三个扩展阶段**（spec §17.1）：W1 任务工作区、V1 浏览器验证与交付证据、C1 macOS computer use。
+
+### W1：任务 worktree 全生命周期（spec §10）
+
+- **WorkspaceService 接管创建/整合/删除写路径**（`lib/workspace-service.ts`）——旧 `lib/worktree.ts` 四宗罪清偿：创建失败不再降级落回主工作区；映射落库核对读一致才 ready；**baseCommit/targetRef 创建时固定**（整合不跟随主目录当前分支）；删除序列每步查返回码、失败保留可修复记录。
+- **整合序列（spec §10.3）**：repository 级锁 + expectedTargetCommit CAS + 受管临时 worktree 合并（冲突保留 attempt 记录、修复后重试）+ 目标推进双路径（未 checkout=update-ref CAS；已 checkout=--ff-only 非快进拒绝）+ integration journal 每步落库 + 重试去重（目标已含 merge commit 不重复合并）。
+- **多轮交付与收敛**：integrationSource 锚点（源变化清锚点重新合并）；`mergeAttemptCas` 对 workspace 会话委托整合序列（evidence 前置检查保留，快照新增 targetHeadSha 目标锚点）；旧 mergeWorktree 不再被任何入口调用；worktree 写操作网关化进 Host。
+- **环境准备（setup manifest）**：`.lectern/workspace.json` 声明 install/配置映射/devServer（端口 Host 分配不手工约定 3000；可写缓存目录预声明并排除出指纹）；secret 值不落库不进事件。
+- **生命周期**：integrated 归档不删目录（会话继续指向原工作区）；旧表记录联合校验导入（adoptWorkspace）。
+
+### V1：浏览器验证与交付证据（spec §11）
+
+- **状态机与驱动分离**：BrowserVerificationRun 状态机/Plan 版本化降级守卫（required 不得降级）/unavailable 语义（环境缺失永不算通过）在 Host 纯逻辑层；真实浏览器驱动是注入 adapter。
+- **Electron 自带 Chromium 驱动**（零新依赖）：主进程隐藏 BrowserWindow + partition 隔离 context + executeJavaScript 结构化断言 + console/资源失败采集 + capturePage 截图证据；dev 与打包模式均可用。
+- **受管服务**：owned 启动走 TerminalManager（端口 Host 分配）；borrowed 服务只绑定不停；就绪检查核对实际 origin 与应用标识（端口可连 ≠ 正确项目）。
+- **多视口与修复闭环**：分轮执行分项证据可追溯；首次 required 失败自动修复一次（supersede 使旧证据失效），第二次失败停手；验证中源码变化 → stale 不作数。
+- **产品闭环**：`/api/deliveries/browser-qa`（plan/runs/run）+ 截图证据服务（路径校验）+ 交付面板浏览器验证节。
+- 真实 Chromium e2e 12/12（含 V02 required 断言失败如实报）。
+
+### C1：macOS computer use（spec §12）
+
+- **ComputerUseBroker**：全桌面单 lease（按根任务排队）、Observation TTL 5s+revision 绑定（陈旧动作拒绝）、动作状态持久登记（unknown 不盲重试）、紧急停止清队列、用户接管/显式恢复、fatal 撤租约。
+- **macOS adapter（零新依赖）**：osascript（System Events AX 结构化定位：窗口按钮/菜单项）+ screencapture；Accessibility/屏幕录制分开探测、缺失给具体设置引导；Windows capability unavailable 不假报。
+- **API 与 UI**：`/api/deliveries/computer-use`（observe/act/stop/takeover…）+ 动作日志脱敏挂进交付证据；常驻控制条显示正在控制的应用与停止入口；全局快捷键 ⌘⇧⌫ 紧急停止。
+- 键入值只经内存穿透、日志仅脱敏占位；原生实测：真 AX 菜单点击 + 效果观察（窗口数变化）+ TTL 拒绝全通过。
+
+### 基础
+
+- 测试 496 → 566（W1/V1/C1 新增；原生 macOS 实测 gated `CUA_NATIVE_TEST=1`）；arch-check 0 违规；内嵌 framework 维持 0.11.0。
+- K1（项目记忆）/ E（评测）仍后置；真实模型基线按评测后置决策归 E 阶段。
+
 ## 0.9.0 —— M3/M4：子代理持久协调 + B0 收官
 
 **本版本完成 B0 全部目标**（spec `2026-09-21-lectern-host-and-subagents-design.md`）：独立 Host、命令/状态边界、可并行可控可恢复的子代理能力。

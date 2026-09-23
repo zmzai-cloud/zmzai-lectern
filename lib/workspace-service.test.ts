@@ -6,7 +6,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
-import { createWorkspace, deleteWorkspace, prepareWorkspace, type WorkspaceRecord } from "./workspace-service.js";
+import { createWorkspace, deleteWorkspace, prepareWorkspace, captureReviewSnapshot, isSnapshotCurrent, type WorkspaceRecord } from "./workspace-service.js";
 import { worktreeForSession } from "./worktree.js";
 
 /** W1-S23：创建序列四宗罪修复——先登记再 Git/核对读/固定 targetRef/删序查返回值。 */
@@ -147,6 +147,37 @@ describe("环境准备（W1-S24）", () => {
         runCommand: async () => ({ exitCode: 0, output: "" }),
       });
       expect(again.assignedPort).toBe(result.assignedPort);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+});
+
+describe("审查快照（W1-S25 / W04 前置）", () => {
+  it("快照覆盖 committed/dirty/untracked；源再改动 → 指纹变化（旧证据失效判定）", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      // worktree 内：改已跟踪文件 + 新增 untracked + 提交一个新 commit
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1h" });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const wt = created.record.path;
+      writeFileSync(path.join(wt, "a.txt"), "modified\n");
+      writeFileSync(path.join(wt, "new-untracked.txt"), "fresh\n");
+      execSync("git add b-new.txt 2>/dev/null; echo staged > s.txt && git add s.txt", { cwd: wt, shell: "/bin/bash" });
+
+      const snap = await captureReviewSnapshot(dataDir, created.record.workspaceId);
+      expect(snap).not.toBeNull();
+      if (!snap) return;
+      expect(snap.dirtyFiles.map((d) => d.kind).sort()).toEqual(["staged", "unstaged", "untracked"]);
+      expect(snap.headCommit).toMatch(/^[0-9a-f]{40}$/);
+      expect(snap.contentFingerprint).toMatch(/^[0-9a-f]{64}$/);
+
+      // 未变 → current
+      expect(await isSnapshotCurrent(dataDir, snap)).toBe(true);
+      // 源再改动 → stale（审查后源变化，旧证据失效）
+      writeFileSync(path.join(wt, "new-untracked.txt"), "changed-after-review\n");
+      expect(await isSnapshotCurrent(dataDir, snap)).toBe(false);
     } finally {
       await rm(path.dirname(root), { recursive: true, force: true });
     }

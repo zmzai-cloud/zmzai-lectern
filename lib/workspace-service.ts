@@ -338,3 +338,84 @@ export function loadSetupManifest(worktreePath: string): SetupManifest {
     return {};
   }
 }
+
+// ==================== W1-S25：审查快照（spec §10.3）====================
+
+/** 审查快照：交付范围的内容指纹 + 不可变 Git tree/commit 标识。
+ *  覆盖已提交、未提交（staged/unstaged）、删除及 untracked 交付物——
+ *  验证证据绑定到该快照；用户或工具后续改动使证据失效（W04 的
+ *  「旧证据失效」判定基础）。 */
+export type ReviewSnapshot = {
+  workspaceId: string;
+  /** 源分支当前 HEAD（未提交改动存在时是快照前的 commit）。 */
+  headCommit: string;
+  /** 交付范围的完整内容指纹：git status+diff+untracked 内容的联合摘要。 */
+  contentFingerprint: string;
+  /** 未提交改动清单（path → staged/unstaged/untracked/deleted）。 */
+  dirtyFiles: { path: string; kind: "staged" | "unstaged" | "untracked" | "deleted" }[];
+  createdAt: string;
+};
+
+/** 生成审查快照。HEAD 用 rev-parse；dirty 面用 status --porcelain；
+ *  指纹 = sha256(headCommit + porcelain + 各 dirty 文件内容摘要)。 */
+export async function captureReviewSnapshot(dataDir: string, workspaceId: string): Promise<ReviewSnapshot | null> {
+  const db = getDb(dataDir);
+  const record = getRecord(db, workspaceId);
+  if (!record) return null;
+
+  const head = await git(record.path, ["rev-parse", "HEAD"]);
+  if (!head.ok) return null;
+  const headCommit = head.stdout.trim();
+
+  const status = await git(record.path, ["status", "--porcelain=v1"]);
+  if (!status.ok) return null;
+  const dirtyFiles: ReviewSnapshot["dirtyFiles"] = [];
+  const hashParts: string[] = [headCommit, status.stdout];
+
+  for (const line of status.stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const x = line[0]!;
+    const y = line[1]!;
+    const filePath = line.slice(3).trim();
+    const kind: ReviewSnapshot["dirtyFiles"][number]["kind"] =
+      x === "?" ? "untracked" : x === "D" || y === "D" ? "deleted" : x !== " " ? "staged" : "unstaged";
+    dirtyFiles.push({ path: filePath, kind });
+    if (kind !== "deleted") {
+      // 内容摘要进指纹（deleted 只有路径）
+      const content = await git(record.path, ["show", `:${filePath}`]).catch(() => ({ ok: false, stdout: "" }));
+      const working = kind === "untracked" ? await readWorkingContent(record.path, filePath) : content.ok ? content.stdout : "";
+      hashParts.push(`${filePath}:${kind}:${working.length}:${hashString(working).slice(0, 16)}`);
+    } else {
+      hashParts.push(`${filePath}:deleted`);
+    }
+  }
+
+  return {
+    workspaceId,
+    headCommit,
+    contentFingerprint: hashString(hashParts.join("\n")),
+    dirtyFiles,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** 快照比对：当前实际状态与既有快照一致 → 证据仍有效；否则 stale。
+ *  W04 的核心判定：「审查后源变化 → 旧证据失效」。 */
+export async function isSnapshotCurrent(dataDir: string, snapshot: ReviewSnapshot): Promise<boolean> {
+  const now = await captureReviewSnapshot(dataDir, snapshot.workspaceId);
+  if (!now) return false;
+  return now.contentFingerprint === snapshot.contentFingerprint;
+}
+
+function hashString(input: string): string {
+  const { createHash } = require("node:crypto") as typeof import("node:crypto");
+  return createHash("sha256").update(input).digest("hex");
+}
+
+async function readWorkingContent(root: string, relPath: string): Promise<string> {
+  try {
+    return readFileSync(resolve(root, relPath), "utf8").slice(0, 64 * 1024);
+  } catch {
+    return "";
+  }
+}

@@ -91,6 +91,14 @@ async function runStep(ctx, step, serviceOrigin) {
   const wc = ctx.win.webContents;
   const beforeErrors = ctx.consoleErrors;
   try {
+    if (step.kind === "assert_network") {
+      // 失败资源数断言：value = 允许阈值（默认 0）
+      const limit = Number(step.value) >= 0 ? Number(step.value) : 0;
+      if (ctx.resourceFailures > limit) {
+        return { status: "failed", detail: `资源失败 ${ctx.resourceFailures} > 阈值 ${limit}`, resourceFailures: ctx.resourceFailures };
+      }
+      return { status: "passed", detail: `资源失败 ${ctx.resourceFailures}/${limit}`, resourceFailures: ctx.resourceFailures };
+    }
     if (step.kind === "goto") {
       const url = /^https?:\/\//.test(String(step.target ?? "")) ? String(step.target) : `${serviceOrigin ?? ""}${step.target ?? "/"}`;
       if (!/^https?:\/\//.test(url)) return { status: "unavailable", detail: "无 serviceOrigin 且 target 非绝对 URL" };
@@ -137,8 +145,9 @@ async function startVerifierServer() {
         });
         const ctx = { win, consoleErrors: 0, resourceFailures: 0 };
         win.webContents.on("console-message", (_e, level) => {
-          // Electron level：0 verbose /1 info /2 warning /3 error
-          if (Number(level) >= 2) ctx.consoleErrors += 1;
+          // Electron level：0 verbose /1 info /2 warning /3 error（新版给字符串名）
+          const lv = typeof level === "string" ? { warning: 2, error: 3 }[level] ?? 0 : Number(level);
+          if (lv >= 2) ctx.consoleErrors += 1;
         });
         win.webContents.on("did-fail-resource-load", () => { ctx.resourceFailures += 1; });
         const id = `bctx_${crypto.randomBytes(8).toString("hex")}`;

@@ -28,12 +28,15 @@ export type VerificationStep = {
   requirement: "required" | "advisory";
 };
 
+export type Viewport = { width: number; height: number };
+
 export type VerificationPlan = {
   id: string;
   attemptId: string;
   version: number;
   steps: VerificationStep[];
-  viewport: { width: number; height: number };
+  /** V05：多视口（每视口执行整组步骤，分项证据带 viewport 可追溯）。 */
+  viewports: Viewport[];
 };
 
 export type RunStepRecord = {
@@ -43,6 +46,9 @@ export type RunStepRecord = {
   status: "passed" | "failed" | "unavailable";
   durationMs: number;
   consoleErrors: number;
+  resourceFailures?: number;
+  /** 分项证据归属视口（多视口可追溯，V05）。 */
+  viewport?: Viewport;
   detail?: string;
 };
 
@@ -73,6 +79,7 @@ export type VerifierStepResult = {
   status: "passed" | "failed" | "unavailable";
   detail?: string;
   consoleErrors?: number;
+  resourceFailures?: number;
   screenshotArtifactRef?: string;
 };
 
@@ -126,7 +133,7 @@ export type SavePlanResult = { ok: true; plan: VerificationPlan } | { ok: false;
 /** 保存新版本 Plan。降级守卫（spec §11.2.1）：AI/重试可以增改步骤，
  *  但既有版本的 required 步骤在新版本中不得消失或降为 advisory——
  *  失败后自行把 required 降级是服务端拒绝的写操作。 */
-export function saveVerificationPlan(attemptId: string, input: { steps: VerificationStep[]; viewport: { width: number; height: number } }): SavePlanResult {
+export function saveVerificationPlan(attemptId: string, input: { steps: VerificationStep[]; viewports: Viewport[] }): SavePlanResult {
   if (!Array.isArray(input.steps) || input.steps.length === 0) return { ok: false, reason: "invalid-steps" };
   const db = getDb();
   ensureTables(db);
@@ -140,12 +147,13 @@ export function saveVerificationPlan(attemptId: string, input: { steps: Verifica
       }
     }
   }
+  if (!Array.isArray(input.viewports) || input.viewports.length === 0) return { ok: false, reason: "invalid-steps", detail: "viewports 不可为空" };
   const plan: VerificationPlan = {
     id: newId("vplan"),
     attemptId,
     version: (prior?.version ?? 0) + 1,
     steps: input.steps,
-    viewport: input.viewport,
+    viewports: input.viewports,
   };
   db.prepare("INSERT INTO verification_plans (id, attempt_id, version, json, created_at) VALUES (?, ?, ?, ?, ?)")
     .run(plan.id, attemptId, plan.version, JSON.stringify(plan), new Date().toISOString());
@@ -156,7 +164,11 @@ export function getLatestPlan(attemptId: string): VerificationPlan | null {
   const db = getDb();
   ensureTables(db);
   const row = db.prepare("SELECT json FROM verification_plans WHERE attempt_id = ? ORDER BY version DESC LIMIT 1").get(attemptId) as { json: string } | undefined;
-  return row ? (JSON.parse(row.json) as VerificationPlan) : null;
+  if (!row) return null;
+  const parsed = JSON.parse(row.json) as VerificationPlan & { viewport?: Viewport };
+  // 旧记录（S4 前单视口）兼容：viewport 单数包成数组
+  if (!parsed.viewports && parsed.viewport) return { ...parsed, viewports: [parsed.viewport] };
+  return parsed;
 }
 
 // ===== Run 状态机 =====
@@ -238,47 +250,56 @@ export async function startBrowserVerificationRun(input: {
   }
 
   const contextKey = input.contextKey ?? `bvr-${input.attemptId}`;
-  const opened = await input.verifier.openContext({ contextKey, viewport: plan.viewport });
-  if (!opened.ok) {
-    return finish({ status: "unavailable", unavailableReason: `浏览器 context 不可用：${opened.reason}` });
-  }
-  writeRun(db, { ...run, status: "starting" });
-
-  writeRun(db, { ...run, status: "running", steps: [] });
   const stepRecords: RunStepRecord[] = [];
   const evidenceRefs: string[] = [];
-  for (let i = 0; i < plan.steps.length; i += 1) {
-    const step = plan.steps[i]!;
-    const t0 = Date.now();
-    let result: VerifierStepResult;
-    try {
-      result = await input.verifier.runStep({ browserContextId: opened.browserContextId, step });
-    } catch (error) {
-      result = { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+
+  // 多视口（V05）：每视口一个隔离 context 执行整组步骤；任一视口 required
+  // 失败/不可用即定终态（最弱视口定结果，不因某视口好看而宣称通过）
+  for (const viewport of plan.viewports) {
+    const opened = await input.verifier.openContext({ contextKey: `${contextKey}@${viewport.width}x${viewport.height}`, viewport });
+    if (!opened.ok) {
+      return finish({ status: "unavailable", unavailableReason: `浏览器 context 不可用（${viewport.width}x${viewport.height}）：${opened.reason}` });
     }
-    const record: RunStepRecord = {
-      index: i,
-      kind: step.kind,
-      requirement: step.requirement,
-      status: result.status,
-      durationMs: Date.now() - t0,
-      consoleErrors: result.consoleErrors ?? 0,
-      ...(result.detail ? { detail: result.detail.slice(0, 240) } : {}),
-    };
-    stepRecords.push(record);
-    if (result.screenshotArtifactRef) evidenceRefs.push(result.screenshotArtifactRef);
-    // 分项逐步落库（中断后已完成步骤仍是证据）
+    writeRun(db, { ...run, status: "starting" });
     writeRun(db, { ...run, status: "running", steps: [...stepRecords], evidenceRefs: [...evidenceRefs] });
+
+    let viewportFailed = false;
+    for (let i = 0; i < plan.steps.length; i += 1) {
+      const step = plan.steps[i]!;
+      const t0 = Date.now();
+      let result: VerifierStepResult;
+      try {
+        result = await input.verifier.runStep({ browserContextId: opened.browserContextId, step });
+      } catch (error) {
+        result = { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+      }
+      const record: RunStepRecord = {
+        index: stepRecords.length,
+        kind: step.kind,
+        requirement: step.requirement,
+        status: result.status,
+        durationMs: Date.now() - t0,
+        consoleErrors: result.consoleErrors ?? 0,
+        ...(result.resourceFailures != null ? { resourceFailures: result.resourceFailures } : {}),
+        viewport,
+        ...(result.detail ? { detail: result.detail.slice(0, 240) } : {}),
+      };
+      stepRecords.push(record);
+      if (result.status !== "passed") viewportFailed = true;
+      if (result.screenshotArtifactRef) evidenceRefs.push(result.screenshotArtifactRef);
+      // 分项逐步落库（中断后已完成步骤仍是证据）
+      writeRun(db, { ...run, status: "running", steps: [...stepRecords], evidenceRefs: [...evidenceRefs] });
+    }
+
+    // 失败现场截图（该视口有失败/不可用时补采一张，作为证据附件引用）
+    if (viewportFailed) {
+      const shot = await input.verifier.captureScreenshot(opened.browserContextId).catch(() => ({ failed: "capture-error" }) as { artifactRef?: string; failed?: string });
+      if (shot.artifactRef) evidenceRefs.push(shot.artifactRef);
+    }
+    await input.verifier.closeContext(opened.browserContextId).catch(() => undefined);
   }
 
-  // 失败现场截图（失败或 required unavailable 时补采一张，作为证据附件引用）
   const aggregated = aggregateStatus(stepRecords);
-  if (aggregated.status !== "passed") {
-    const shot = await input.verifier.captureScreenshot(opened.browserContextId).catch(() => ({ failed: "capture-error" }) as { artifactRef?: string; failed?: string });
-    if (shot.artifactRef) evidenceRefs.push(shot.artifactRef);
-  }
-  await input.verifier.closeContext(opened.browserContextId).catch(() => undefined);
-
   return finish({
     status: aggregated.status,
     steps: stepRecords,

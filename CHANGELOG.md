@@ -28,9 +28,11 @@
 - **API 与 UI**：`/api/deliveries/computer-use`（observe/act/stop/takeover…）+ 动作日志脱敏挂进交付证据；常驻控制条显示正在控制的应用与停止入口；全局快捷键 ⌘⇧⌫ 紧急停止。
 - 键入值只经内存穿透、日志仅脱敏占位；原生实测：真 AX 菜单点击 + 效果观察（窗口数变化）+ TTL 拒绝全通过。
 
-### 基础
+### 基础与发版检查
 
-- 测试 496 → 566（W1/V1/C1 新增；原生 macOS 实测 gated `CUA_NATIVE_TEST=1`）；arch-check 0 违规；内嵌 framework 维持 0.11.0。
+- 测试 496 → 566（W1/V1/C1 新增；原生 macOS 实测 gated `CUA_NATIVE_TEST=1`，本机 TCC 授权在案实测通过）；arch-check 0 违规；gateway-check 十一项全过；m2c-smoke 5/5；内嵌 framework 维持 0.11.0。
+- **实打包**：dmg/zip 201MB（arm64）；release-validation（darwin）通过；asar 核验 Host 入口/lib/新模块（computer-use/browser-qa 路由）齐。
+- **packaged-smoke（含 SIGKILL 重启 armed 段）首次全链真验**：连环定位并修复七处存量缺口（应用启动 dataDir 作用域/verifier 落盘顺序/hostLog 类型/workspace 目录/armed userId 与响应形状/Host 双库/armed 握手竞态——均先于本版存在，0.9.0 未验证故未暴露）。主链通过（窗口/首页/会话/硬杀/租约恢复/armed 重启）；**「Terminal did not exit」（armed 终端链）未通过，如实标注为已知未过段**，后续批次修复。
 - K1（项目记忆）/ E（评测）仍后置；真实模型基线按评测后置决策归 E 阶段。
 
 ## 0.9.0 —— M3/M4：子代理持久协调 + B0 收官

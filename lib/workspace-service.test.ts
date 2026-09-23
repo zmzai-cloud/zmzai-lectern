@@ -6,7 +6,9 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
-import { createWorkspace, deleteWorkspace, prepareWorkspace, captureReviewSnapshot, isSnapshotCurrent, integrateWorkspace, markReadyForReview, type WorkspaceRecord } from "./workspace-service.js";
+const rtFixture = vi.hoisted(() => ({ dir: "" }));
+vi.mock("./runtime-constants", () => ({ get dataDir() { return rtFixture.dir; } }));
+import { createWorkspace, deleteWorkspace, prepareWorkspace, captureReviewSnapshot, isSnapshotCurrent, integrateWorkspace, markReadyForReview, archiveWorkspace, adoptWorkspace, type WorkspaceRecord } from "./workspace-service.js";
 import { worktreeForSession } from "./worktree.js";
 
 /** W1-S23：创建序列四宗罪修复——先登记再 Git/核对读/固定 targetRef/删序查返回值。 */
@@ -384,6 +386,154 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
       expect(existsSync(path.join(root, "d.txt"))).toBe(true);
       expect(retry.record?.state).toBe("ready_for_review");
       expect(retry.record?.integrationJournal?.some((s) => s.step === "ff-merge" && !s.ok)).toBe(true);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+});
+
+describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
+  it("多轮整合：源变化 → 清锚点重新合并；同源重入 → already-integrated", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1o" });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const wid = created.record.workspaceId;
+      const wt = created.record.path;
+      const base = created.record.baseCommit;
+      const tip = (dir: string) => execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+      const mainAt = () => execSync("git rev-parse main", { cwd: root }).toString().trim();
+
+      execSync("echo r1 > r1.txt && git add . && git commit -qm r1", { cwd: wt, shell: "/bin/bash" });
+      markReadyForReview(dataDir, wid);
+      const r1 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base });
+      expect(r1.ok).toBe(true);
+      expect(existsSync(path.join(root, "r1.txt"))).toBe(true);
+
+      // 第二轮：源分支新提交 → 旧锚点源不符，清锚点重新合并（不误报 already-integrated）
+      execSync("echo r2 > r2.txt && git add . && git commit -qm r2", { cwd: wt, shell: "/bin/bash" });
+      const r2 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt() });
+      expect(r2.ok).toBe(true);
+      if (!r2.ok) return;
+      expect(existsSync(path.join(root, "r2.txt"))).toBe(true);
+      expect(r2.record.integrationJournal?.some((s) => s.step === "stale-anchor-cleared" && s.ok)).toBe(true);
+      expect(r2.record.integrationSource).toBe(tip(wt));
+
+      // 同源重入 → 幂等 already-integrated
+      const r3 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt() });
+      expect(r3.ok && r3.alreadyIntegrated).toBe(true);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+
+  it("sourceCommit 覆盖：合并的是指定的交付提交，分支 tip 之后的内容不进目标（delivery 委托基础）", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1p" });
+      if (!created.ok) return;
+      const wt = created.record.path;
+      execSync("echo s1 > s1.txt && git add . && git commit -qm s1", { cwd: wt, shell: "/bin/bash" });
+      const deliveryCommit = execSync("git rev-parse HEAD", { cwd: wt }).toString().trim();
+      execSync("echo s2 > s2.txt && git add . && git commit -qm s2", { cwd: wt, shell: "/bin/bash" }); // tip 之后的改动不在交付内
+      markReadyForReview(dataDir, created.record.workspaceId);
+
+      const r = await integrateWorkspace(dataDir, created.record.workspaceId, {
+        expectedTargetCommit: created.record.baseCommit, sourceCommit: deliveryCommit,
+      });
+      expect(r.ok).toBe(true);
+      expect(existsSync(path.join(root, "s1.txt"))).toBe(true);
+      expect(existsSync(path.join(root, "s2.txt"))).toBe(false);
+      expect(r.ok && r.record.integrationSource).toBe(deliveryCommit);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+
+  it("integrated 后 createWorkspace 重入：幂等返回原 record（W06 不悄悄换工作区）", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1q" });
+      if (!created.ok) return;
+      const wid = created.record.workspaceId;
+      execSync("echo x > x.txt && git add . && git commit -qm x", { cwd: created.record.path, shell: "/bin/bash" });
+      markReadyForReview(dataDir, wid);
+      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit });
+      expect(done.ok).toBe(true);
+      if (!done.ok) return;
+
+      const again = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1q" });
+      expect(again.ok).toBe(true);
+      if (!again.ok) return;
+      expect(again.record.workspaceId).toBe(wid);
+      expect(again.record.state).toBe("integrated");
+      expect(again.record.revision).toBe(done.record.revision); // 原样返回，不改状态不新建
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+
+  it("archiveWorkspace：integrated → archived 只读归档（目录保留）；未整合拒绝；幂等", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_w1r" });
+      if (!created.ok) return;
+      const wid = created.record.workspaceId;
+      const wt = created.record.path;
+      // 未整合 → 拒绝归档（W06：不误换态）
+      expect(archiveWorkspace(dataDir, wid)).toBeNull();
+
+      execSync("echo x > x.txt && git add . && git commit -qm x", { cwd: wt, shell: "/bin/bash" });
+      markReadyForReview(dataDir, wid);
+      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit });
+      expect(done.ok).toBe(true);
+
+      const archived = archiveWorkspace(dataDir, wid);
+      expect(archived?.state).toBe("archived");
+      expect(existsSync(wt)).toBe(true); // 归档不删目录
+      expect(archiveWorkspace(dataDir, wid)?.state).toBe("archived"); // 幂等
+      // archived 仍算会话活跃指向（只读归档，会话不悄悄切回主目录）
+      rtFixture.dir = dataDir;
+      expect(worktreeForSession("ses_w1r")?.path).toBe(wt);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  });
+
+  it("adoptWorkspace：旧表记录导入（联合校验）→ 可整合；现场不符返回 null；读面双读", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      // 手工造 M2b 前的 legacy 现场：worktree + 旧表行（分支前缀 lectern/<sid>，无 /wt）
+      execSync("git worktree add -q -b lectern/legacyses .lectern-worktrees/legacyses main", { cwd: root, shell: "/bin/bash" });
+      const legacyWt = path.join(root, ".lectern-worktrees", "legacyses");
+      execSync("echo legacy > legacy.txt && git add . && git commit -qm legacy", { cwd: legacyWt, shell: "/bin/bash" });
+      const db = new (await import("node:sqlite")).DatabaseSync(path.join(dataDir, "worktrees.db"));
+      db.exec("CREATE TABLE IF NOT EXISTS worktrees (session_id TEXT PRIMARY KEY, project_path TEXT NOT NULL, path TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL)");
+      db.prepare("INSERT INTO worktrees VALUES (?,?,?,?,?)").run("legacyses", root, legacyWt, "lectern/legacyses", new Date().toISOString());
+
+      // 双读 fallback：无新记录时读面走旧表
+      rtFixture.dir = dataDir;
+      expect(worktreeForSession("legacyses")?.branch).toBe("lectern/legacyses");
+
+      const adopted = await adoptWorkspace(dataDir, "legacyses");
+      expect(adopted?.state).toBe("active");
+      expect(adopted?.branch).toBe("lectern/legacyses");
+      expect(adopted?.targetRef).toBe("main");
+      expect((await adoptWorkspace(dataDir, "legacyses"))?.revision).toBe(adopted?.revision); // 幂等
+
+      // 导入后即可整合（legacy 会话不孤儿）
+      markReadyForReview(dataDir, adopted!.workspaceId);
+      const t = execSync("git rev-parse main", { cwd: root }).toString().trim();
+      const r = await integrateWorkspace(dataDir, adopted!.workspaceId, { expectedTargetCommit: t });
+      expect(r.ok).toBe(true);
+      expect(existsSync(path.join(root, "legacy.txt"))).toBe(true);
+      // 双读新记录优先（同 path/branch，来源换成 workspace_records）
+      expect(worktreeForSession("legacyses")?.path).toBe(adopted!.path);
+
+      // 联合校验不符：旧表行指向不存在的目录 → null（不猜）
+      db.prepare("INSERT OR REPLACE INTO worktrees VALUES (?,?,?,?,?)").run("ghostses", root, path.join(root, ".lectern-worktrees", "ghost"), "lectern/ghostses", new Date().toISOString());
+      expect(await adoptWorkspace(dataDir, "ghostses")).toBeNull();
     } finally {
       await rm(path.dirname(root), { recursive: true, force: true });
     }

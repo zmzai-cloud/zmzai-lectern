@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { dataDir } from "./runtime-constants.js";
 import { WorkflowError } from "./workflow-error.js";
+import { workspaceRecordForSession } from "./workspace-service.js";
 
 /**
  * 会话级 git worktree 隔离（robustness-plan §9）：
@@ -72,8 +73,19 @@ export function isGitRepo(dir: string): boolean {
   return existsSync(resolve(dir, ".git")) || existsSync(resolve(dir, ".git", "HEAD"));
 }
 
-/** 会话 → worktree 映射（无则 null，即普通主工作区会话）。 */
+/** 会话 → worktree 映射（无则 null，即普通主工作区会话）。
+ *  W1-S27 读面双读：WorkspaceService 的 workspace_records（活跃态）优先，
+ *  旧 worktrees 表 fallback（M2b 前会话/未 adopt 的 legacy）。
+ *  写路径已由 workspace-service 接管——本模块只剩兼容读面与 legacy 清理。 */
 export function worktreeForSession(sessionId: string): WorktreeRecord | null {
+  try {
+    const ws = workspaceRecordForSession(dataDir, sessionId);
+    if (ws) {
+      return { sessionId, projectPath: resolve(ws.path, "..", ".."), path: ws.path, branch: ws.branch, createdAt: ws.times.createdAt };
+    }
+  } catch {
+    /* 新表读取失败回落旧表（不阻断读面） */
+  }
   try {
     const row = getDb()
       .prepare("SELECT session_id, project_path, path, branch, created_at FROM worktrees WHERE session_id = ?")

@@ -41,6 +41,9 @@ export type WorkspaceRecord = {
   failureReason?: string;
   /** W1-S26：整合产出的 merge commit（advance 之前落库——中断对账锚点）。 */
   integrationCommit?: string;
+  /** 上次合并进 integrationCommit 的源提交——多轮交付判定锚点是否属于本轮
+   *  （S27：目标已含旧锚点但源已换 → 清锚点重新合并，不误报 already-integrated）。 */
+  integrationSource?: string;
   integrationAttempts?: IntegrationAttempt[];
   integrationJournal?: IntegrationJournalStep[];
 };
@@ -101,9 +104,11 @@ export async function createWorkspace(opts: CreateOptions): Promise<CreateResult
   const startingState = opts.startingState ?? "current_commit";
   const db = getDb(opts.dataDir);
 
-  // 已有记录：creating/failed → 续走；ready/active → 直接返回
+  // 已有记录：creating/failed → 续走；ready/active/integrated/archived → 直接返回
+  // （integrated/archived 幂等返回=W06：integrated 会话继续指向原工作区，
+  //  重入不得新建/换工作区，也不得把状态改坏）
   const prior = getRecord(db, workspaceId);
-  if (prior && (prior.state === "ready" || prior.state === "active") && existsSync(prior.path)) {
+  if (prior && (prior.state === "ready" || prior.state === "active" || prior.state === "integrated" || prior.state === "archived") && existsSync(prior.path)) {
     return { ok: true, record: prior };
   }
 
@@ -144,17 +149,7 @@ export async function createWorkspace(opts: CreateOptions): Promise<CreateResult
 
   // 映射核对读：worktree list 里必须能看到这个路径（写后读回，spec §10.2 中断对账）
   const listOut = await git(root, ["worktree", "list", "--porcelain"]);
-  const seen = listOut.ok && listOut.stdout.split("\n").some((line) => {
-      if (!line.startsWith("worktree ")) return false;
-      // macOS：mkdtemp 给 /var/...，git porcelain 输出 /private/var/...——
-      // realpathSync 归一后再比（spec §10.2「兼容空格路径及 Windows」的归一精神）
-      try {
-        const { realpathSync } = require("node:fs") as typeof import("node:fs");
-        return realpathSync(line.slice(9)) === realpathSync(record.path);
-      } catch {
-        return resolve(line.slice(9)) === resolve(record.path);
-      }
-    });
+  const seen = listOut.ok && listContainsPath(listOut.stdout, record.path);
   if (!seen) {
     // 核对不一致：清理刚建的 worktree（尽力而为）再落 failed——不留半成品
     await git(root, ["worktree", "remove", "--force", record.path]).catch(() => undefined);
@@ -214,7 +209,12 @@ function ensureContainerExcluded(root: string): void {
     })();
     if (!out) return;
     const cur = existsSync(out) ? readFileSync(out, "utf8") : "";
-    if (!cur.split("\n").includes(".lectern-worktrees/")) {
+    // 兼容旧模块 ensureExcluded 的无斜杠写法（避免重复行）
+    const already = cur.split(/\r?\n/).some((l) => {
+      const t = l.trim();
+      return t === ".lectern-worktrees/" || t === ".lectern-worktrees";
+    });
+    if (!already) {
       mkdirSync(resolve(out, ".."), { recursive: true });
       appendFileSync(out, `${cur.endsWith("\n") || cur === "" ? "" : "\n"}.lectern-worktrees/\n`);
     }
@@ -473,6 +473,106 @@ export function markReadyForReview(dataDir: string, workspaceId: string): Worksp
   return updated;
 }
 
+/** 归档（spec §10.3 生命周期收尾）：integrated → archived。
+ *  只读归档：目录保留、会话仍指向原工作区；删除走 deleteWorkspace。幂等。 */
+export function archiveWorkspace(dataDir: string, workspaceId: string): WorkspaceRecord | null {
+  const db = getDb(dataDir);
+  const record = getRecord(db, workspaceId);
+  if (!record) return null;
+  if (record.state === "archived") return record;
+  if (record.state !== "integrated") return null; // 未整合不归档（W06：不误删/不悄悄换态）
+  const updated: WorkspaceRecord = { ...record, state: "archived", revision: record.revision + 1 };
+  upsertRecord(db, updated);
+  return updated;
+}
+
+/** 按 sessionId 查活跃 workspace 记录（W1 读面：worktree.ts 双读与 delivery 收敛用）。
+ *  活跃 = 会话应继续指向该目录的态（含 integrated/archived 只读期）；
+ *  creating/failed/deleting 不算——会话按普通主工作区走。 */
+const SESSION_ACTIVE_STATES: readonly WorktreeState[] = [
+  "ready", "preparing", "active", "verifying", "ready_for_review", "integrating", "integrated", "archived",
+];
+
+export function workspaceRecordForSession(dataDir: string, sessionId: string): WorkspaceRecord | null {
+  let db: DatabaseSync;
+  try {
+    db = getDb(dataDir);
+  } catch {
+    return null;
+  }
+  let rows: { json: string }[];
+  try {
+    rows = db.prepare("SELECT json FROM workspace_records WHERE session_id = ? ORDER BY updated_at DESC").all(sessionId) as { json: string }[];
+  } catch {
+    return null;
+  }
+  for (const row of rows) {
+    try {
+      const record = JSON.parse(row.json) as WorkspaceRecord;
+      if (SESSION_ACTIVE_STATES.includes(record.state)) return record;
+    } catch {
+      /* 坏行跳过（不猜） */
+    }
+  }
+  return null;
+}
+
+/** 导入旧表（M2b 前 lib/worktree.ts）的 worktree 记录进 workspace_records
+ *  （spec §10.2「兼容导入已有 .lectern-worktrees」）。联合校验不猜：
+ *  path 存在 + git worktree list 包含 + branch 可解析；任一不符返回 null。
+ *  已有新记录 → 原样返回（幂等）。 */
+export async function adoptWorkspace(dataDir: string, sessionId: string): Promise<WorkspaceRecord | null> {
+  const db = getDb(dataDir);
+  const workspaceId = `ws_${sessionId}`;
+  const existing = getRecord(db, workspaceId);
+  if (existing && existing.state !== "failed" && existing.state !== "deleting") return existing;
+
+  let legacy: { project_path: string; path: string; branch: string; created_at: string } | undefined;
+  try {
+    legacy = db.prepare("SELECT project_path, path, branch, created_at FROM worktrees WHERE session_id = ?").get(sessionId) as
+      | { project_path: string; path: string; branch: string; created_at: string }
+      | undefined;
+  } catch {
+    return null; // 旧表不存在
+  }
+  if (!legacy || !existsSync(legacy.path)) return null;
+
+  const repoIdentity = repoIdentityOf(resolve(legacy.project_path));
+  if (!repoIdentity) return null;
+  // Git 联合校验：worktree list 必须包含该路径 + 分支可解析（真实现场，非仅库记录）
+  const list = await git(legacy.project_path, ["worktree", "list", "--porcelain"]);
+  if (!list.ok || !listContainsPath(list.stdout, legacy.path)) return null;
+  const branchOut = await git(legacy.project_path, ["rev-parse", "--verify", legacy.branch]);
+  if (!branchOut.ok) return null;
+  const baseCommit = branchOut.stdout.trim();
+  const targetRefOut = await git(legacy.project_path, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const targetRef = targetRefOut.ok && targetRefOut.stdout.trim() !== "HEAD" ? targetRefOut.stdout.trim() : `commit:${baseCommit}`;
+
+  const record: WorkspaceRecord = {
+    workspaceId, projectId: "", repoIdentity,
+    sessionId, rootTaskId: "",
+    baseRef: legacy.branch, baseCommit, targetRef,
+    path: legacy.path, branch: legacy.branch,
+    startingState: "current_commit", state: "active", revision: (existing?.revision ?? 0) + 1,
+    times: { createdAt: legacy.created_at },
+  };
+  upsertRecord(db, record);
+  return record;
+}
+
+/** worktree list porcelain 输出是否包含目标路径（realpath 归一，macOS /var 前缀兼容）。 */
+function listContainsPath(porcelain: string, target: string): boolean {
+  return porcelain.split("\n").some((line) => {
+    if (!line.startsWith("worktree ")) return false;
+    try {
+      const { realpathSync } = require("node:fs") as typeof import("node:fs");
+      return realpathSync(line.slice(9)) === realpathSync(target);
+    } catch {
+      return resolve(line.slice(9)) === resolve(target);
+    }
+  });
+}
+
 export type IntegrationOutcome =
   | "succeeded" | "already-integrated"
   | "conflict" | "merge-failed"
@@ -491,6 +591,8 @@ export type IntegrationAttempt = {
   expectedTargetCommit: string;
   /** 合并提交（推进目标之前先落 record，中断重试据此不重复合并）。 */
   mergeCommit?: string;
+  /** 本轮合并的源提交（显式覆盖=delivery 的 immutable commit；缺省=分支 tip）。 */
+  source?: string;
   conflictFiles?: string[];
   /** 实际合并结果的内容指纹（复用审查快照指纹逻辑，验证绑定用）。 */
   mergedSnapshotFingerprint?: string;
@@ -535,7 +637,7 @@ async function withRepoIntegrationLock<T>(repoIdentity: string, fn: () => Promis
 export async function integrateWorkspace(
   dataDir: string,
   workspaceId: string,
-  opts: { expectedTargetCommit: string; targetRef?: string; reviewSnapshot?: ReviewSnapshot },
+  opts: { expectedTargetCommit: string; targetRef?: string; reviewSnapshot?: ReviewSnapshot; sourceCommit?: string },
 ): Promise<IntegrateResult> {
   const db = getDb(dataDir);
   const initial = getRecord(db, workspaceId);
@@ -602,17 +704,25 @@ export async function integrateWorkspace(
     if (opts.targetRef && opts.targetRef !== current.targetRef) note("target-override", true, `${current.targetRef} -> ${opts.targetRef}`);
     flush({ state: "integrating", activeOperation: "integrate" });
 
+    // 本次整合的源提交：显式覆盖（delivery 的 immutable delivery commit）或分支 tip
+    // （未提交改动不属于整合范围——那是 delivery 物化 commit 的职责）
+    const sourceOut = await git(repoRoot, ["rev-parse", "--verify", opts.sourceCommit ?? current.branch]);
+    if (!sourceOut.ok) return reject("source-branch-missing", `源提交不存在：${opts.sourceCommit ?? current.branch}`);
+    const sourceCommit = sourceOut.stdout.trim();
+    attempt.source = sourceCommit;
+
     // 目标 ref 现值
     const targetNow = await git(repoRoot, ["rev-parse", "--verify", targetFull]);
     if (!targetNow.ok) return reject("bad-target-ref", `目标 ref 不存在：${targetFull}`, { targetRef: attempt.targetRef });
     const targetSha = targetNow.stdout.trim();
 
-    // ---- 重试去重（W05「不重复整合」）：先判目标是否已含预期整合提交 ----
+    // ---- 重试去重（W05「不重复整合」）：目标是否已含预期整合提交 × 锚点是否属于本轮源 ----
     if (current.integrationCommit) {
       const contained = await git(repoRoot, ["merge-base", "--is-ancestor", current.integrationCommit, targetFull]);
-      note("retry-check", true, `integrationCommit=${current.integrationCommit.slice(0, 12)} contained=${contained.ok}`);
-      if (contained.ok) {
-        // 目标已包含预期整合提交：幂等成功，不再合并、不再推进
+      const sourceSame = current.integrationSource === sourceCommit;
+      note("retry-check", true, `integrationCommit=${current.integrationCommit.slice(0, 12)} contained=${contained.ok} sourceMatch=${sourceSame}`);
+      if (contained.ok && sourceSame) {
+        // 目标已包含本轮源的整合提交：幂等成功，不再合并、不再推进
         note("already-integrated", true, targetSha.slice(0, 12));
         flush({
           state: "integrated", activeOperation: undefined, failureReason: undefined,
@@ -622,15 +732,21 @@ export async function integrateWorkspace(
         });
         return { ok: true, record: current, alreadyIntegrated: true };
       }
-      // 中断恢复也过 CAS：目标必须仍在调用方核对的提交上（与全量路径同一前置）
-      const resumeCas = targetSha === attempt.expectedTargetCommit;
-      note("cas-check", resumeCas, `target=${targetSha.slice(0, 12)} expected=${attempt.expectedTargetCommit.slice(0, 12)}`);
-      if (!resumeCas) return reject("target-moved", "中断恢复时目标已推进，与 expectedTargetCommit 不符；请核对后重试");
-      // merge commit 在但目标未含：上次中断在推进之前 → 只推进，不重复合并
-      attempt.reusedMergeCommit = true;
-      note("resume-advance-only", true, `复用 merge commit ${current.integrationCommit.slice(0, 12)}，跳过合并`);
-      flush({ integrationCommit: current.integrationCommit });
-      return advanceTarget();
+      if (!contained.ok && sourceSame) {
+        // 锚点属于本轮源但目标未含：上次中断在推进之前 → 只推进，不重复合并
+        // 中断恢复也过 CAS：目标必须仍在调用方核对的提交上（与全量路径同一前置）
+        const resumeCas = targetSha === attempt.expectedTargetCommit;
+        note("cas-check", resumeCas, `target=${targetSha.slice(0, 12)} expected=${attempt.expectedTargetCommit.slice(0, 12)}`);
+        if (!resumeCas) return reject("target-moved", "中断恢复时目标已推进，与 expectedTargetCommit 不符；请核对后重试");
+        attempt.reusedMergeCommit = true;
+        note("resume-advance-only", true, `复用 merge commit ${current.integrationCommit.slice(0, 12)}，跳过合并`);
+        flush({ integrationCommit: current.integrationCommit });
+        return advanceTarget();
+      }
+      // 锚点过期：目标已含旧轮合并（多轮交付）或上次中断后源已换 → 清锚点走全量
+      note("stale-anchor-cleared", true,
+        `旧锚点不属于本轮源（${(current.integrationSource ?? "").slice(0, 12)} != ${sourceCommit.slice(0, 12)}${contained.ok ? "，旧轮已落地" : "，上次中断已过时"}），重新合并`);
+      flush({ integrationCommit: undefined, integrationSource: undefined });
     }
 
     // ---- 全量路径 ----
@@ -645,12 +761,6 @@ export async function integrateWorkspace(
       note("source-snapshot-check", snapCurrent, snapCurrent ? undefined : "审查后源工作区已变化");
       if (!snapCurrent) return reject("source-changed", "审查后源工作区已变化，旧证据失效；需重新审查");
     }
-
-    // 源交付提交（分支 tip；未提交改动不属于整合范围）
-    const sourceOut = await git(repoRoot, ["rev-parse", "--verify", current.branch]);
-    if (!sourceOut.ok) return reject("source-branch-missing", `源分支不存在：${current.branch}`);
-    const sourceCommit = sourceOut.stdout.trim();
-    note("source-resolve", true, `${current.branch} -> ${sourceCommit.slice(0, 12)}`);
 
     // 目标 clean 检查（已 checkout 时）：dirty 拒绝并保留现场，不 stash/reset
     ensureContainerExcluded(repoRoot); // 容器目录不算用户改动（S23 之前建的旧容器兜底）
@@ -697,8 +807,8 @@ export async function integrateWorkspace(
     attempt.mergeCommit = mergedSha;
     attempt.mergedSnapshotFingerprint = mergedSnap?.contentFingerprint;
     note("merged-snapshot", Boolean(mergedSnap?.contentFingerprint), (mergedSnap?.contentFingerprint ?? "").slice(0, 16));
-    // merge commit 先落 record（中断对账锚点：重试不再重复合并）
-    flush({ integrationCommit: mergedSha });
+    // merge commit + 本轮源先落 record（中断对账锚点：重试不再重复合并/不误报已整合）
+    flush({ integrationCommit: mergedSha, integrationSource: sourceCommit });
 
     return advanceTarget();
 

@@ -24,10 +24,12 @@ try {
   const store = createSqliteSessionStore({ dataDir });
   const session = await createFrameworkSession({ store, userId: "gw-user", workspaceId: "gw-ws", model: { providerId: "faux", modelId: "m" }, prompt: "网关验证" });
   // 经生产路径（网关代理）
+  // V1-S6 后网关对列表响应做形状解包（{sessions:[...]} → 裸数组，进程内契约一致），
+  // 跨用户隔离语义不变（每个请求独立 userId 查询）
   const viaGateway = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=gw-user`)).json());
   const other = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=else`)).json());
-  const listed = Array.isArray(viaGateway?.sessions) && viaGateway.sessions.some((sn) => sn.id === session.id);
-  const isolated = Array.isArray(other?.sessions) && other.sessions.every((sn) => sn.id !== session.id);
+  const listed = Array.isArray(viaGateway) && viaGateway.some((sn) => sn.id === session.id);
+  const isolated = Array.isArray(other) && other.every((sn) => sn.id !== session.id);
   // B2：生产路径 prompt（cookie → credential 通道）+ abort 经网关
   const prompted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/prompt`, {
     method: "POST",

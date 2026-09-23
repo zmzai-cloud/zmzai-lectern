@@ -30,7 +30,7 @@ echo "==> [1/5] next build（生产构建，含 standalone 输出）"
 # CI 靠 workflow 里的 NODE_OPTIONS 抬高，本地构建脚本必须自己抬——否则谁调谁崩。
 # 调用方已显式给了 --max-old-space-size 就尊重，不覆盖。
 if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-6144}"
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-12288}"
 fi
 # 隔离整个旧 .next，避免开发缓存污染生产页面清单；备份保留在 /tmp。
 guard_mv .next tsconfig.tsbuildinfo
@@ -44,6 +44,13 @@ pnpm build
 # 数据目录，含真实会话库与 .secret）复制进 standalone 并随安装包公开发布——
 # v0.2.0~v0.4.3 双平台全部中招，只能全线下架重发。next.config.mjs 的
 # outputFileTracingExcludes 是主防线，这层是兜底。
+# nft tracing 会把根 .env（loadEnvFile 读取模式被静态分析）与 host 编译入口
+# （index.js，与 host/dist/host/src/index.js 逐字节同源）收进 standalone 根——
+# 已知 tracing 产物非运行时残留，检查前清掉；真残留（.workspace/logs/data）仍由
+# check-standalone-clean 拦截。根因（为何 0.9.0 构建未复现）待查，见发版记忆。
+for stray in .next/standalone/index.js .next/standalone/.env; do
+  [ -e "$stray" ] && mv "$stray" "/tmp/lectern-stray-$(basename "$stray")-$(date +%s)"
+done
 node scripts/check-standalone-clean.mjs || exit 1
 
 echo "==> [2/5] 组装 standalone 运行时（静态资源/页面资源拷入 standalone）"

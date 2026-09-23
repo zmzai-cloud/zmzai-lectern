@@ -18,10 +18,15 @@ export type GatewayRoute = {
   /** true = 从请求 Cookie 提取 muzhi_session 单值，以 x-lectern-credential
    *  转发（spec §5.3：不转发全部 cookie）。 */
   withCredential?: boolean;
+  /** passQuery 时对缺失的 key 注入默认值（与进程内 handler 的默认一致——
+   *  Host 版 API 要求显式参数，浏览器裸请求不带；0.10.0 packaged armed 首跑暴露）。 */
+  injectQuery?: Record<string, string>;
+  /** 响应解包：Host 形状 {<key>:[...]} → 裸数组（进程内契约不变，UI 零改动）。 */
+  unwrap?: string;
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
-  { method: "GET", pattern: /^\/api\/sessions$/, hostPath: () => "/v1/sessions", passQuery: true },
+  { method: "GET", pattern: /^\/api\/sessions$/, hostPath: () => "/v1/sessions", passQuery: true, injectQuery: { userId: "local" }, unwrap: "sessions" },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/messages$/, hostPath: (g) => `/v1/sessions/${g[0]}/messages`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/search$/, hostPath: (g) => `/v1/sessions/${g[0]}/search`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: (g) => `/v1/sessions/${g[0]}/read-state`, passQuery: true },
@@ -83,7 +88,13 @@ export async function hostGateway(request: Request): Promise<Response | null> {
     ? hit.route.hostUrl(hit.groups, url)
     : new URL(`http://127.0.0.1:${boot.port}${hit.route.hostPath!(hit.groups)}`);
   if (hit.route.hostUrl) target.host = `127.0.0.1:${boot.port}`;
-  else if (hit.route.passQuery) target.search = url.search;
+  else if (hit.route.passQuery) {
+    const q = new URLSearchParams(url.search);
+    for (const [key, value] of Object.entries(hit.route.injectQuery ?? {})) {
+      if (!q.get(key)) q.set(key, value);
+    }
+    target.search = q.toString();
+  }
   const reqHeaders: Record<string, string> = { authorization: `Bearer ${boot.token}` };
   let body: string | undefined;
   if (hit.route.rewriteBody) {
@@ -99,6 +110,16 @@ export async function hostGateway(request: Request): Promise<Response | null> {
     if (match) reqHeaders["x-lectern-credential"] = `muzhi_session=${decodeURIComponent(match[1]!)}`;
   }
   const res = await fetch(target, { method: request.method, headers: reqHeaders, body, signal: request.signal });
+  // 形状适配（unwrap）：Host 列表端点返回 {key:[...]}，进程内/UI 契约是裸数组
+  if (hit.route.unwrap && (res.headers.get("content-type") ?? "").includes("application/json")) {
+    const parsed = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (parsed && Array.isArray(parsed[hit.route.unwrap])) {
+      return new Response(JSON.stringify(parsed[hit.route.unwrap]), {
+        status: res.status,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+  }
   const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/json; charset=utf-8" });
   // 透传白名单：缓存策略 + 附件安全头（spec §13：nosniff/sandbox/私有缓存
   // 必须随字节流一起到达浏览器，网关不得剥掉）

@@ -260,7 +260,7 @@ function resolveDataDir(userData) {
  *  LaunchServices 注册 Foreground app → Dock 每次多弹一个无图标的「exec」图标；
  *  utilityProcess 是 Utility 类型（BackgroundOnly），天然无 Dock/GUI。
  *  dev 跳过（外部 next dev）。 */
-function ensureWebServer() {
+async function ensureWebServer() {
   if (!app.isPackaged) return;
   const serverEntry = path.join(app.getAppPath(), ".next", "standalone", "server.js");
   if (!fs.existsSync(serverEntry)) {
@@ -283,7 +283,7 @@ function ensureWebServer() {
   const serverCwd = process.platform === "win32" ? process.resourcesPath : userData;
   fs.mkdirSync(userData, { recursive: true });
   // standalone server.js 不解析 -p 参数，端口走 PORT 环境变量
-  ensureHostProcess(userData, dataDir);
+  await ensureHostProcess(userData, dataDir);
   webProcess = utilityProcess.fork(serverEntry, [], {
     cwd: serverCwd,
     env: {
@@ -345,6 +345,7 @@ async function ensureVerifierServer(hostDataDir) {
   if (verifierHandle) return; // 幂等
   verifierJsonPath = path.join(hostDataDir, "verifier.json"); // 先定路径：fork env 注入不依赖落盘完成
   try {
+    fs.mkdirSync(hostDataDir, { recursive: true }); // whenReady 期早于 ensureHostProcess 的 mkdir（S6 顺序坑：ENOENT 恒失败）
     const { startVerifierServer } = require("./verifier.cjs");
     const handle = await startVerifierServer();
     verifierHandle = handle;
@@ -356,7 +357,7 @@ async function ensureVerifierServer(hostDataDir) {
   }
 }
 
-function ensureHostProcess(userData, dataDir) {
+async function ensureHostProcess(userData, dataDir) {
   if (!app.isPackaged) return;
   if (process.env.LECTERN_LEGACY_RUNTIME === "1") {
     console.log("[lectern] LECTERN_LEGACY_RUNTIME=1：跳过 Host，走进程内 Runtime（回滚模式）");
@@ -369,9 +370,36 @@ function ensureHostProcess(userData, dataDir) {
   }
   const hostDataDir = path.join(dataDir, "host");
   fs.mkdirSync(hostDataDir, { recursive: true });
+  // Host 工作区目录先建好（assembly 校验「工作区不存在」会装配失败降级，
+  // SIGKILL 重启后 armed 网关连不上 Host——0.10.0 packaged-smoke 首跑暴露）
+  fs.mkdirSync(path.join(dataDir, "workspace"), { recursive: true });
   hostJsonPath = path.join(hostDataDir, "host.json");
-  const hostLog = openWebLog(userData); // 复用 web 日志通道（合流 <userData>/logs/web.log）
+  // 复用 web 日志通道（合流 <userData>/logs/web.log）。注意 openWebLog 返回的是
+  // 路径字符串不是写函数（ensureWebServer 拿它当路径用）——历史上这里把路径
+  // 当函数传给 spawnHost，Host 一有 stdout 输出就 uncaughtException（SIGKILL
+  // 重启后 lock 报错才引爆，连带 armed 网关连不上 Host）。
+  openWebLog(userData);
+  const hostLog = (chunk) => webLogWrite(typeof chunk === "string" ? chunk : String(chunk));
   spawnHost(hostEntry, hostDataDir, hostLog);
+  // 等新握手文件再放行 web fork（armed env 是启动快照）：Host 起慢/起不来时
+  // 上一实例残留的 host.json 会让 armed 指向已死端口（playwright 瞬时首实例
+  // 竞态，0.10.0 packaged-smoke 定位）。等不到 → 删残留不 armed，进程内兜底。
+  const forkAt = Date.now();
+  const stalePath = hostJsonPath;
+  const fresh = await (async () => {
+    for (let i = 0; i < 50; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      try {
+        const st = fs.statSync(stalePath);
+        if (st.mtimeMs >= forkAt) return true;
+      } catch { /* 还没写 */ }
+    }
+    return false;
+  })();
+  if (!fresh) {
+    try { fs.rmSync(stalePath, { force: true }); } catch { /* 忽略 */ }
+    console.warn("[lectern] Host 握手超时（5s）：本次走进程内 Runtime，Host 起来后下次启动生效");
+  }
 }
 
 function spawnHost(hostEntry, hostDataDir, hostLog) {
@@ -380,6 +408,11 @@ function spawnHost(hostEntry, hostDataDir, hostLog) {
     env: {
       ...process.env,
       LECTERN_HOST_DATA: hostDataDir,
+      // armed 生产语义：Host 与 Next 共用同一数据目录（Host 是库 owner）。
+      // 不显式注入时 Host 回退到 <data>/host 开库——双库，armed 切换后
+      // 会话"消失"（0.10.0 packaged-smoke 首跑暴露；dev-host 拓扑是独立
+      // fixture 目录不受影响）
+      LECTERN_DATA_DIR: path.dirname(hostDataDir),
       LECTERN_WORKSPACE: path.join(path.dirname(hostDataDir), "workspace"),
       // V1-S3：浏览器 verifier bootstrap（文件由 ensureVerifierServer 异步写；
       // Host 侧惰性读取，时序天然解耦）
@@ -549,8 +582,8 @@ app.whenReady().then(async () => {
   // V1-S6：verifier 无条件起（dev:app/dev-host 模式浏览器验证也可用——
   // verifier 只依赖 Electron，不依赖打包）。await 落盘后再 fork web/Host：
   // env 注入是启动时快照，异步写盘会漏注入（时序竞态）。
-  await ensureVerifierServer(path.join(dataDir, "host"));
-  ensureWebServer();
+  await ensureVerifierServer(path.join(resolveDataDir(app.getPath("userData")), "host"));
+  await ensureWebServer();
   await waitForWeb(WEB_URL);
   createWindow();
   createTray();

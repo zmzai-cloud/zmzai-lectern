@@ -109,7 +109,11 @@ export async function hostGateway(request: Request): Promise<Response | null> {
     // 全 header 形式转发（与 ALS 存储一致，authHeaders/resolveModel 直接可用）
     if (match) reqHeaders["x-lectern-credential"] = `muzhi_session=${decodeURIComponent(match[1]!)}`;
   }
-  const res = await fetch(target, { method: request.method, headers: reqHeaders, body, signal: request.signal });
+  // Host 不可达回落进程内（armed 是路由偏好不是硬承诺）：Host 启动竞态/异常
+  // 退出/瞬时实例链 shutdown 时应用保持可用；Host 恢复后新请求自动回到网关。
+  // 数据同库（Host 与 Next 共用 LECTERN_DATA_DIR），回落读写无裂脑。
+  const res = await fetch(target, { method: request.method, headers: reqHeaders, body, signal: request.signal }).catch(() => null);
+  if (!res) return null;
   // 形状适配（unwrap）：Host 列表端点返回 {key:[...]}，进程内/UI 契约是裸数组
   if (hit.route.unwrap && (res.headers.get("content-type") ?? "").includes("application/json")) {
     const parsed = (await res.json().catch(() => null)) as Record<string, unknown> | null;

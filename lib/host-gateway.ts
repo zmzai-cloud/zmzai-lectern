@@ -26,7 +26,10 @@ export type GatewayRoute = {
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
-  { method: "GET", pattern: /^\/api\/sessions$/, hostPath: () => "/v1/sessions", passQuery: true, injectQuery: { userId: "local" }, unwrap: "sessions" },
+  // GET /api/sessions 不网关化（0.10.1 实测撤下）：进程内实现按 active 项目分库
+  // 路由（projects/<id>/zmzai.db），Host 单 runtime（defaultWorkspaceRoot）读不
+  // 到其它项目会话——多项目读族网关化属后续批次；命令/终端/事件族 Host 承担
+  // （按 sessionId 路由，已验）。injectQuery/unwrap 机制保留给后续端点。
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/messages$/, hostPath: (g) => `/v1/sessions/${g[0]}/messages`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/search$/, hostPath: (g) => `/v1/sessions/${g[0]}/search`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: (g) => `/v1/sessions/${g[0]}/read-state`, passQuery: true },

@@ -24,11 +24,11 @@ try {
   const store = createSqliteSessionStore({ dataDir });
   const session = await createFrameworkSession({ store, userId: "gw-user", workspaceId: "gw-ws", model: { providerId: "faux", modelId: "m" }, prompt: "网关验证" });
   // 经生产路径（网关代理）
-  // V1-S6 后网关对列表响应做形状解包（{sessions:[...]} → 裸数组，进程内契约一致），
-  // 跨用户隔离语义不变（每个请求独立 userId 查询）
-  const viaGateway = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=gw-user`)).json());
+  // 列表已撤网关（多项目分库归进程内，0.10.1）：生产路径验证形状契约（数组）；
+  // fixture 会话在独立 seed 库不在生产项目库，存在性断言随之退役（透传语义已无）
+  const viaInprocess = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=gw-user`)).json());
   const other = (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions?userId=else`)).json());
-  const listed = Array.isArray(viaGateway) && viaGateway.some((sn) => sn.id === session.id);
+  const listed = Array.isArray(viaInprocess);
   const isolated = Array.isArray(other) && other.every((sn) => sn.id !== session.id);
   // B2：生产路径 prompt（cookie → credential 通道）+ abort 经网关
   const prompted = await fetch(`http://127.0.0.1:${PORT}/api/sessions/${session.id}/prompt`, {

@@ -39,7 +39,7 @@ guard_mv dist .package-build
 echo "==> [1/5] next build（生产构建，含 standalone 输出）"
 # 与 build-mac.sh 同一原因：默认堆上限会让 next build 以 exit 134 中止，本地脚本自抬。
 if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-6144}"
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-12288}"
 fi
 # 清掉上次构建的 .next/types 与 tsbuildinfo：残留会导致类型检查阶段引用不存在的
 # 文件而 Failed to compile（与 mac 侧同一坑）。大目录 rm 会触发 WorkBuddy
@@ -127,7 +127,12 @@ echo "完成。Windows 安装：双击 dist/*Setup*.exe（NSIS 安装器）；�
 
 if [ "$UPLOAD" = "1" ]; then
   echo "==> [6/6] 上传产物到 OSS"
+  # macOS bash 3.2：set -u 下空数组 "${UPLOAD_ARGS[@]}" 报 unbound——展开加引号守卫
   UPLOAD_ARGS=()
   [ "$DRY" = "1" ] && UPLOAD_ARGS+=(--dry)
-  node scripts/upload-oss.mjs "${UPLOAD_ARGS[@]}"
+  if [ "${#UPLOAD_ARGS[@]}" -gt 0 ]; then
+    node scripts/upload-oss.mjs "${UPLOAD_ARGS[@]}"
+  else
+    node scripts/upload-oss.mjs
+  fi
 fi

@@ -90,13 +90,15 @@ try {
       const { terminalManager } = await import("../../lib/runtime.js");
       return terminalManager().list();
     },
-    terminalCreate: async (cwd, cols, rows, command) => {
-      const { terminalManager, defaultWorkspaceRoot } = await import("../../lib/runtime.js");
-      // command 模式（进程内 /api/terminal 契约：跑命令进程至退出）；
-      // 缺省交互 shell（M2b B4 面板终端场景）——两语义经网关透传 body 区分
+    terminalCreate: async (cwd, cols, rows, command, sessionId) => {
+      const { terminalManager, defaultWorkspaceRoot, workspaceRootForSession } = await import("../../lib/runtime.js");
+      // command 模式（进程内 /api/terminal 契约：跑命令进程至退出）；缺省交互
+      // shell（M2b B4 面板场景）。cwd 解析与会话对齐：sessionId 优先解析到会话
+      // 工作区（armed 下进程内不再代解析——0.10.1 packaged-smoke 第二层暴露）
+      const effectiveCwd = cwd || (sessionId ? workspaceRootForSession(sessionId) : defaultWorkspaceRoot);
       return terminalManager().start({
         command: command ?? (process.env.SHELL || "bash"),
-        cwd: cwd || defaultWorkspaceRoot,
+        cwd: effectiveCwd,
         ...(cols ? { cols } : {}), ...(rows ? { rows } : {}),
       });
     },

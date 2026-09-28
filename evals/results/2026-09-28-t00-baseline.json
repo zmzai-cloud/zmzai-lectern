@@ -1,0 +1,50 @@
+{
+  "schema": "lectern.evals.results/1",
+  "generated_at": "2026-09-28T04:00:00.000Z",
+  "suite": "deterministic",
+  "system_under_test": {
+    "name": "t00-production-chain-baseline",
+    "kind": "lectern-before",
+    "commit": "lectern 4865e25 / framework 28d612d4 / memory 6a2b7ec",
+    "model": null
+  },
+  "environment": {
+    "machine": "local-dev-macOS (production-chain-closure T00)",
+    "samples": 1,
+    "notes": "三仓库 HEAD 复核 + 各仓 typecheck/test/arch/build 基线。vendor tgz sha256=f3c99fe7526b25351c15efe78ba90870b1bebe0a9043b8cda3cfa5205cccdaca；安装包 @zmzai/agent-framework@0.11.0 与 vendor 一致。无 AGENTS.md（muzhi 的与本任务无关）。"
+  },
+  "runs": [
+    { "case_id": "framework-typecheck", "run_index": 1, "outcome": "fail", "failure_category": "baseline-defect:test-types", "evidence": ["/tmp/fw-typecheck.log"], "notes": "13 errors: subagents/tools.test.ts ×12 (ToolContext 强类型), task/completion.test.ts ×1 (subagentPending optional 不兼容)" },
+    { "case_id": "framework-typecheck-after-fix", "run_index": 1, "outcome": "pass", "notes": "修复：tools.test.ts ctx 断言改为 ToolContext & SubagentToolContext；completion.test.ts stateOf 补 subagentPending: null。EXIT=0, 0 errors。" },
+    { "case_id": "framework-test", "run_index": 1, "outcome": "fail", "failure_category": "environment-sensitive-timeout", "evidence": ["/tmp/fw-test.log"], "notes": "578/579 pass。parked.test.ts A28 5s 默认超时失败；实测耗时全在动态 import('../runtime/runner.js') 7.1s（沙箱 fs 慢）；--testTimeout=60000 下 3/3 pass。非逻辑缺陷。" },
+    { "case_id": "lectern-typecheck", "run_index": 1, "outcome": "pass" },
+    { "case_id": "lectern-arch-check", "run_index": 1, "outcome": "pass", "notes": "迁移路由 20；豁免 21；违规 0" },
+    { "case_id": "lectern-test", "run_index": 1, "outcome": "pass", "notes": "55 files: 567 pass + 1 skipped" },
+    { "case_id": "lectern-host-build", "run_index": 1, "outcome": "pass" },
+    { "case_id": "lectern-test-release", "run_index": 1, "outcome": "fail", "failure_category": "baseline-defect:stale-test", "evidence": ["/tmp/lectern-testrelease.log"], "notes": "71 pass / 4 fail。web-server.source-test.cjs 四用例：0.10.0 (9831814) 将 ensureWebServer 改 async，测试未同步（launched undefined → TypeError）。测试过期，非产品缺陷。" },
+    { "case_id": "lectern-test-release-after-fix", "run_index": 1, "outcome": "pass", "evidence": ["/tmp/lectern-testrelease.log"], "notes": "修复：web-server.source-test.cjs 适配 async 化——(1) require 补 ./release-defaults.cjs mock、console 补 error；(2) launched 改 getter（fork 现发生在返回后的微任务）；(3) 测试侧先 await ready 再读 result.launched（解构会在 await 前对 getter 求值拿到 undefined 快照——本根因排查 60+ 分钟的核心结论）。75 pass / 0 fail。" }
+  ],
+  "summary": {
+    "total": 9,
+    "pass": 7,
+    "fail": 2,
+    "blocked": 0,
+    "not_run": 0,
+    "unverified": 0,
+    "raw_counts_per_case": {
+      "framework-typecheck": "修复后 pass（原 13 test-type errors）",
+      "framework-test": "578/579 pass; 1 env-timeout (A28)",
+      "lectern-test-release": "修复后 75/75 pass（原 4 stale-test）"
+    }
+  },
+  "code_audit": {
+    "F01_root_cause_deepened": [
+      "createServer (framework src/server/create-server.ts) 构造 SessionRunner 时不透传 subagentCoordinator —— FrameworkDeps 无此字段，createAgentRuntime 展开注入的协调器在 createServer 边界被静默丢弃。",
+      "后果链：runner.deps.subagentCoordinator 恒 undefined → attempt-executor 永不注入 ctx.subagents → agent_spawn 抛 SUBAGENTS_UNSUPPORTED；runner.spawnSubagent 的协调器路径是死代码，走旧私有 Runner 路径。",
+      "第二层：Lectern lib/runtime.ts:332 registry: undefined as never —— 即使协调器接通，tools.ts spawn 无 childSessionId 时走 resolveViaRegistry → undefined.get（spec F01 的安装包复现）。",
+      "第三层：Lectern createChildSession 直接 throw —— 依赖 runner 预建路径（childSessionId 透传），但该路径同样因协调器被丢而死。"
+    ],
+    "F02": "Lectern lib/runtime.ts:336-341 runChild 忽略 runAttempt 的 RunOutcome，固定 return 'completed' —— 子失败/blocked 被记为 completed。",
+    "F03": "framework task-lifecycle.ts:224 subagentPending 固定 null；parked.ts 的 shouldPark/parkParent/drainParentMailbox 无生产调用方（TaskLifecycle 不引用）。"
+  }
+}

@@ -39,13 +39,19 @@ function launchOptions(platform, resources, userData, legacy = false) {
       if (name === "node:fs") return fs;
       if (name === "node:path") return paths;
       if (name === "./updater.cjs") return {};
+      // loadEnvFile 引入的发布默认值（纯 env 填充，无副作用）：真实模块直接可用。
+      if (name === "./release-defaults.cjs") return require("./release-defaults.cjs");
       return require(name);
     },
     process: { platform, arch: "x64", resourcesPath: resources, env: {}, versions: {} },
-    console: { log() {}, warn() {} },
+    console: { log() {}, warn() {}, error() {} },
   };
-  vm.runInNewContext(readFileSync(path.join(__dirname, "main.cjs"), "utf8") + "\nensureWebServer();", context);
-  return { launched, directoriesCreated, paths };
+  // ensureWebServer 自 0.10.0 (9831814) 起 async（fork 前有 await ensureHostProcess）；
+  // vm 脚本最后表达式即其返回 promise，测试侧必须 await 后再断言 fork 选项。
+  // launched 必须走 getter：异步化后 fork 发生在返回之后的微任务里，
+  // 按值快照会永远拿到 undefined（旧同步版在 vm 执行期内 fork，无此问题）。
+  const ready = vm.runInNewContext(readFileSync(path.join(__dirname, "main.cjs"), "utf8") + "\nensureWebServer();", context);
+  return { get launched() { return launched; }, directoriesCreated, paths, ready };
 }
 
 for (const [name, platform, resources, userData, legacy] of [
@@ -54,8 +60,14 @@ for (const [name, platform, resources, userData, legacy] of [
   ["Windows UNC install and legacy data", "win32", String.raw`\\server\apps\Lectern\resources`, String.raw`C:\Users\fixture\AppData\Roaming\zmzai-lectern`, true],
   ["macOS preserves writable profile cwd", "darwin", "/Applications/Lectern.app/Contents/Resources", "/Users/fixture/Library/Application Support/zmzai-lectern", false],
 ]) {
-  test(name, () => {
-    const { launched: options, paths: p, directoriesCreated } = launchOptions(platform, resources, userData, legacy);
+  test(name, async () => {
+    const result = launchOptions(platform, resources, userData, legacy);
+    const p = result.paths;
+    await result.ready;
+    // 不可提前解构 launched：解构会在 await 前对 getter 求值（fork 尚未发生），
+    // 拿到 undefined 快照。必须在 await 之后再读。
+    const options = result.launched;
+    const directoriesCreated = result.directoriesCreated;
     const projectDir = p.dirname(options.entry);
     // Next router-server computes relativeProjectDir, then RouteModule.prepare
     // joins it to cwd and reconstructs distDir to locate manifests/instrumentation.

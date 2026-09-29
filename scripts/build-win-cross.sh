@@ -117,8 +117,13 @@ DARWIN_NATIVE=$(find dist/win-unpacked -type d \( -name "swc-darwin-*" -o -name 
 UNPACKED=$(find dist/win-unpacked/resources/app.asar.unpacked -type f 2>/dev/null | wc -l | tr -d " ")
 echo "解包原生文件：$UNPACKED 个（期望 ≥9）"
 [ "$UNPACKED" -ge 9 ] || { echo "❌ asarUnpack 未生效，原生二进制留在 asar 内会加载失败" >&2; exit 1; }
-FILE_COUNT=$(find dist/win-unpacked -type f | wc -l | tr -d " ")
-echo "文件数：${FILE_COUNT}（阈值 300）"
+# Host 的 node-pty 供给（0.10.2）拷在 resources/host-runtime（asar 外真实目录，
+# after-pack 钩子写入，framework ZMZAI_PTY_MODULE_PATH 锚定）——这是有界的刻意
+# 新增，不计入回归阈值；但必须存在（缺了 Host 终端降级 pipe）。
+HOST_RUNTIME_PTY=dist/win-unpacked/resources/host-runtime/node_modules/node-pty
+[ -f "$HOST_RUNTIME_PTY/prebuilds/win32-x64/conpty.node" ] || { echo "❌ host-runtime 缺 node-pty（Host 终端会降级 pipe）" >&2; exit 1; }
+FILE_COUNT=$(find dist/win-unpacked -type f -not -path "*/resources/host-runtime/*" | wc -l | tr -d " ")
+echo "文件数：${FILE_COUNT}（阈值 300，host-runtime 另计）"
 [ "$FILE_COUNT" -le 300 ] || { echo "❌ 文件数超标：asar 未生效或 files 排除规则失效" >&2; exit 1; }
 node scripts/release-validation.mjs package dist/win-unpacked/resources/app.asar win32
 node scripts/release-validation.mjs release dist win32

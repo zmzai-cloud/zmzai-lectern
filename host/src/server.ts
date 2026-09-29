@@ -46,7 +46,12 @@ export type HostServerOptions = {
   realRuntime?: {
     /** T07（PC10）：按 requestId 查命令回执（workflow.findPrompt 的只读面）。 */
     commandReceipt?(sessionId: string, requestId: string): Promise<{ found: true; receipt: unknown; input: unknown } | { found: false }>;
-    listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]>;
+    /** T08（F05/PC12）：prompt 命令面走真实 runtime（按会话归属解析项目）。
+     *  缺省回落 fixture（M2a 冒烟拓扑）；生产装配必须提供。 */
+    prompt?(sessionId: string, input: Record<string, unknown>): Promise<unknown>;
+    /** T08：列表显式 projectId（缺省=全项目聚合；未知 projectId 按 404 错误，
+     *  不返回空成功掩盖归属问题）。 */
+    listSessions(filter: { userId: string; workspaceId?: string; projectId?: string }): Promise<unknown[]>;
     messages(sessionId: string): Promise<unknown[]>;
     abort?(sessionId: string): Promise<void>;
     resumeTask?(sessionId: string): Promise<boolean>;
@@ -59,8 +64,8 @@ export type HostServerOptions = {
     terminalList?(): Promise<unknown>;
     terminalCreate?(cwd: string, cols: number, rows: number, command?: string, sessionId?: string): Promise<unknown>;
     terminalOp?(id: string, op: "write" | "resize" | "kill" | "read" | "readAll", payload?: unknown): Promise<unknown>;
-    mcpStatus?(): Promise<unknown>;
-    mcpRescan?(): Promise<unknown>;
+    mcpStatus?(projectId?: string): Promise<unknown>;
+    mcpRescan?(projectId?: string): Promise<unknown>;
     worktreeStatus?(sessionId: string): Promise<unknown>;
     /** W1-S27：合并回目标 / 丢弃副本（动作层 { ok, output, status }）。 */
     worktreeAction?(sessionId: string, action: "merge" | "discard"): Promise<unknown>;
@@ -201,12 +206,19 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
       if (req.method === "GET" && url.pathname === "/v1/sessions" && options.realRuntime) {
         const userId = url.searchParams.get("userId") ?? "";
         const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
+        const projectId = url.searchParams.get("projectId") ?? undefined;
         if (!userId) {
           send(res, 400, { error: "INVALID_INPUT", message: "userId 必填" });
           return;
         }
         try {
-          send(res, 200, { sessions: await options.realRuntime.listSessions(workspaceId ? { userId, workspaceId } : { userId }) });
+          send(res, 200, {
+            sessions: await options.realRuntime.listSessions({
+              userId,
+              ...(workspaceId ? { workspaceId } : {}),
+              ...(projectId ? { projectId } : {}),
+            }),
+          });
         } catch (error) {
           send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
         }
@@ -249,14 +261,15 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           return;
         }
         if (url.pathname === "/v1/mcp" && options.realRuntime) {
+          const projectId = url.searchParams.get("projectId") ?? undefined;
           if (req.method === "GET") {
             if (!options.realRuntime.mcpStatus) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 mcp" }); return; }
-            try { send(res, 200, await options.realRuntime.mcpStatus()); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
+            try { send(res, 200, await options.realRuntime.mcpStatus(projectId)); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
             return;
           }
           if (req.method === "POST") {
             if (!options.realRuntime.mcpRescan) { send(res, 404, { error: "NOT_FOUND", message: "后端未提供 mcp rescan" }); return; }
-            try { send(res, 200, await options.realRuntime.mcpRescan()); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
+            try { send(res, 200, await options.realRuntime.mcpRescan(projectId)); } catch (error) { send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) }); }
             return;
           }
         }
@@ -528,8 +541,9 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             return;
           }
           const input: Record<string, unknown> = { text, ...(typeof body.requestId === "string" && body.requestId ? { requestId: body.requestId } : {}) };
+          const promptImpl = options.realRuntime?.prompt ?? ((sid: string, body2: Record<string, unknown>) => rt.runner.prompt(sid, body2 as never));
           try {
-            const receipt = await rt.runner.prompt(sessionId, input as never);
+            const receipt = await promptImpl(sessionId, input);
             send(res, 200, receipt);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

@@ -93,7 +93,7 @@ describe("T08/PC12：Host 真实 runtime 面归属解析（F05——不捕获默
       const messagesB = (await b.face.messages(b.sessionB1)) as unknown as unknown[];
       expect(Array.isArray(messagesB)).toBe(true);
       // usage 能解析即证明归属路由正确（新会话 0 条消息是事实，不伪造）
-      const usageB = (await b.face.usage(b.sessionB1)) as unknown as { messages: number };
+      const usageB = (await b.face.usage!(b.sessionB1)) as unknown as { messages: number };
       expect(typeof usageB.messages).toBe("number");
 
       // A 项目会话同样可读（不同库）
@@ -121,7 +121,7 @@ describe("T08/PC12：Host 真实 runtime 面归属解析（F05——不捕获默
         });
       }
       await expect(b.face.messages(dupId)).rejects.toThrow("多个项目存在相同会话 id");
-      await expect(b.face.commandReceipt(dupId, "req_x")).rejects.toThrow("多个项目存在相同会话 id");
+      await expect(b.face.commandReceipt!(dupId, "req_x")).rejects.toThrow("多个项目存在相同会话 id");
     } finally {
       await cleanup(b.dir);
     }

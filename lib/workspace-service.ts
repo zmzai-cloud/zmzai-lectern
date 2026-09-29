@@ -826,6 +826,7 @@ export async function integrateWorkspace(
         note("cas-check", resumeCas, `target=${targetSha.slice(0, 12)} expected=${attempt.expectedTargetCommit.slice(0, 12)}`);
         if (!resumeCas) return reject("target-moved", "中断恢复时目标已推进，与 expectedTargetCommit 不符；请核对后重试");
         attempt.reusedMergeCommit = true;
+        attempt.mergeCommit = current.integrationCommit;
         note("resume-advance-only", true, `复用 merge commit ${current.integrationCommit.slice(0, 12)}，跳过合并`);
         flush({ integrationCommit: current.integrationCommit, integrationSource: sourceCommit });
         // T10（spec §4.4）：恢复推进同样必须先有验证证据——上次可能中断在验证

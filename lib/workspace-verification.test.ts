@@ -176,3 +176,106 @@ describe("T10/PC13：合并结果实检——组合失败目标不推进", () =>
     }
   }, 60_000);
 });
+
+describe("T11/PC14：整合恢复与竞态（验证期间目标推进/中断恢复）", () => {
+  it("验证期间目标推进：验证通过但推进时 CAS 复查拒绝，目标不被覆盖，锚点保留", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_race" });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      execSync("echo src > s.txt && git add . && git commit -qm src", { cwd: created.record.path, shell: "/bin/bash" });
+      const expected = git(root, "rev-parse main");
+      markReadyForReview(dataDir, created.record.workspaceId);
+
+      // 注入的 runner 模拟「验证执行期间并发推进目标」：返回 passed 的同时
+      // 目标分支已前进（外部推送/另一整合）。
+      let runnerCalls = 0;
+      const result = await integrateWorkspace(dataDir, created.record.workspaceId, {
+        expectedTargetCommit: expected,
+        verification: {
+          plan: PLAN,
+          runner: async () => {
+            runnerCalls += 1;
+            writeFileSync(path.join(root, "race.txt"), "concurrent\n");
+            execSync("git add . && git commit -qm concurrent-advance", { cwd: root, shell: "/bin/bash" });
+            return { outcome: "passed", planVersion: "v1", checks: [{ id: "consistency", required: true, ok: true, exitCode: 0, timedOut: false, outputTail: "" }], ranAt: new Date().toISOString() };
+          },
+        },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(["target-moved", "cas-failed", "not-fast-forward"]).toContain(result.reason);
+      // 验证确实跑过（证据已落 attempt）
+      expect(runnerCalls).toBe(1);
+      const attempt = result.record!.integrationAttempts!.at(-1)!;
+      expect(attempt.verification?.outcome).toBe("passed");
+      expect(attempt.mergeCommit).toBe(result.record!.integrationCommit);
+      // 目标保持并发推进后的提交（不被合并结果覆盖），合并提交不在 main
+      expect(git(root, "rev-parse main")).not.toBe(result.record!.integrationCommit);
+      expect(git(root, `merge-base --is-ancestor ${result.record!.integrationCommit} main || echo NOT-IN-MAIN`)).toBe("NOT-IN-MAIN");
+      // 可重试状态 + 锚点保留
+      expect(result.record!.state).toBe("ready_for_review");
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("ready_to_advance 中断恢复：重试验证后复用 merge commit（不重复合并）再推进", async () => {
+    const { root, dataDir } = await makeRepo();
+    try {
+      const created = await createWorkspace({ dataDir, projectId: "p", projectPath: root, sessionId: "ses_resume" });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const wt = created.record.path;
+      writeFileSync(path.join(wt, "version.txt"), "6\n");
+      writeFileSync(path.join(wt, "limit.txt"), "20\n");
+      execSync("git add . && git commit -qm src", { cwd: wt, shell: "/bin/bash" });
+      const sourceTip = git(root, `rev-parse ${created.record.branch}`);
+      const expected = git(root, "rev-parse main");
+      markReadyForReview(dataDir, created.record.workspaceId);
+
+      // 第一轮：注入的 runner 报失败（环境抖动/检查脚本自身问题）——留下
+      // merge commit 锚点 + ready_for_review。源不变，重试走恢复路径。
+      const failing = { outcome: "failed" as const, planVersion: "v1", checks: [{ id: "consistency", required: true, ok: false, exitCode: 1, timedOut: false, outputTail: "flaky env" }], ranAt: new Date().toISOString() };
+      const first = await integrateWorkspace(dataDir, created.record.workspaceId, {
+        expectedTargetCommit: expected,
+        verification: { plan: PLAN, runner: async () => failing },
+      });
+      expect(first.ok).toBe(false);
+      if (first.ok) return;
+      expect(first.reason).toBe("verification-failed");
+      const anchor = first.record!.integrationCommit!;
+
+      // 模拟中断点后移：状态拨到 ready_to_advance（= 已过验证、推进前被杀）
+      const DatabaseSync = nodeRequire("node:sqlite").DatabaseSync;
+      const db = new DatabaseSync(path.join(dataDir, "worktrees.db"));
+      try {
+        const row = db.prepare("SELECT json FROM workspace_records WHERE workspace_id = ?").get(created.record.workspaceId) as { json: string };
+        const rec = JSON.parse(row.json) as WorkspaceRecord;
+        rec.state = "ready_to_advance";
+        db.prepare("UPDATE workspace_records SET json = ? WHERE workspace_id = ?").run(JSON.stringify(rec), created.record.workspaceId);
+      } finally {
+        db.close();
+      }
+
+      // 恢复：同一 merge commit 重新验证（注入 runner 本轮通过——验证证据
+      // 必须重建，恢复不允许凭旧证据免检）→ 复用锚点推进，不重复合并
+      const resumed = await integrateWorkspace(dataDir, created.record.workspaceId, {
+        expectedTargetCommit: expected,
+        verification: { plan: PLAN, runner: async () => ({ outcome: "passed", planVersion: "v1", checks: [{ id: "consistency", required: true, ok: true, exitCode: 0, timedOut: false, outputTail: "" }], ranAt: new Date().toISOString() }) },
+      });
+      expect(resumed.ok).toBe(true);
+      if (!resumed.ok) return;
+      expect(resumed.record.state).toBe("integrated");
+      const attempt = resumed.record.integrationAttempts!.at(-1)!;
+      expect(attempt.reusedMergeCommit).toBe(true);
+      expect(attempt.mergeCommit).toBe(anchor);
+      expect(attempt.verification?.outcome).toBe("passed");
+      expect(attempt.source).toBe(sourceTip);
+      expect(git(root, "rev-parse main")).toBe(anchor);
+    } finally {
+      await rm(path.dirname(root), { recursive: true, force: true });
+    }
+  }, 60_000);
+});

@@ -1,12 +1,37 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.13.0.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.13.0` (production-chain-closure T03), vendored here so
+`zmzai-agent-framework-0.14.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.14.0` (production-chain-closure T04), vendored here so
 desktop builds and clean installs resolve the framework without depending on
 registry access. The framework repository is the source of truth; the version
 number is unique to these bytes and never re-packed under the same name (spec
 2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
-then this tarball is the only distribution of 0.13.0.
+then this tarball is the only distribution of 0.14.0.
+
+What 0.14.0 changed (T04, persistent queue / mailbox / wake):
+
+- Durable queue: `SubagentRecord.prompt` persists the spawn input; the
+  coordinator's in-memory queue is only a cache. On construction it reconciles
+  with the store — queued children re-run from their persisted prompt,
+  running/cancelling children from a previous process land in `blocked`
+  (recovery review, no side-effect replay), waiting states are restart-safe.
+- `settleSubagent` (new store face): child terminal state + the `to_parent`
+  result message commit in one SQLite transaction; `messageId` derived from
+  childId+revision is idempotent across replays.
+- Wake hook: `deps.onChildTerminal(child, parentSessionId)` fires after the
+  settle transaction; hosts wire it to `runner.requestInternalResume` (new
+  public API — same channel as the user resume button, no synthetic user
+  message).
+- `agent_send` reaches the child context by state: queued → injected into the
+  launch prompt; active run → `deps.deliverToChild` (host wires
+  `runner.prompt`, FIFO queued prompts are the safe boundary, requestId =
+  messageId for idempotency); `waiting_input` → re-queued and resumed with the
+  new message; `waiting_permission`/`waiting_external`/`blocked` only land in
+  the mailbox (messages never substitute approvals or clear safety blocks).
+- `drainParentMailbox` is two-phase (`results` + `commit()`): the consumption
+  watermark only advances after the results are durably in the parent context —
+  a crash between read and commit re-reads idempotently instead of losing
+  results (PC06).
 
 What 0.12.0 changed (T02, unified child-session creation):
 

@@ -265,9 +265,17 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。
-  // late-bind holder：runtime 构造后回填 runner 引用（协调器的 runChild 用）。
-  // runAttempt 返回 RunOutcome（T03：runChild 消费真实 outcome 传播进协调记录）。
-  const registryHolder: { runner?: { runAttempt(session: import("@zmzai/agent-framework").SessionInfo, input: { text: string; agent?: string }): Promise<import("@zmzai/agent-framework").RunOutcome>; abort(sessionId: string): Promise<void> } } = {};
+  // late-bind holder：runtime 构造后回填 runner 引用（协调器的 runChild/
+  //  onChildTerminal/deliverToChild 用）。runAttempt 返回 RunOutcome（T03：
+  //  runChild 消费真实 outcome 传播进协调记录）。
+  const registryHolder: { runner?: {
+    runAttempt(session: import("@zmzai/agent-framework").SessionInfo, input: { text: string; agent?: string }): Promise<import("@zmzai/agent-framework").RunOutcome>;
+    abort(sessionId: string): Promise<void>;
+    /** T04：子终态唤醒父内部续跑（不创建用户消息）。 */
+    requestInternalResume(sessionId: string): void;
+    /** T04：运行中子代理的安全边界投递（FIFO queued prompt，requestId 幂等）。 */
+    prompt(sessionId: string, input: { requestId?: string; text: string }): Promise<unknown>;
+  } } = {};
   const localTools = [...baseLocalTools];
 
   // MCP server 懒启动：不阻塞首个 prompt；单 server 失败不影响其它（statuses 透出）
@@ -374,6 +382,17 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
         },
         abortChild: async (childId) => {
           await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).abort(childId);
+        },
+        // T04（PC05 唤醒接线点）：子终态 + 结果邮件同事务落库后唤醒父内部续跑
+        // （resumeRequests 合并语义：多个子同时完成最多一个待执行唤醒；不创建
+        // 用户消息）。TaskLifecycle 侧的 park/drain 消费随 T05 接线。
+        onChildTerminal: (child, parentSessionId) => {
+          (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).requestInternalResume(parentSessionId);
+        },
+        // T04（PC07 运行中投递）：活跃子代理的 agent_send 走 prompt 的 FIFO
+        // queued prompt 通道（安全边界），requestId=messageId 幂等。
+        deliverToChild: async (childSessionId, text, requestId) => {
+          await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).prompt(childSessionId, { requestId, text });
         },
       }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠

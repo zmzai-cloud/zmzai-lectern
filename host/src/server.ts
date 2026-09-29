@@ -44,6 +44,8 @@ export type HostServerOptions = {
   /** B1：真实 runtime 的只读面。缺省的方法对应端点 404；会话不存在由实现
    *  抛 SESSION_NOT_FOUND（server 映射 404）。 */
   realRuntime?: {
+    /** T07（PC10）：按 requestId 查命令回执（workflow.findPrompt 的只读面）。 */
+    commandReceipt?(sessionId: string, requestId: string): Promise<{ found: true; receipt: unknown; input: unknown } | { found: false }>;
     listSessions(filter: { userId: string; workspaceId?: string }): Promise<unknown[]>;
     messages(sessionId: string): Promise<unknown[]>;
     abort?(sessionId: string): Promise<void>;
@@ -214,6 +216,30 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         const rt = options.runtime;
         if (req.method === "POST" && url.pathname === "/v1/commands/session") {
           send(res, 200, { sessionId: await rt.createSession() });
+          return;
+        }
+        // T07（PC10）：命令回执查询——「Host 已接受但响应丢失」的结果未知窗口里，
+        // 客户端除了同键重试（命令面按 requestId 幂等）外，还可显式核对这条命令
+        // 是否已被接受过一次（found=true 即已登记，绝不重复执行）。
+        if (req.method === "GET" && url.pathname === "/v1/commands/receipt") {
+          const sessionId = url.searchParams.get("sessionId") ?? "";
+          const requestId = url.searchParams.get("requestId") ?? "";
+          if (!sessionId || !requestId) {
+            send(res, 400, { error: "INVALID_INPUT", message: "sessionId 与 requestId 必填" });
+            return;
+          }
+          if (!options.realRuntime?.commandReceipt) {
+            send(res, 501, { error: "NOT_IMPLEMENTED", message: "本 Host 未提供命令回执查询" });
+            return;
+          }
+          try {
+            const outcome = await options.realRuntime.commandReceipt(sessionId, requestId);
+            if (outcome.found) send(res, 200, { found: true, receipt: outcome.receipt, input: outcome.input });
+            else send(res, 404, { found: false, error: "NOT_FOUND", message: "该 requestId 尚未登记" });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            send(res, /SESSION_NOT_FOUND/.test(message) ? 404 : 500, { error: /SESSION_NOT_FOUND/.test(message) ? "SESSION_NOT_FOUND" : "INTERNAL", message });
+          }
           return;
         }
         if (req.method === "POST" && url.pathname === "/v1/shutdown" && options.realRuntime) {

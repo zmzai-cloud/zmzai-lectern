@@ -205,9 +205,24 @@ export const client = {
     const requestId = input.requestId ?? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     // disposition 描述这条消息与任务的关系（规格 3 §12）：开新任务 / 并入当前
     // 任务 / 恢复等待中的任务 / 排队。UI 只用它做提示与队列态，不再用它推任务状态。
-    return post(`/api/sessions/${sessionId}/prompt`, { ...input, requestId }).then((r) =>
-      j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition?: PromptDisposition; taskId?: string }>(r),
-    );
+    //
+    // T07（PC10，结果未知不换键）：503 HOST_UNAVAILABLE 表示「Host 可能已接受、
+    // 只是响应丢了」——服务端命令面按 requestId 幂等，同键重试只会拿回原回执，
+    // 绝不重复执行。这里自动做一次同键重试（Host 重启窗口通常秒级）；仍失败则
+    // 把 requestId 附在错误上抛出，用户手动重发时 UI 沿用同一键——绝不生成
+    // 新键补发（那会在结果未知窗口制造第二条消息）。
+    const send = () =>
+      post(`/api/sessions/${sessionId}/prompt`, { ...input, requestId }).then((r) =>
+        j<{ ok: boolean; requestId: string; runId: string; userMessageId: string; disposition?: PromptDisposition; taskId?: string }>(r),
+      );
+    return send().catch(async (error: unknown) => {
+      const status = (error as { status?: number })?.status;
+      if (status !== 503) throw error;
+      await new Promise((r) => setTimeout(r, 800));
+      return send().catch((retryError: unknown) => {
+        throw Object.assign(retryError instanceof Error ? retryError : new Error(String(retryError)), { requestId });
+      });
+    });
   },
 
   // ===== 持续任务（规格 3 §13.2）=====

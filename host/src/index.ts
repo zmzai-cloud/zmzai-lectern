@@ -69,6 +69,12 @@ try {
   const rt = runtimeFor(defaultWorkspaceRoot);
   const store = rt.store;
   realRuntime = {
+    // T07（PC10）：命令回执查询——只读 findPrompt，found=true 即已登记
+    commandReceipt: async (sessionId: string, requestId: string) => {
+      const prior = await store.workflow?.findPrompt(sessionId, requestId).catch(() => null);
+      if (!prior) return { found: false as const };
+      return { found: true as const, receipt: prior.receipt, input: prior.input };
+    },
     listSessions: (filter) => store.listSessions(filter),
     abort: (sessionId) => rt.runner.abort(sessionId),
     resumeTask: (sessionId) => rt.runner.resumeTask(sessionId),

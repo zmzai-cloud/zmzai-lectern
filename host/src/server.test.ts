@@ -76,3 +76,48 @@ async function mkdtemp(): Promise<string> {
   const { mkdtemp: mk } = await import("node:fs/promises");
   return mk(path.join(tmpdir(), "host-s9-"));
 }
+
+describe("T07：命令回执查询（PC10——结果未知窗口的显式核对）", () => {
+  it("found=true 返回登记回执；未登记 404；未提供面 501；缺参 400", async () => {
+    const dataDir = await mkdtemp();
+    try {
+      const host = await startHostServer({
+        dataDir,
+        runtime: { runner: { prompt: async () => { throw new Error("不应触达"); } }, eventLog: { count: async () => 0 }, probePath: "", createSession: async () => "s" } as never,
+        realRuntime: {
+          commandReceipt: async (sessionId: string, requestId: string) =>
+            requestId === "req_known_0001"
+              ? { found: true as const, receipt: { ok: true, requestId, runId: "run_1", userMessageId: "msg_1" }, input: { text: "hi" } }
+              : { found: false as const },
+        } as never,
+      });
+      const auth = { authorization: `Bearer ${host.token}` };
+      const base = `http://127.0.0.1:${host.port}/v1/commands/receipt`;
+      try {
+        const known = await fetch(`${base}?sessionId=ses_a&requestId=req_known_0001`, { headers: auth });
+        expect(known.status).toBe(200);
+        expect(await known.json()).toMatchObject({ found: true, receipt: { runId: "run_1", userMessageId: "msg_1" } });
+        const unknown = await fetch(`${base}?sessionId=ses_a&requestId=req_other_2222`, { headers: auth });
+        expect(unknown.status).toBe(404);
+        expect(((await unknown.json()) as { found: boolean }).found).toBe(false);
+        const missing = await fetch(`${base}?sessionId=ses_a`, { headers: auth });
+        expect(missing.status).toBe(400);
+      } finally {
+        await host.close();
+      }
+      // 未提供 commandReceipt 面（fixture-only Host）→ 501 明确不支持
+      const bare = await startHostServer({
+        dataDir,
+        runtime: { runner: { prompt: async () => { throw new Error("不应触达"); } }, eventLog: { count: async () => 0 }, probePath: "", createSession: async () => "s" } as never,
+      });
+      try {
+        const res = await fetch(`http://127.0.0.1:${bare.port}/v1/commands/receipt?sessionId=a&requestId=b`, { headers: { authorization: `Bearer ${bare.token}` } });
+        expect(res.status).toBe(501);
+      } finally {
+        await bare.close();
+      }
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});

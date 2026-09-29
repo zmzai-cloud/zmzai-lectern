@@ -1,10 +1,31 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.11.0.tgz` is the published npm package
-`@zmzai/agent-framework@0.11.0`, vendored here so desktop builds and clean
-installs resolve the framework without depending on registry access. The tarball
-is byte-identical to the registry artifact; the framework repository is the
-source of truth and its `main` matches this version.
+`zmzai-agent-framework-0.12.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.12.0` (production-chain-closure T02), vendored here so
+desktop builds and clean installs resolve the framework without depending on
+registry access. The framework repository is the source of truth; the version
+number is unique to these bytes and never re-packed under the same name (spec
+2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
+then this tarball is the only distribution of 0.12.0.
+
+What 0.12.0 changed (T02, unified child-session creation):
+
+- `FrameworkDeps.subagentCoordinator` — explicit field, passed through to
+  `SessionRunner` and bound to runner-sourced session registry resolution +
+  depth. Previously hosts passed the coordinator via conditional spread, which
+  TypeScript's excess-property check skipped and `createServer` silently
+  dropped (F01: `agent_spawn` registered but `ctx.subagents` never injected).
+- Unified `ChildSessionFactory` (`createDefaultChildSessionFactory`, exported):
+  parent identity resolved from the store (no more fake `{ id }`-only sessions
+  reaching creation — `userId: undefined` crashed SQLite binding), permission
+  stamping, preset/parent model inheritance, `writePaths` confinement, and
+  deterministic child session ids keyed by `spawnRequestId` +
+  `creationRequestId` so a crash between session creation and record creation
+  does not duplicate the child on retry (PC04).
+- `spawnRequestId` derivation from the persistent tool-call id (`toolCallId`)
+  when the model does not supply one; same-key-different-payload retries are
+  rejected (`SPAWN_PAYLOAD_MISMATCH`); subagent nesting depth is resolved
+  server-side inside the coordinator.
 
 Daily development against the sibling working tree: use
 `scripts/framework-dev.sh on|off` (switches the dependency to

@@ -324,19 +324,21 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     sandbox: { kind: "subprocess", workspaceRoot: wsRoot },
     localTools,
     capabilities: { repoMap: { workspaceRoot: wsRoot }, subagents: 1 },
-      // M3-S21：子代理协调器——runner 的 spawnSubagent 协调路径预建子会话后
-      // 交 coordinator 登记；runChild/abortChild late-bind 到本 runtime 的
-      // runner（构造时 runtime 尚未存在，经 holder 闭包引用）
+      // T02（production-chain-closure）：子代理唯一创建入口——子会话创建走框架
+      // 统一 ChildSessionFactory（默认实现：父身份从 store 解析、父权限 stamp、
+      // preset/父模型继承、writePaths 圈禁、确定性子 id + creationRequestId 幂等），
+      // registry/深度由 createServer 绑定 runner 同源的会话级解析（含 .zmzai/agents
+      // 工作区自定义 Agent）。此处只注入执行语义：runChild/abortChild late-bind 到
+      // 本 runtime 的 runner（构造时 runtime 尚未存在，经 holder 闭包引用）。
       subagentCoordinator: new SubagentCoordinator({
         store: sessionStore,
-        registry: undefined as never, // 预建路径（runner 侧 stamp）不使用 registry
-        createChildSession: async () => {
-          throw new Error("runner 预建路径不应调 createChildSession");
-        },
         runChild: async (childId, prompt) => {
           const childSession = await sessionStore.getSession(childId);
           if (!childSession) throw new Error(`子会话不存在：${childId}`);
           await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).runAttempt(childSession, { text: prompt, agent: childSession.agent });
+          // ⚠️ F02（已钉住，T03 修复）：runAttempt 的真实 outcome 在此被丢弃——
+          // 子失败/取消/blocked 会被上报为 completed。修复时改为读取 outcome.state
+          // 与结构化结果（summary/evidence/unknownSideEffect）传播进协调记录。
           return "completed";
         },
         abortChild: async (childId) => {

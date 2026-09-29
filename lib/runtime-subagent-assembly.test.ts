@@ -6,25 +6,24 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentFramework, Part, SqliteSessionStore } from "@zmzai/agent-framework";
 
-/** T01 / F01+F02 Lectern 层生产装配复现（production-chain-closure）。
+/** T01→T02 / F01+F02 Lectern 层生产装配测试（production-chain-closure）。
  *
- *  与 Framework 层复现（src/server/create-agent-runtime.subagents-assembly.test.ts，
- *  本地源码）对照，本文件用 Lectern 真实装配链证明缺陷在**安装包消费路径**上成立：
- *  vendored @zmzai/agent-framework 0.11.0 + lib/runtime.ts 的真实 createAgentRuntime
- *  接线 + 真实 SQLite store/eventLog——除模型端点（scripted relay，OpenAI SSE 线格式）
- *  外零替身。
+ *  安装包消费路径：vendored @zmzai/agent-framework + lib/runtime.ts 的真实
+ *  createAgentRuntime 接线 + 真实 SQLite store/eventLog——除模型端点
+ *  （scripted relay，OpenAI SSE 线格式）外零替身。
  *
- *  F01（spec 2026-09-28 §2）：runtimeFor 传给 createAgentRuntime 的
- *  SubagentCoordinator 在 vendored 包的 createServer 边界被静默丢弃（FrameworkDeps
- *  无该字段、条件 spread 豁免 excess property 检查）→ agent_spawn 工具已注册
- *  （createAgentRuntime 见协调器即拼 subagentTools）但执行期 ctx.subagents 永不
- *  注入 → 抛 SUBAGENTS_UNSUPPORTED。
+ *  F01（T01 时钉住、T02 修复翻绿=PC01）：协调器曾在 vendored 包 createServer
+ *  边界被静默丢弃（FrameworkDeps 无字段 + 条件 spread 豁免检查）→ agent_spawn
+ *  抛 SUBAGENTS_UNSUPPORTED。0.12.0 起 FrameworkDeps 显式携带 subagentCoordinator
+ *  并透传 SessionRunner；子会话创建走统一 ChildSessionFactory（父身份 store 解析、
+ *  父权限 stamp、确定性子 id 幂等）。本用例断言真实生产装配全链：模型调
+ *  agent_spawn → 子会话建立 → 协调记录落库 → runChild 真实执行。
  *
- *  F02（spec 2026-09-28 §2）：lib/runtime.ts 的 runChild 忽略 runAttempt 的真实
+ *  F02（仍钉住，T03 修复）：lib/runtime.ts 的 runChild 忽略 runAttempt 的真实
  *  outcome、无条件 return "completed"。本用例用 401（pi-ai SDK 不可重试档：
  *  仅 408/409/429/5xx 重试）让真实 runner 的 runAttempt 落 state "failed"，
- *  与生产 runChild 对同一调用固定报 completed 构成矛盾。T02 修复装配、T03
- *  传播真实 outcome 后，本用例翻转为经真实协调器执行并断言 failed 传播。 */
+ *  与生产 runChild 对同一调用固定报 completed 构成矛盾。T03 传播真实 outcome
+ *  后，本用例翻转为经真实协调器执行并断言 failed 传播。 */
 
 // Vite 的内置模块枚举不含 node:sqlite（与 lib/session-owner.test.ts 同一约定）。
 // runtime → attachments/scope 与 vendored framework 的 SQLite store 都要真开库文件，
@@ -174,13 +173,25 @@ async function waitForToolParts(store: SqliteSessionStore, sessionId: string, to
   }
 }
 
-describe("T01：Lectern 生产装配的子代理缺陷（vendored framework 0.11.0）", () => {
-  it("F01：agent_spawn 已注册，但执行抛 SUBAGENTS_UNSUPPORTED——协调器在 createServer 边界被丢弃", async () => {
-    const spawnArgs = { description: "并行探索A", prompt: "探索子目录并汇报", agent_type: "explorer", mode: "read_only" };
+/** 子代理协调记录轮询：pump 异步启动 runChild，终态经 store 落库。 */
+async function waitForSubagentTerminal(store: SqliteSessionStore, childId: string, timeoutMs = 15_000): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    const record = await store.subagents!.getSubagent(childId);
+    if (record && (record.status === "completed" || record.status === "failed" || record.status === "cancelled")) return;
+    if (Date.now() - start > timeoutMs) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+describe("T02/PC01：Lectern 生产装配的子代理派生（vendored framework 0.12.0）", () => {
+  it("F01 修复验收：agent_spawn 经真实 runtimeFor 全链建立子会话（协调器抵达 runner，统一工厂创建）", async () => {
+    // explore 是框架内置 subagent 类型（registry builtin）；explorer 之类未注册名会被协调器拒绝
+    const spawnArgs = { description: "并行探索A", prompt: "探索子目录并汇报", agent_type: "explore", mode: "read_only" };
     const ctx = await assembleProductionRuntime((count) =>
       count === 1
         ? { status: 200, sse: toolCallSse("agent_spawn", spawnArgs) }
-        : { status: 200, sse: textSse("已尝试派出子代理（工具报错）") });
+        : { status: 200, sse: textSse("子代理执行完成（或父轮收尾）") });
     try {
       const { createFrameworkSession } = await import("@zmzai/agent-framework");
       const session = await createFrameworkSession({
@@ -188,24 +199,33 @@ describe("T01：Lectern 生产装配的子代理缺陷（vendored framework 0.11
         userId: "u-t01",
         workspaceId: "ws-t01",
         model: { providerId: "openai", modelId: "test-model" },
-        // 预盖 task 权限：本用例考的是工具执行期的 ctx.subagents 注入，不是权限门
+        // 预盖 task 权限：本用例考的是装配链路，不是权限门
         permission: [{ permission: "task", pattern: "*", action: "allow" }],
       });
-      await ctx.runtime.runner.prompt(session.id, { requestId: "t01_f01_lectern", text: "派一个子代理去探索" });
+      await ctx.runtime.runner.prompt(session.id, { requestId: "t02_pc01_lectern", text: "派一个子代理去探索" });
 
       const parts = await waitForToolParts(ctx.store, session.id, "agent_spawn");
-      // 工具确实被模型调用了（不是「未注册」——那会是另一种错误）
       expect(parts).toHaveLength(1);
-      expect(parts[0]!.state.status).toBe("error");
-      expect((parts[0]!.state as { error?: string }).error).toContain("SUBAGENTS_UNSUPPORTED");
+      expect(parts[0]!.state.status).toBe("completed");
 
-      // 根因钉住：runtimeFor 确实构造并传出了协调器（否则 agent_spawn 不会注册），
-      // 但 vendored 包 createServer 构造 SessionRunner 时丢弃——生产装配中为 undefined。
+      // 修复直接证据：runtimeFor 构造的协调器抵达 runner（不再被 createServer 边界丢弃）
       const deps = (ctx.runtime.runner as unknown as { deps?: { subagentCoordinator?: unknown } }).deps;
-      expect(deps?.subagentCoordinator).toBeUndefined();
+      expect(deps?.subagentCoordinator).toBeDefined();
 
-      // 协调器从未被触达：无 SubagentRecord
-      expect(await ctx.store.subagents!.listSubagents({ parentSessionId: session.id })).toHaveLength(0);
+      // 统一工厂真实创建子会话：SubagentRecord 落库、子会话挂父、身份继承父用户
+      const records = await ctx.store.subagents!.listSubagents({ parentSessionId: session.id });
+      expect(records).toHaveLength(1);
+      expect(records[0]!.agentType).toBe("explore");
+      const childSession = await ctx.store.getSession(records[0]!.childSessionId);
+      expect(childSession).not.toBeNull();
+      expect(childSession!.parentId).toBe(session.id);
+      expect(childSession!.userId).toBe("u-t01");
+
+      // runChild 真实执行：子会话收到模型响应（relay 收到子会话的 chat/completions 请求）
+      await waitForSubagentTerminal(ctx.store, records[0]!.childId, 15_000);
+      const finalRecord = await ctx.store.subagents!.getSubagent(records[0]!.childId);
+      expect(finalRecord!.status).toBe("completed");
+      expect(ctx.relay.requests.length).toBeGreaterThanOrEqual(2);
     } finally {
       await ctx.cleanup();
     }

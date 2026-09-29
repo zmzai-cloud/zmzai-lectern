@@ -33,7 +33,14 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
   prompt: (sessionId: string, input: Record<string, unknown>) => rtOf(sessionId).runner.prompt(sessionId, input as never),
   // T08：会话列表全项目聚合（轻量 projectStore，不起 runtime/MCP）；
   // 显式 projectId 时只查该项目，未知 projectId 抛错（不静默空列表）
+  // T08/T09：会话列表——显式 projectId 只查该项目（未知抛错不空成功）；
+  // 无 projectId 全项目聚合（轻量 projectStore，不起 runtime/MCP）。返回
+  // UI 的 SessionListItem 完整契约（readState/running/awaitingPermission/
+  // messageCount/task/projectId/projectName）——running 态在 Host 进程的
+  // activeRuns 里才是真相源（armed 下执行在 Host；Next 进程看不到）。
   listSessions: async (filter: { userId: string; workspaceId?: string; projectId?: string }) => {
+    const framework = await import("@zmzai/agent-framework");
+    const { toTaskView } = await import("../../lib/task-presentation.js");
     let projects: Awaited<ReturnType<typeof listProjects>>;
     if (filter.projectId) {
       const found = registeredProjects().find((proj) => proj.id === filter.projectId);
@@ -42,16 +49,37 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
     } else {
       projects = listProjects();
     }
-    const all: unknown[] = [];
+    const taskViewFor = async (store: { task?: { getActiveTask(id: string): Promise<unknown>; getLatestTask(id: string): Promise<unknown> } }, sessionId: string) => {
+      if (!store.task) return null;
+      const record = ((await store.task.getActiveTask(sessionId).catch(() => null)) ?? (await store.task.getLatestTask(sessionId).catch(() => null))) as Parameters<typeof toTaskView>[0] | null;
+      return record ? toTaskView(record) : null;
+    };
+    const merged: Record<string, unknown>[] = [];
     for (const project of projects) {
       try {
-        const list = projectStore(project.id).listSessions({ userId: filter.userId, ...(filter.workspaceId ? { workspaceId: filter.workspaceId } : {}) });
-        all.push(...(await list));
+        const store = projectStore(project.id);
+        const sessions = await store.listSessions({ userId: filter.userId, ...(filter.workspaceId ? { workspaceId: filter.workspaceId } : {}) });
+        const counts = typeof (store as unknown as { countMessagesBySession?: () => Promise<Map<string, number>> }).countMessagesBySession === "function"
+          ? await (store as unknown as { countMessagesBySession: () => Promise<Map<string, number>> }).countMessagesBySession()
+          : new Map<string, number>();
+        for (const s of sessions) {
+          merged.push({
+            ...s,
+            readState: await store.getReadState?.(s.id),
+            running: framework.isSessionActive(s.id),
+            awaitingPermission: framework.isSessionAwaitingPermission(s.id),
+            messageCount: counts.get(s.id) ?? 0,
+            task: await taskViewFor(store, s.id),
+            projectId: project.id,
+            projectName: project.name,
+          });
+        }
       } catch {
         // 项目库不可读/尚未初始化：该项目无会话是事实，跳过；不掩盖其它项目
       }
     }
-    return all;
+    merged.sort((a, b) => String((b as { time?: { updated?: string } }).time?.updated ?? "").localeCompare(String((a as { time?: { updated?: string } }).time?.updated ?? "")));
+    return merged;
   },
   abort: (sessionId) => rtOf(sessionId).runner.abort(sessionId),
   resumeTask: (sessionId) => rtOf(sessionId).runner.resumeTask(sessionId),

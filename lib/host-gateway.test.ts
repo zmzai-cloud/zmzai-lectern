@@ -219,3 +219,70 @@ describe("T07：armed 网关禁动态回退（F04/PC10/PC11）", () => {
     }
   });
 });
+
+describe("T09：会话列表/事件流网关化（回归 d416ca4 撤下的多项目列表）", () => {
+  async function bootWithProjects(): Promise<{ dir: string; host: HostHandle }> {
+    const dir = await mkdtemp(path.join(tmpdir(), "t09-gw-"));
+    const { mkdirSync, writeFileSync: wf } = await import("node:fs");
+    mkdirSync(path.join(dir, "data"), { recursive: true });
+    mkdirSync(path.join(dir, "pa"), { recursive: true });
+    wf(path.join(dir, "data", "projects.json"), JSON.stringify({ activeId: "p_active", projects: [{ id: "p_active", name: "A", path: path.join(dir, "pa"), createdAt: new Date().toISOString() }] }));
+    const host = await startFakeHost((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url.startsWith("/v1/sessions")) {
+        const url = new URL(req.url, "http://x");
+        res.end(JSON.stringify({ sessions: [{ id: "s1", projectId: url.searchParams.get("projectId") }] }));
+        return;
+      }
+      res.end(JSON.stringify({ ok: true }));
+    });
+    return { dir, host };
+  }
+
+  it("缺省视图注入 active projectId（每请求重读）；Host 收到 local 身份", async () => {
+    const { dir, host } = await bootWithProjects();
+    try {
+      process.env.LECTERN_DATA_DIR = path.join(dir, "data");
+      process.env.LECTERN_HOST_GATEWAY = await withHostJson(dir, host.port);
+      const gw = await importGateway();
+      const res = await gw.hostGateway(new Request("http://127.0.0.1/api/sessions"));
+      expect(res!.status).toBe(200);
+      // unwrap：Host {sessions:[...]} → UI 裸数组契约
+      const list = (await res!.json()) as { id: string; projectId: string | null }[];
+      expect(Array.isArray(list)).toBe(true);
+      expect(list[0]!.projectId).toBe("p_active");
+      const hit = host.requests.find((r) => r.url.startsWith("/v1/sessions"))!;
+      expect(hit.url).toContain("userId=local");
+      expect(hit.url).toContain("workspaceId=local");
+      expect(hit.url).toContain("projectId=p_active");
+    } finally {
+      delete process.env.LECTERN_HOST_GATEWAY;
+      delete process.env.LECTERN_DATA_DIR;
+      host.server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("?all=1 → 全项目聚合（不注入 projectId）；SSE 事件路由映射 + since 透传", async () => {
+    const { dir, host } = await bootWithProjects();
+    try {
+      process.env.LECTERN_DATA_DIR = path.join(dir, "data");
+      process.env.LECTERN_HOST_GATEWAY = await withHostJson(dir, host.port);
+      const gw = await importGateway();
+      const res = await gw.hostGateway(new Request("http://127.0.0.1/api/sessions?all=1"));
+      expect(res!.status).toBe(200);
+      const hit = host.requests.find((r) => r.url.startsWith("/v1/sessions"))!;
+      expect(hit.url).not.toContain("projectId=");
+
+      const evRes = await gw.hostGateway(new Request("http://127.0.0.1/api/sessions/ses_ev/events?since=42"));
+      expect(evRes).not.toBeNull();
+      const evHit = host.requests.find((r) => r.url.startsWith("/v1/events"))!;
+      expect(evHit.url).toBe(`/v1/events?sessionId=ses_ev&since=42`);
+    } finally {
+      delete process.env.LECTERN_HOST_GATEWAY;
+      delete process.env.LECTERN_DATA_DIR;
+      host.server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

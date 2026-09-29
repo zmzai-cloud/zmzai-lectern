@@ -1,4 +1,5 @@
 import { hostBootstrap } from "./m2a-host.js";
+import { getActiveProject } from "./projects.js";
 
 /** M2b 网关（设计 §1.2）：静态路由表把生产路径代理到 Host。
  *  【armed 判定】仅当 LECTERN_HOST_GATEWAY 指向 host.json（验证环境由
@@ -36,10 +37,37 @@ export type GatewayRoute = {
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
-  // GET /api/sessions 不网关化（0.10.1 实测撤下）：进程内实现按 active 项目分库
-  // 路由（projects/<id>/zmzai.db），Host 单 runtime（defaultWorkspaceRoot）读不
-  // 到其它项目会话——多项目读族网关化属后续批次；命令/终端/事件族 Host 承担
-  // （按 sessionId 路由，已验）。injectQuery/unwrap 机制保留给后续端点。
+  // GET /api/sessions（T09 回归网关化）：0.10.1 因 Host 单 runtime 读不到多项目
+  // 会话被撤下（d416ca4）；T08 起 Host 的 listSessions 全项目聚合 + 显式
+  // projectId（未知项目报错），列表回归 Host——running 态在 Host 进程的
+  // activeRuns 里才是真相源（armed 下执行在 Host）。
+  // 契约翻译：?all=1 → 全项目聚合；缺省 → 注入 active 项目 id（每请求重读
+  // projects.json，切换项目即时生效，不依赖 Next 重启；读不到 active 时
+  // 不注入 → Host 聚合全项目，宁可多列不静默空表）。
+  {
+    method: "GET",
+    pattern: /^\/api\/sessions$/,
+    hostUrl: (_g, url) => {
+      const q = new URLSearchParams({ userId: "local", workspaceId: "local" });
+      if (url.searchParams.get("all") !== "1") {
+        try {
+          const project = getActiveProject();
+          q.set("projectId", project.id);
+        } catch { /* projects.json 不可读：全项目聚合兜底 */ }
+      }
+      return new URL(`/v1/sessions?${q}`, "http://127.0.0.1");
+    },
+    unwrap: "sessions",
+  },
+  // SSE 事件流（T09）：Host 的 /v1/events（sinceSeq 重放 + CURSOR_STALE 409
+  // 与进程内契约同构）；网关透传字节流与 content-type，心跳由 Host 发。
+  // hostUrl 合并 sessionId + since（passQuery 会整体覆盖 search，不能用）。
+  { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/events$/, hostUrl: (g, url) => {
+      const q = new URLSearchParams({ sessionId: g[0] });
+      const since = url.searchParams.get("since");
+      if (since) q.set("since", since);
+      return new URL(`/v1/events?${q}`, "http://127.0.0.1");
+    } },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/messages$/, hostPath: (g) => `/v1/sessions/${g[0]}/messages`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/search$/, hostPath: (g) => `/v1/sessions/${g[0]}/search`, passQuery: true },
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: (g) => `/v1/sessions/${g[0]}/read-state`, passQuery: true },

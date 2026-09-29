@@ -1,12 +1,26 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.15.0.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.15.0` (production-chain-closure T05), vendored here so
+`zmzai-agent-framework-0.16.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.16.0` (production-chain-closure T06), vendored here so
 desktop builds and clean installs resolve the framework without depending on
 registry access. The framework repository is the source of truth; the version
 number is unique to these bytes and never re-packed under the same name (spec
 2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
-then this tarball is the only distribution of 0.15.0.
+then this tarball is the only distribution of 0.16.0.
+
+What 0.16.0 changed (T06, production-chain fault closure):
+
+- End-to-end subagent chain test on the real runner (command service →
+  scheduler → task lifecycle → attempt executor → real `subagentTools` with a
+  scripted model): double `agent_spawn` → parent parks → children run real
+  `runAttempt` → same-transaction settle + result mail → wake → automatic
+  resume → mailbox drained into the resume advisory (no synthetic user
+  message) → `task_deliver` → delivered in exactly two attempts.
+- Durable wake reconciliation on restart: a parked parent task with
+  unconsumed `to_parent` results is itself the persistent wake state —
+  coordinator recovery rebuilds the wake through the terminal hook (the
+  in-process resume Set dies with the process); terminal parents are never
+  revived.
 
 What 0.15.0 changed (T05, parent lifecycle & acceptance):
 

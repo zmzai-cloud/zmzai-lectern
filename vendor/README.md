@@ -1,12 +1,35 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.14.0.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.14.0` (production-chain-closure T04), vendored here so
+`zmzai-agent-framework-0.15.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.15.0` (production-chain-closure T05), vendored here so
 desktop builds and clean installs resolve the framework without depending on
 registry access. The framework repository is the source of truth; the version
 number is unique to these bytes and never re-packed under the same name (spec
 2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
-then this tarball is the only distribution of 0.14.0.
+then this tarball is the only distribution of 0.15.0.
+
+What 0.15.0 changed (T05, parent lifecycle & acceptance):
+
+- F03 fix: `completionStateOf` queries real subagent records instead of a
+  hardcoded `null`. The delivery gate blocks on non-terminal children,
+  terminal-but-unconsumed results, and needs_revision/rejected children that
+  have not been replaced or re-accepted; the completion path is reachable
+  (terminal + drained → deliver).
+- Parent park is wired into the real task loop: a continue verdict with
+  necessary children pending parks the task (`parkedReason: "children"`, stays
+  `running`, no attempts burned). Child-terminal wakes resume via
+  `driveResumedTask`; the resumed run drains the parent mailbox into the
+  attempt advisory (system instruction, no synthetic user message) and commits
+  the consumption watermark only after the attempt persisted.
+- Acceptance service: `coordinator.reviewChild(childId, decision, {note,
+  evidenceRefs}, scope)` records accepted/needs_revision/rejected bound to the
+  child result revision; rework spawns link `replacesChildId` and unblock
+  delivery once the replacement is terminal and consumed.
+- Root cancellation cutoff: `runner.abort` settles the task terminal first
+  (late child results cannot revive it), then `cancelTree` closes coordinator
+  admission for that root (pump/launch re-check; the pump raced ahead and
+  launched queued children during cancellation — caught by the PC09 test) and
+  cancels the whole tree.
 
 What 0.14.0 changed (T04, persistent queue / mailbox / wake):
 

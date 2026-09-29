@@ -403,10 +403,19 @@ async function ensureHostProcess(userData, dataDir) {
 }
 
 function spawnHost(hostEntry, hostDataDir, hostLog) {
+  // Host bundle 自包含（scripts/build-host.mjs）不含 node_modules；node-pty 是
+  // 原生模块、不能打进 esbuild 产物。打包版由 after-pack 钩子把 node-pty 拷到
+  // app.asar.unpacked/node_modules（真实目录），经 NODE_PATH 交给 Host 的 CJS
+  // 解析链（framework 侧 createRequire 动态 require；解析不到时已有 pipe 降级）。
+  // dev 模式 host/dist 沿仓库 node_modules 走自然解析，不需要 NODE_PATH。
+  // 注意不能走 electron-builder files 白名单放行根 node_modules——那会改变
+  // node_modules 收集行为弄丢 standalone 自己的依赖（0.10.2 修复实测踩坑）。
+  const unpackedModules = path.join(process.resourcesPath ?? "", "host-runtime", "node_modules");
   hostProcess = utilityProcess.fork(hostEntry, [], {
     cwd: hostDataDir,
     env: {
       ...process.env,
+      ...(app.isPackaged && fs.existsSync(unpackedModules) ? { NODE_PATH: unpackedModules } : {}),
       LECTERN_HOST_DATA: hostDataDir,
       // armed 生产语义：Host 与 Next 共用同一数据目录（Host 是库 owner）。
       // 不显式注入时 Host 回退到 <data>/host 开库——双库，armed 切换后

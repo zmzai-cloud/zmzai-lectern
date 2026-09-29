@@ -70,6 +70,36 @@ async function launch() {
 const SEEDED_LEASE_OWNER = "node:smoke-crashed";
 const SEEDED_TITLE_INPUT = "恢复验收·待补充";
 const SEEDED_TITLE_UNSAFE = "恢复验收·待确认";
+
+/** 递归找 Host 握手文件（host.json 只由完成装配的 Host 进程写入；dataDir
+ *  随历史数据布局可能是 <userData>/data 或 <userData>/data/data，不猜路径）。 */
+function findHostJson() {
+  for (const root of [join(userData, "data"), userData]) {
+    const stack = [root];
+    while (stack.length) {
+      const current = stack.pop();
+      let entries;
+      try { entries = readdirSync(current, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        const next = join(current, entry.name);
+        if (entry.isDirectory() && entry.name !== "node_modules") stack.push(next);
+        else if (entry.name === "host.json" && current.endsWith("host")) return next;
+      }
+    }
+  }
+  return null;
+}
+
+async function waitForHostJson() {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const found = findHostJson();
+    if (found) return found;
+    if (Date.now() > deadline) throw new Error("host.json 未出现：打包版 Host 未完成启动（可能已崩溃并被进程内 Runtime 静默兜底）");
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 // 与 lib/task-layout.ts 的 DESKTOP_MIN_WIDTH 同值。这里没法 import 那个模块
 // （.mjs 拉不起 TS），所以改那边时这里要一起改——它是「视口够不够宽」的判据。
 const DESKTOP_MIN_WIDTH = 1180;
@@ -234,6 +264,22 @@ async function waitForTaskState(sessionId, predicate, timeoutMs = 30000) {
 try {
   const window = await launch();
   results.push("packaged app launched with isolated profile and native platform bridge");
+
+  // Host 必须真的活着（0.10.1 的教训：Host 在安装包里因缺运行时依赖崩溃循环，
+  // 而 armed 失败会静默降级进程内 Runtime——下面的页面/API 断言全绿也证明
+  // 不了 Host 起来了）。host.json 只在 Host 完成装配后由 Host 进程落盘；
+  // 读到后再带 token 探 /health 才算数。
+  {
+    const hostJson = await waitForHostJson();
+    const { port, token } = JSON.parse(readFileSync(hostJson, "utf8"));
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    assert.equal(res.status, 200, "Packaged Host /health must return 200 — Host actually running, not the in-process fallback");
+    results.push(`packaged Host process alive (host.json handshake + authenticated /health on ${port})`);
+  }
+
   await api("/api/projects", "POST", { path: workspace });
   const session = await api("/api/sessions", "POST", { agent: "default", model: { providerId: "openai", modelId: "smoke-no-network" } });
   assert.ok(session.id);

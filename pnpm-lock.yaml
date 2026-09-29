@@ -71,6 +71,9 @@ importers:
       next:
         specifier: 15.5.21
         version: 15.5.21(@opentelemetry/api@1.9.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      node-pty:
+        specifier: 1.1.0
+        version: 1.1.0
       pdfjs-dist:
         specifier: ^6.3.289
         version: 6.3.289
@@ -120,6 +123,9 @@ importers:
       electron-builder:
         specifier: ^26.0.12
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
+      esbuild:
+        specifier: 0.21.5
+        version: 0.21.5
       playwright:
         specifier: 1.58.2
         version: 1.58.2
@@ -7413,8 +7419,7 @@ snapshots:
     dependencies:
       semver: 7.8.5
 
-  node-addon-api@7.1.1:
-    optional: true
+  node-addon-api@7.1.1: {}
 
   node-api-version@0.2.1:
     dependencies:
@@ -7448,7 +7453,6 @@ snapshots:
   node-pty@1.1.0:
     dependencies:
       node-addon-api: 7.1.1
-    optional: true
 
   nopt@9.0.0:
     dependencies:

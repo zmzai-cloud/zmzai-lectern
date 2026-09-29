@@ -676,6 +676,10 @@ export async function mergeAttemptCas(attemptId: string, allowUnverified = false
       expectedTargetCommit: nowTip,
       targetRef: wsRecord.targetRef,
       sourceCommit: snap.deliveryCommitSha, // 合并 immutable delivery commit，不是分支 tip
+      // T10：交付侧的验证语义由 attempt 状态机持有（verified / no_required_checks
+      // 二次确认 = 既有显式接受流程）；整合层的组合实检仍会跑（仓库声明了
+      // .lectern/verification.json 时 required 失败照样不推进目标）。
+      acceptUnverified: true,
     });
     if (!integrated.ok) {
       const mapped: DeliveryMergeRejectReason =
@@ -683,6 +687,7 @@ export async function mergeAttemptCas(attemptId: string, allowUnverified = false
         : integrated.reason === "target-dirty" ? "worktree_dirty"
         : integrated.reason === "cas-failed" || integrated.reason === "not-fast-forward" ? "cas_failed"
         : integrated.reason === "conflict" ? "integration_conflict"
+        : integrated.reason === "verification-failed" ? "integration_conflict"
         : "integration_failed";
       return { ok: false, reason: mapped, detail: integrated.record?.failureReason ?? integrated.reason };
     }

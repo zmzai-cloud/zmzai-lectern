@@ -18,7 +18,7 @@ import { execFile } from "node:child_process";
 
 export type WorktreeState =
   | "creating" | "preparing" | "ready" | "active" | "verifying"
-  | "ready_for_review" | "integrating" | "integrated" | "archived" | "deleting" | "failed";
+  | "ready_for_review" | "integrating" | "verifying" | "ready_to_advance" | "integrated" | "archived" | "deleting" | "failed";
 
 export type StartingState = "current_commit" | "specified_ref" | "working_tree_snapshot";
 
@@ -492,7 +492,7 @@ export function archiveWorkspace(dataDir: string, workspaceId: string): Workspac
  *  活跃 = 会话应继续指向该目录的态（含 integrated/archived 只读期）；
  *  creating/failed/deleting 不算——会话按普通主工作区走。 */
 const SESSION_ACTIVE_STATES: readonly WorktreeState[] = [
-  "ready", "preparing", "active", "verifying", "ready_for_review", "integrating", "integrated", "archived",
+  "ready", "preparing", "active", "verifying", "ready_for_review", "integrating", "verifying", "ready_to_advance", "integrated", "archived",
 ];
 
 export function workspaceRecordForSession(dataDir: string, sessionId: string): WorkspaceRecord | null {
@@ -592,7 +592,65 @@ export type IntegrationOutcome =
   | "conflict" | "merge-failed"
   | "target-moved" | "target-dirty" | "source-changed"
   | "not-fast-forward" | "cas-failed" | "verify-failed"
-  | "source-branch-missing" | "bad-target-ref" | "integration-worktree-failed";
+  | "source-branch-missing" | "bad-target-ref" | "integration-worktree-failed"
+  // T10（spec §4.4/F06）：合并结果的实检阶段——组合验证不过/无 required 检查
+  // 且未经显式接受时，目标 ref 一律不推进
+  | "verification-failed" | "unverified";
+
+/** 整合验证计划（T10，spec §4.4）：对**实际合并结果**（临时整合 worktree 里的
+ *  固定 merge commit）执行的检查集。计划声明在仓库的 .lectern/verification.json
+ *  （随合并进结果树），或由调用方显式注入（交付流程/测试）。 */
+export type IntegrationVerificationPlan = {
+  version: string;
+  checks: { id: string; label?: string; command: string; required?: boolean; timeoutMs?: number }[];
+};
+
+export type IntegrationVerificationResult = {
+  outcome: "passed" | "failed" | "unverified";
+  planVersion?: string;
+  checks: { id: string; required: boolean; ok: boolean; exitCode: number | null; timedOut: boolean; outputTail: string }[];
+  ranAt: string;
+};
+
+/** 从工作树读验证计划（合并结果树优先——验证的是将要落地的内容）。 */
+export function loadVerificationPlan(worktreePath: string): IntegrationVerificationPlan | null {
+  const file = resolve(worktreePath, ".lectern", "verification.json");
+  if (!existsSync(file)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8")) as IntegrationVerificationPlan;
+    if (!raw || typeof raw.version !== "string" || !Array.isArray(raw.checks)) return null;
+    const checks = raw.checks.filter((c) => c && typeof c.id === "string" && typeof c.command === "string" && c.command.trim().length > 0);
+    return checks.length > 0 ? { version: raw.version, checks } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 默认检查执行器：在合并结果树上逐条跑命令（bash -c / win cmd-c），required
+ *  失败即整体 failed；advisory（required=false）失败只记录不拦截。 */
+async function runIntegrationChecks(cwd: string, plan: IntegrationVerificationPlan): Promise<IntegrationVerificationResult> {
+  const isWin = process.platform === "win32";
+  const results: IntegrationVerificationResult["checks"] = [];
+  for (const check of plan.checks) {
+    const timeoutMs = Math.min(Math.max(check.timeoutMs ?? 120_000, 1_000), 600_000);
+    const outcome = await new Promise<{ code: number | null; timedOut: boolean; tail: string }>((resolvePromise) => {
+      const child = execFile(
+        isWin ? process.env.ComSpec ?? "cmd.exe" : "bash",
+        isWin ? ["/c", check.command] : ["-c", check.command],
+        { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, killSignal: "SIGKILL" },
+        (error, stdout, stderr) => {
+          const text = `${stdout ?? ""}\n${stderr ?? ""}`.trim();
+          if (error && (error as { killed?: boolean }).killed) resolvePromise({ code: null, timedOut: true, tail: text.slice(-2_000) });
+          else resolvePromise({ code: error && typeof (error as { code?: number }).code === "number" ? (error as { code: number }).code : error ? 1 : 0, timedOut: false, tail: text.slice(-2_000) });
+        },
+      );
+      void child;
+    });
+    results.push({ id: check.id, required: check.required !== false, ok: outcome.code === 0 && !outcome.timedOut, exitCode: outcome.code, timedOut: outcome.timedOut, outputTail: outcome.tail });
+  }
+  const requiredFailed = results.some((r) => r.required && !r.ok);
+  return { outcome: requiredFailed ? "failed" : "passed", planVersion: plan.version, checks: results, ranAt: new Date().toISOString() };
+}
 
 /** 一次整合尝试的独立记录：冲突/拒绝都保留在这里（修复后重试产生新条目）。 */
 export type IntegrationAttempt = {
@@ -612,6 +670,9 @@ export type IntegrationAttempt = {
   mergedSnapshotFingerprint?: string;
   /** 重试复用了上次 merge commit（只推进目标）。 */
   reusedMergeCommit?: boolean;
+  /** T10（spec §4.4）：合并结果的验证证据——绑定 mergeCommit + 指纹 + 计划
+   *  版本；required 失败/未接受 unverified 时目标不推进。 */
+  verification?: IntegrationVerificationResult;
   detail?: string;
 };
 
@@ -651,13 +712,25 @@ async function withRepoIntegrationLock<T>(repoIdentity: string, fn: () => Promis
 export async function integrateWorkspace(
   dataDir: string,
   workspaceId: string,
-  opts: { expectedTargetCommit: string; targetRef?: string; reviewSnapshot?: ReviewSnapshot; sourceCommit?: string },
+  opts: {
+    expectedTargetCommit: string;
+    targetRef?: string;
+    reviewSnapshot?: ReviewSnapshot;
+    sourceCommit?: string;
+    /** T10（spec §4.4）：显式注入验证计划（交付流程/测试）；缺省从合并结果树
+     *  的 .lectern/verification.json 自动加载。无计划 → unverified。 */
+    verification?: { plan: IntegrationVerificationPlan; runner?: (cwd: string, plan: IntegrationVerificationPlan) => Promise<IntegrationVerificationResult> };
+    /** 显式接受未验证结果（既有产品流程：ready_for_review 的人工审查后合并）。
+     *  未接受时 unverified 拒绝推进；接受了也必须在结果里标注未验证。 */
+    acceptUnverified?: boolean;
+  },
 ): Promise<IntegrateResult> {
   const db = getDb(dataDir);
   const initial = getRecord(db, workspaceId);
   if (!initial) return { ok: false, reason: "record-not-found" };
 
   const gateOk = initial.state === "ready_for_review" || initial.state === "integrating"
+    || initial.state === "verifying" || initial.state === "ready_to_advance"
     || (initial.state === "integrated" && initial.integrationCommit);
   if (!gateOk) return { ok: false, reason: "bad-state", record: initial };
 
@@ -747,14 +820,23 @@ export async function integrateWorkspace(
         return { ok: true, record: current, alreadyIntegrated: true };
       }
       if (!contained.ok && sourceSame) {
-        // 锚点属于本轮源但目标未含：上次中断在推进之前 → 只推进，不重复合并
-        // 中断恢复也过 CAS：目标必须仍在调用方核对的提交上（与全量路径同一前置）
+        // 锚点属于本轮源但目标未含：上次中断在推进之前 → 只推进，不重复合并。
+        // 中断恢复也过 CAS：目标必须仍在调用方核对的提交上（与全量路径同一前置）。
         const resumeCas = targetSha === attempt.expectedTargetCommit;
         note("cas-check", resumeCas, `target=${targetSha.slice(0, 12)} expected=${attempt.expectedTargetCommit.slice(0, 12)}`);
         if (!resumeCas) return reject("target-moved", "中断恢复时目标已推进，与 expectedTargetCommit 不符；请核对后重试");
         attempt.reusedMergeCommit = true;
         note("resume-advance-only", true, `复用 merge commit ${current.integrationCommit.slice(0, 12)}，跳过合并`);
-        flush({ integrationCommit: current.integrationCommit });
+        flush({ integrationCommit: current.integrationCommit, integrationSource: sourceCommit });
+        // T10（spec §4.4）：恢复推进同样必须先有验证证据——上次可能中断在验证
+        // 之前/之中；重建合并结果树（worktree detach 到 merge commit）重跑验证，
+        // 验证不过同样不推进。证据绑定的是 merge commit 本身，重建树内容一致。
+        if (existsSync(tmpPath)) await cleanupTemp(tmpPath);
+        const resumeAdd = await git(repoRoot, ["worktree", "add", "--detach", tmpPath, current.integrationCommit!]);
+        note("integration-worktree-add", resumeAdd.ok, resumeAdd.ok ? `${tmpPath} @${current.integrationCommit!.slice(0, 12)}` : firstLine(resumeAdd.stderr));
+        if (!resumeAdd.ok) return reject("integration-worktree-failed", `恢复验证的 worktree add 失败：${firstLine(resumeAdd.stderr)}`);
+        const resumeVerify = await runVerificationPhase(tmpPath);
+        if (resumeVerify) return resumeVerify;
         return advanceTarget();
       }
       // 锚点过期：目标已含旧轮合并（多轮交付）或上次中断后源已换 → 清锚点走全量
@@ -823,8 +905,57 @@ export async function integrateWorkspace(
     note("merged-snapshot", Boolean(mergedSnap?.contentFingerprint), (mergedSnap?.contentFingerprint ?? "").slice(0, 16));
     // merge commit + 本轮源先落 record（中断对账锚点：重试不再重复合并/不误报已整合）
     flush({ integrationCommit: mergedSha, integrationSource: sourceCommit });
+    note("merged", true, `merge commit ${mergedSha.slice(0, 12)} fingerprint=${(mergedSnap?.contentFingerprint ?? "").slice(0, 16)}`);
+    flush();
 
+    // ---- T10 验证阶段（spec §4.4/F06）：对实际合并结果执行 VerificationPlan ----
+    // 证据绑定 mergeCommit + 指纹 + 计划版本（attempt.verification）；目标尚未
+    // 更新不是失败理由（验证对象是临时整合树，与目标 ref 状态无关）。
+    const verifyPhase = await runVerificationPhase(tmpPath);
+    if (verifyPhase) return verifyPhase;
     return advanceTarget();
+
+    /** 对 tmpPath 的合并结果跑验证：passed/显式接受 unverified → 放行推进；
+     *  required 失败或未接受 unverified → 目标不推进（回 ready_for_review，
+     *  integrationCommit 锚点保留供重试去重）。 */
+    async function runVerificationPhase(worktreePath: string): Promise<IntegrateResult | null> {
+      const plan = opts.verification?.plan ?? loadVerificationPlan(worktreePath);
+      note("verifying", true, plan ? `plan=${plan.version} checks=${plan.checks.length}` : "no-plan(unverified)");
+      flush({ state: "verifying", activeOperation: "integrate-verify" });
+      if (!plan) {
+        if (!opts.acceptUnverified) {
+          await cleanupTemp(worktreePath);
+          return reject("unverified", "合并结果无 required 验证检查（未声明 .lectern/verification.json 且未注入计划）：按显式「接受未验证结果」流程重试后放行", {
+            verification: { outcome: "unverified", checks: [], ranAt: new Date().toISOString() },
+          });
+        }
+        note("verification-accepted-unverified", true, "无验证计划，按显式接受整合（结果标注未验证）");
+        attempt.verification = { outcome: "unverified", checks: [], ranAt: new Date().toISOString() };
+      } else {
+        const runner = opts.verification?.runner ?? runIntegrationChecks;
+        let verification: IntegrationVerificationResult;
+        try {
+          verification = await runner(worktreePath, plan);
+        } catch (error) {
+          verification = { outcome: "failed", planVersion: plan.version, checks: [], ranAt: new Date().toISOString() };
+          verification.checks = [{ id: "runner", required: true, ok: false, exitCode: null, timedOut: false, outputTail: String(error instanceof Error ? error.message : error).slice(0, 2_000) }];
+        }
+        attempt.verification = verification;
+        if (verification.outcome === "failed") {
+          const failed = verification.checks.filter((c) => c.required && !c.ok).map((c) => `${c.id}${c.timedOut ? "(超时)" : `(${c.exitCode})`}`).join("、");
+          note("verification-failed", false, failed);
+          await cleanupTemp(worktreePath);
+          return reject("verification-failed", `合并结果组合验证未通过：${failed}；目标未推进，修复源后重试将重新合并验证`, { verification });
+        }
+        note("verification-passed", true, `plan=${verification.planVersion} 通过 ${verification.checks.filter((c) => c.ok).length}/${verification.checks.length}`);
+      }
+      // ready_to_advance：验证证据（attempt.verification + mergeCommit + 指纹）随本
+      // 步落库之后才允许推进目标 ref（spec §4.4 的放行次序）。锚点取
+      // current.integrationCommit——全量与恢复两条路径在此刻都已落锚。
+      note("ready-to-advance", true, `mergeCommit=${current.integrationCommit!.slice(0, 12)} plan=${attempt.verification?.planVersion ?? "unverified-accepted"}`);
+      flush({ state: "ready_to_advance", activeOperation: "integrate-advance" });
+      return null;
+    }
 
     /** 推进目标（全量与恢复路径共用）：双路径见 spec §10.3。 */
     async function advanceTarget(): Promise<IntegrateResult> {

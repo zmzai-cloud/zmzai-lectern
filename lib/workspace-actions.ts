@@ -41,13 +41,21 @@ export async function mergeSessionWorkspace(sessionId: string): Promise<SessionW
     return { ok: false, output: "工作区创建于 detached HEAD，无有效目标分支；请显式指定目标分支后整合", status: 409 };
   }
   markReadyForReview(dataDir, ws.workspaceId);
-  const result = await integrateWorkspace(dataDir, ws.workspaceId, { expectedTargetCommit: expected });
+  // T10（spec §4.4）：ready_for_review 的人工审查后合并 = 既有「显式接受未验证
+  // 结果」流程——仓库声明了 .lectern/verification.json 时仍会实检（required
+  // 失败不推进）；未声明计划则按显式接受放行，但结果必须标注未验证。
+  const result = await integrateWorkspace(dataDir, ws.workspaceId, { expectedTargetCommit: expected, acceptUnverified: true });
   if (!result.ok) {
     return { ok: false, output: `整合未完成（${result.reason}）：${result.record?.failureReason ?? ""}`.trim(), status: 409 };
   }
+  const attempts = result.record.integrationAttempts ?? [];
+  const lastVerification = [...attempts].reverse().find((a) => a.verification)?.verification;
+  const verificationNote = lastVerification?.outcome === "passed"
+    ? `组合验证通过（plan ${lastVerification.planVersion}）`
+    : "结果未经验证（无验证计划，按人工审查接受）";
   return {
     ok: true,
-    output: `已整合到 ${ws.targetRef}（${result.record.integrationCommit?.slice(0, 12) ?? ""}）；工作区保留，会话继续指向原工作区`,
+    output: `已整合到 ${ws.targetRef}（${result.record.integrationCommit?.slice(0, 12) ?? ""}）· ${verificationNote}；工作区保留，会话继续指向原工作区`,
     status: 200,
   };
 }

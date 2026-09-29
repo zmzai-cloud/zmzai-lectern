@@ -201,7 +201,7 @@ describe("整合前检查（W1-S26 / W04）", () => {
       const before = execSync("git rev-list --count main", { cwd: root }).toString().trim();
 
       markReadyForReview(dataDir, created.record.workspaceId);
-      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: base });
+      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: base, acceptUnverified: true });
       expect(r.ok).toBe(false);
       if (r.ok) return;
       expect(r.reason).toBe("target-moved");
@@ -226,7 +226,7 @@ describe("整合前检查（W1-S26 / W04）", () => {
       const mainBefore = execSync("git rev-parse main", { cwd: root }).toString().trim();
 
       markReadyForReview(dataDir, created.record.workspaceId);
-      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: created.record.baseCommit });
+      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: created.record.baseCommit, acceptUnverified: true });
       expect(r.ok).toBe(false);
       if (r.ok) return;
       expect(r.reason).toBe("target-dirty");
@@ -254,13 +254,13 @@ describe("整合前检查（W1-S26 / W04）", () => {
       writeFileSync(path.join(created.record.path, "post-review.txt"), "review 后改动\n");
 
       markReadyForReview(dataDir, wid);
-      const stale = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, reviewSnapshot: snap! });
+      const stale = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, reviewSnapshot: snap!, acceptUnverified: true });
       expect(stale.ok).toBe(false);
       if (!stale.ok) expect(stale.reason).toBe("source-changed");
 
       // 重拍快照（覆盖未提交改动）→ 过闸成功
       const fresh = await captureReviewSnapshot(dataDir, wid);
-      const ok = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, reviewSnapshot: fresh! });
+      const ok = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, reviewSnapshot: fresh!, acceptUnverified: true });
       expect(ok.ok).toBe(true);
       expect(execSync(`git cat-file -e main:src.txt && echo yes`, { cwd: root, shell: "/bin/bash" }).toString().trim()).toBe("yes");
     } finally {
@@ -283,7 +283,7 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
       const targetNow = execSync("git rev-parse main", { cwd: root }).toString().trim();
 
       markReadyForReview(dataDir, created.record.workspaceId);
-      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: targetNow });
+      const r = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: targetNow, acceptUnverified: true });
       expect(r.ok).toBe(false);
       if (r.ok) return;
       expect(r.reason).toBe("conflict");
@@ -297,7 +297,7 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
 
       // 修复：源分支对齐目标后改不冲突的文件（冲突修复发生在有写权管控的源，不在受管临时现场）
       execSync("git reset --hard -q main && echo fix > b-fix.txt && git add . && git commit -qm fix", { cwd: wt, shell: "/bin/bash" });
-      const retry = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: targetNow });
+      const retry = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: targetNow, acceptUnverified: true });
       expect(retry.ok).toBe(true);
       if (!retry.ok) return;
       expect(retry.record.state).toBe("integrated");
@@ -328,13 +328,13 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
       execSync("git checkout -q --detach", { cwd: root });
 
       markReadyForReview(dataDir, wid);
-      const first = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base });
+      const first = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base, acceptUnverified: true });
       expect(first.ok).toBe(true);
       const merged = execSync("git rev-parse main", { cwd: root }).toString().trim();
 
       // 模拟中断（进程死在 merge 之后、推进之前）：目标 ref 回滚，record 仍持有 integrationCommit
       execSync(`git update-ref refs/heads/main ${base}`, { cwd: root });
-      const retry = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base });
+      const retry = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base, acceptUnverified: true });
       expect(retry.ok).toBe(true);
       if (!retry.ok) return;
       expect(retry.record.integrationAttempts?.at(-1)?.reusedMergeCommit).toBe(true);
@@ -345,7 +345,7 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
       expect(retry.record.integrationJournal?.some((s) => s.step === "resume-advance-only" && s.ok)).toBe(true);
 
       // 幂等重入：目标已含预期整合提交 → 直接成功，不再合并/推进
-      const again = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: merged });
+      const again = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: merged, acceptUnverified: true });
       expect(again.ok).toBe(true);
       if (!again.ok) return;
       expect(again.alreadyIntegrated).toBe(true);
@@ -367,7 +367,7 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
 
       // 首次整合成功（main 已 checkout 在主工作区 → ff 路径）
       markReadyForReview(dataDir, created.record.workspaceId);
-      const first = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: base });
+      const first = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: base, acceptUnverified: true });
       expect(first.ok).toBe(true);
       const merged = execSync("git rev-parse main", { cwd: root }).toString().trim();
 
@@ -377,7 +377,7 @@ describe("整合冲突与重试（W1-S26 / W05）", () => {
       expect(diverged).not.toBe(merged);
 
       // record 仍持有旧 merge commit（中断现场）→ 恢复推进被 ff-only 拒绝
-      const retry = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: diverged });
+      const retry = await integrateWorkspace(dataDir, created.record.workspaceId, { expectedTargetCommit: diverged, acceptUnverified: true });
       expect(retry.ok).toBe(false);
       if (retry.ok) return;
       expect(retry.reason).toBe("not-fast-forward");
@@ -407,13 +407,13 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
 
       execSync("echo r1 > r1.txt && git add . && git commit -qm r1", { cwd: wt, shell: "/bin/bash" });
       markReadyForReview(dataDir, wid);
-      const r1 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base });
+      const r1 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: base, acceptUnverified: true });
       expect(r1.ok).toBe(true);
       expect(existsSync(path.join(root, "r1.txt"))).toBe(true);
 
       // 第二轮：源分支新提交 → 旧锚点源不符，清锚点重新合并（不误报 already-integrated）
       execSync("echo r2 > r2.txt && git add . && git commit -qm r2", { cwd: wt, shell: "/bin/bash" });
-      const r2 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt() });
+      const r2 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt(), acceptUnverified: true });
       expect(r2.ok).toBe(true);
       if (!r2.ok) return;
       expect(existsSync(path.join(root, "r2.txt"))).toBe(true);
@@ -421,7 +421,7 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
       expect(r2.record.integrationSource).toBe(tip(wt));
 
       // 同源重入 → 幂等 already-integrated
-      const r3 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt() });
+      const r3 = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: mainAt(), acceptUnverified: true });
       expect(r3.ok && r3.alreadyIntegrated).toBe(true);
     } finally {
       await rm(path.dirname(root), { recursive: true, force: true });
@@ -440,7 +440,7 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
       markReadyForReview(dataDir, created.record.workspaceId);
 
       const r = await integrateWorkspace(dataDir, created.record.workspaceId, {
-        expectedTargetCommit: created.record.baseCommit, sourceCommit: deliveryCommit,
+        expectedTargetCommit: created.record.baseCommit, sourceCommit: deliveryCommit, acceptUnverified: true,
       });
       expect(r.ok).toBe(true);
       expect(existsSync(path.join(root, "s1.txt"))).toBe(true);
@@ -459,7 +459,7 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
       const wid = created.record.workspaceId;
       execSync("echo x > x.txt && git add . && git commit -qm x", { cwd: created.record.path, shell: "/bin/bash" });
       markReadyForReview(dataDir, wid);
-      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit });
+      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, acceptUnverified: true });
       expect(done.ok).toBe(true);
       if (!done.ok) return;
 
@@ -486,7 +486,7 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
 
       execSync("echo x > x.txt && git add . && git commit -qm x", { cwd: wt, shell: "/bin/bash" });
       markReadyForReview(dataDir, wid);
-      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit });
+      const done = await integrateWorkspace(dataDir, wid, { expectedTargetCommit: created.record.baseCommit, acceptUnverified: true });
       expect(done.ok).toBe(true);
 
       const archived = archiveWorkspace(dataDir, wid);
@@ -525,7 +525,7 @@ describe("多轮交付与生命周期收尾（W1-S27-A）", () => {
       // 导入后即可整合（legacy 会话不孤儿）
       markReadyForReview(dataDir, adopted!.workspaceId);
       const t = execSync("git rev-parse main", { cwd: root }).toString().trim();
-      const r = await integrateWorkspace(dataDir, adopted!.workspaceId, { expectedTargetCommit: t });
+      const r = await integrateWorkspace(dataDir, adopted!.workspaceId, { expectedTargetCommit: t, acceptUnverified: true });
       expect(r.ok).toBe(true);
       expect(existsSync(path.join(root, "legacy.txt"))).toBe(true);
       // 双读新记录优先（同 path/branch，来源换成 workspace_records）

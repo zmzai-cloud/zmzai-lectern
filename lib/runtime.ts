@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   createAgentRuntime,
   SubagentCoordinator,
+  createSubagentAdmission,
   createAttachmentTools,
   createSqliteSessionStore,
   createSqliteEventLog,
@@ -75,6 +76,8 @@ declare global {
   var __lecternLeaseTargets: Set<{ store: SqliteSessionStore; log: EventLog }> | undefined;
   // eslint-disable-next-line no-var
   var __lecternLeaseTimer: ReturnType<typeof setInterval> | undefined;
+  // eslint-disable-next-line no-var
+  var __lecternSubagentAdmission: import("@zmzai/agent-framework").SubagentAdmission | undefined;
 }
 
 /** 每项目的 MCP 连接态（/api/mcp 透出；localTools/baseTools 为内部装配引用，
@@ -262,8 +265,9 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。
-  // late-bind holder：runtime 构造后回填 runner 引用（协调器的 runChild 用）
-  const registryHolder: { runner?: { runAttempt(session: import("@zmzai/agent-framework").SessionInfo, input: { text: string; agent?: string }): Promise<unknown>; abort(sessionId: string): Promise<void> } } = {};
+  // late-bind holder：runtime 构造后回填 runner 引用（协调器的 runChild 用）。
+  // runAttempt 返回 RunOutcome（T03：runChild 消费真实 outcome 传播进协调记录）。
+  const registryHolder: { runner?: { runAttempt(session: import("@zmzai/agent-framework").SessionInfo, input: { text: string; agent?: string }): Promise<import("@zmzai/agent-framework").RunOutcome>; abort(sessionId: string): Promise<void> } } = {};
   const localTools = [...baseLocalTools];
 
   // MCP server 懒启动：不阻塞首个 prompt；单 server 失败不影响其它（statuses 透出）
@@ -311,6 +315,12 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   const eventLog = createSqliteEventLog({ dataDir: dir });
   registerLeaseRecovery({ store: sessionStore, log: eventLog });
 
+  // T03（PC03）：子代理运行限额——根 Task 与 Host 全局（全进程共享 admission 计数）。
+  const subagentLimits = {
+    perRoot: Number(process.env.LECTERN_SUBAGENT_PER_ROOT ?? "3"),
+    global: Number(process.env.LECTERN_SUBAGENT_GLOBAL ?? "6"),
+  };
+
   const runtime = createAgentRuntime({
     // SQLite 存储升级（N4）：单文件 zmzai.db 替代多文件 JSONL；首次自动导入旧数据
     store: sessionStore,
@@ -332,21 +342,38 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       // 本 runtime 的 runner（构造时 runtime 尚未存在，经 holder 闭包引用）。
       subagentCoordinator: new SubagentCoordinator({
         store: sessionStore,
+        // T03（PC03）：Host 进程级共享运行许可——多项目 runtime 各建协调器时
+        // 「Host 总计 6」是全进程一份计数，不是每项目各 6；A 项目释放槽位要能
+        // 唤醒 B 项目的排队者（onRelease→pump）。globalThis 缓存防热重载/多
+        // runtime 重复建实例。
+        admission: (globalThis.__lecternSubagentAdmission ??= createSubagentAdmission(subagentLimits)),
+        limits: subagentLimits,
         runChild: async (childId, prompt) => {
           const childSession = await sessionStore.getSession(childId);
           if (!childSession) throw new Error(`子会话不存在：${childId}`);
-          await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).runAttempt(childSession, { text: prompt, agent: childSession.agent });
-          // ⚠️ F02（已钉住，T03 修复）：runAttempt 的真实 outcome 在此被丢弃——
-          // 子失败/取消/blocked 会被上报为 completed。修复时改为读取 outcome.state
-          // 与结构化结果（summary/evidence/unknownSideEffect）传播进协调记录。
-          return "completed";
+          // T03（PC02/F02 修复）：runAttempt 的真实 outcome 在此传播——失败/取消/
+          // 副作用未知不再被伪报 completed；finalText 作 summary、证据候选映射
+          // evidenceRefs 供父级验收核对。
+          const outcome = await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).runAttempt(childSession, { text: prompt, agent: childSession.agent });
+          if (outcome.state === "recovery_required" || outcome.unknownSideEffect) {
+            return {
+              state: "blocked",
+              unknownSideEffect: true,
+              errorMessage: outcome.sideEffectDetail ?? "子运行副作用结果未知，需恢复核对",
+              ...(outcome.finalText ? { summary: outcome.finalText } : {}),
+            };
+          }
+          return {
+            state: outcome.state === "completed" ? "completed" : outcome.state === "cancelled" ? "cancelled" : outcome.state === "failed" ? "failed" : "blocked",
+            ...(outcome.finalText ? { summary: outcome.finalText } : {}),
+            ...(outcome.evidenceCandidates.length > 0
+              ? { evidenceRefs: outcome.evidenceCandidates.slice(0, 20).map((candidate) => candidate.ref ?? `${candidate.kind}:${candidate.summary}`) }
+              : {}),
+            ...(outcome.state === "failed" && outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+          };
         },
         abortChild: async (childId) => {
           await (registryHolder.runner ?? (() => { throw new Error("runner 未初始化"); })()).abort(childId);
-        },
-        limits: {
-          perRoot: Number(process.env.LECTERN_SUBAGENT_PER_ROOT ?? "3"),
-          global: Number(process.env.LECTERN_SUBAGENT_GLOBAL ?? "6"),
         },
       }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠

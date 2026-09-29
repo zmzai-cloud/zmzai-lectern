@@ -1,12 +1,12 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.12.0.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.12.0` (production-chain-closure T02), vendored here so
+`zmzai-agent-framework-0.13.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.13.0` (production-chain-closure T03), vendored here so
 desktop builds and clean installs resolve the framework without depending on
 registry access. The framework repository is the source of truth; the version
 number is unique to these bytes and never re-packed under the same name (spec
 2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
-then this tarball is the only distribution of 0.12.0.
+then this tarball is the only distribution of 0.13.0.
 
 What 0.12.0 changed (T02, unified child-session creation):
 
@@ -26,6 +26,23 @@ What 0.12.0 changed (T02, unified child-session creation):
   when the model does not supply one; same-key-different-payload retries are
   rejected (`SPAWN_PAYLOAD_MISMATCH`); subagent nesting depth is resolved
   server-side inside the coordinator.
+
+What 0.13.0 changed (T03, outcome propagation + admission):
+
+- `runChild` now returns a structured `ChildRunOutcome`
+  (`completed/failed/cancelled/blocked/waiting_*` + `summary`,
+  `evidenceRefs`, `unknownSideEffect`, `errorMessage`) instead of a bare
+  `WorkflowState`; the coordinator projects it into the record — child failure
+  lands as `failed` with `blockerReason` and `result.outcome`, never masked as
+  `completed` (PC02 / F02).
+- `SubagentAdmission` / `createSubagentAdmission` (exported): process-wide
+  shared run-slot accounting across per-project coordinators, so the "Host
+  total 6 / 3 per root" limits are global, not per-project; releases notify
+  other coordinators' queue pumps (PC03).
+- `send`/`wait`/`cancel` accept a `scope: { rootTaskId }` and reject
+  out-of-tree child ids (`CHILD_OUT_OF_SCOPE` / `SCOPE_VIOLATION`);
+  `agent_*` tools pass the injected scope.
+- `RunOutcome` is exported for hosts consuming `runAttempt` results.
 
 Daily development against the sibling working tree: use
 `scripts/framework-dev.sh on|off` (switches the dependency to

@@ -15,6 +15,7 @@ vi.mock("node:fs", () => ({ existsSync: () => true, mkdirSync: vi.fn(), watch: v
 vi.mock("@zmzai/agent-framework", () => ({
   createAgentRuntime: fixture.create,
   SubagentCoordinator: class { constructor() {} },
+  createSubagentAdmission: () => ({ tryAcquire: () => true, release: () => {}, onRelease: () => {}, counts: () => ({ global: 0, perRoot: {} }) }),
   createSqliteSessionStore: () => ({}), createSqliteEventLog: () => ({}),
   createOpenAiModelProvider: () => ({ getModel: () => ({}) }),
   createGitTools: fixture.gitTools, createTerminalTools: fixture.terminalTools,

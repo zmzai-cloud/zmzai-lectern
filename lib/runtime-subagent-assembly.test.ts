@@ -19,11 +19,11 @@ import type { AgentFramework, Part, SqliteSessionStore } from "@zmzai/agent-fram
  *  父权限 stamp、确定性子 id 幂等）。本用例断言真实生产装配全链：模型调
  *  agent_spawn → 子会话建立 → 协调记录落库 → runChild 真实执行。
  *
- *  F02（仍钉住，T03 修复）：lib/runtime.ts 的 runChild 忽略 runAttempt 的真实
- *  outcome、无条件 return "completed"。本用例用 401（pi-ai SDK 不可重试档：
- *  仅 408/409/429/5xx 重试）让真实 runner 的 runAttempt 落 state "failed"，
- *  与生产 runChild 对同一调用固定报 completed 构成矛盾。T03 传播真实 outcome
- *  后，本用例翻转为经真实协调器执行并断言 failed 传播。 */
+ *  F02（T01 时钉住、T03 修复翻绿=PC02）：lib/runtime.ts 的 runChild 曾忽略
+ *  runAttempt 的真实 outcome、无条件 return "completed"。0.13.0 起 runChild
+ *  传播结构化 outcome（失败/取消/副作用未知映射 failed/cancelled/blocked，
+ *  finalText 作 summary、证据候选映射 evidenceRefs）；401（pi-ai SDK 不可重试
+ *  档：仅 408/409/429/5xx 重试）下经真实协调器全链验证 failed 落记录。 */
 
 // Vite 的内置模块枚举不含 node:sqlite（与 lib/session-owner.test.ts 同一约定）。
 // runtime → attachments/scope 与 vendored framework 的 SQLite store 都要真开库文件，
@@ -231,7 +231,7 @@ describe("T02/PC01：Lectern 生产装配的子代理派生（vendored framework
     }
   }, 60_000);
 
-  it("F02：真实 runAttempt 在 401（不可重试）下返回 failed，而 runChild 对同一调用固定 completed", async () => {
+  it("F02 修复验收（T03）：401 下子 run 真实 failed 经协调器传播进记录（不再伪报 completed）", async () => {
     const ctx = await assembleProductionRuntime(() => ({ status: 401 }));
     try {
       const { createFrameworkSession } = await import("@zmzai/agent-framework");
@@ -241,31 +241,25 @@ describe("T02/PC01：Lectern 生产装配的子代理派生（vendored framework
         workspaceId: "ws-t01",
         model: { providerId: "openai", modelId: "test-model" },
       });
-      // 生产 runChild 执行的正是协调器登记的子会话（parentId 挂父会话）。
-      const child = await createFrameworkSession({
-        store: ctx.store,
-        userId: "u-t01",
-        workspaceId: "ws-t01",
-        parentId: parent.id,
-        agent: "explorer",
-        model: { providerId: "openai", modelId: "test-model" },
-        prompt: "子任务",
+      // 生产链路（T02 后协调器可触达）：spawn → 统一工厂建子会话 → runChild →
+      // runAttempt（401 不可重试，单次请求失败）→ 结构化 outcome 传播进 SubagentRecord。
+      const coordinator = (ctx.runtime.runner as unknown as { deps: { subagentCoordinator: import("@zmzai/agent-framework").SubagentCoordinator } }).deps.subagentCoordinator;
+      expect(coordinator).toBeDefined();
+      const record = await coordinator.spawn({ id: parent.id }, "task_f02", "task_f02", {
+        description: "子任务",
+        prompt: "子任务执行",
+        subagentType: "explore",
+        mode: "read_only",
       });
+      await waitForSubagentTerminal(ctx.store, record.childId, 20_000);
 
-      // 复刻 lib/runtime.ts runChild 的两步调用形态（同一条 store、同一个 runner）：
-      const childSession = await ctx.store.getSession(child.id);
-      expect(childSession).not.toBeNull();
-      const outcome = await ctx.runtime.runner.runAttempt(childSession!, { text: "子任务执行", agent: childSession!.agent });
-
-      // 真实失败：401 不可重试，单次请求落 state failed，errorMessage 带状态码。
-      expect(outcome.state).toBe("failed");
-      expect(outcome.errorMessage ?? "").toContain("401");
-
-      // 矛盾：生产 runChild（lib/runtime.ts:336-341）await 同一 runAttempt 后丢弃
-      // outcome、无条件 return "completed"——子失败被上报为完成。协调记录因此落
-      // completed，父级验收拿到的也是伪成功。本断言钉住缺陷；T02 接通协调器、
-      // T03 传播真实 outcome 后，本用例改为经真实协调器 spawn 执行并断言 failed。
-      expect(outcome.settled).toBe(false);
+      const final = await ctx.store.subagents!.getSubagent(record.childId);
+      expect(final).not.toBeNull();
+      // T01 时钉住的缺陷：runChild 无条件 return "completed" → 子失败被上报完成。
+      // T03 修复后：真实 failed 落记录，错误原因（401）进 blockerReason 与 result。
+      expect(final!.status).toBe("failed");
+      expect(final!.result?.outcome).toBe("failed");
+      expect(final!.blockerReason ?? "").toContain("401");
     } finally {
       await ctx.cleanup();
     }

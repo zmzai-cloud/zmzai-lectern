@@ -13,6 +13,32 @@ if (!dataDir) {
   console.error("[host] LECTERN_HOST_DATA 未设置；M2a 需指向 fixture 数据目录");
   process.exit(1);
 }
+// PTY 诊断开关（0.10.2 打包排查用）：LECTERN_HOST_PTY_DIAG=1 时在真实 Host
+// 进程里完整走一遍 node-pty 解析 + spawn（裸解析与显式路径两种模式），把每步
+// 结果/错误栈打到 stderr（main.cjs 合流进 <userData>/logs/web.log）。正常发布
+// 不带该 env，零开销。
+if (process.env.LECTERN_HOST_PTY_DIAG === "1") {
+  await (async () => {
+    const { createRequire } = await import("node:module");
+    const { join } = await import("node:path");
+    const attempt = (label: string, req: NodeJS.Require): number => {
+      try {
+        const pty = req("node-pty");
+        const term = pty.spawn("/bin/echo", ["diag-ok"], { name: "xterm", cols: 20, rows: 5, cwd: dataDir });
+        return term.pid ?? -1;
+      } catch (error) {
+        console.error(`[pty-diag:${label}] FAILED:`, error instanceof Error ? (error.stack ?? error.message) : String(error));
+        return -1;
+      }
+    };
+    console.error("[pty-diag] ZMZAI_PTY_MODULE_PATH =", process.env.ZMZAI_PTY_MODULE_PATH ?? "(unset)");
+    attempt("bare", createRequire(import.meta.url));
+    if (process.env.ZMZAI_PTY_MODULE_PATH) {
+      attempt("explicit", createRequire(join(process.env.ZMZAI_PTY_MODULE_PATH, "package.json")));
+    }
+    process.exit(45);
+  })();
+}
 mkdirSync(dataDir, { recursive: true });
 
 // host.lock 互斥（spec §5.1）：活锁（进程在且 health 可达）拒绝启动；

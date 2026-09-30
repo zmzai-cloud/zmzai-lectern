@@ -34,6 +34,11 @@ export type GatewayRoute = {
   injectQuery?: Record<string, string>;
   /** 响应解包：Host 形状 {<key>:[...]} → 裸数组（进程内契约不变，UI 零改动）。 */
   unwrap?: string;
+  /** true = 长连接流（SSE）：豁免 GATEWAY_TIMEOUT_MS——按连接超时会把健康的
+   *  事件流在 20 秒处砍断（0.11.0 packaged-smoke 实测：UI 列表收不到恢复事件，
+   *  停在初始快照的「执行中」）。死 Host 的初始连接仍会立刻失败；挂起不发
+   *  头的 Host 属极端场景，由客户端 EventSource 重连语义兜底。 */
+  stream?: boolean;
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
@@ -61,8 +66,9 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   },
   // SSE 事件流（T09）：Host 的 /v1/events（sinceSeq 重放 + CURSOR_STALE 409
   // 与进程内契约同构）；网关透传字节流与 content-type，心跳由 Host 发。
-  // hostUrl 合并 sessionId + since（passQuery 会整体覆盖 search，不能用）。
-  { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/events$/, hostUrl: (g, url) => {
+  // hostUrl 合并 sessionId + since（passQuery 会整体覆盖 search，不能用）；
+  // stream:true 豁免网关超时（长连接语义，见 GatewayRoute.stream）。
+  { method: "GET", stream: true, pattern: /^\/api\/sessions\/([^/]+)\/events$/, hostUrl: (g, url) => {
       const q = new URLSearchParams({ sessionId: g[0] });
       const since = url.searchParams.get("since");
       if (since) q.set("since", since);
@@ -189,7 +195,7 @@ export async function hostGateway(request: Request): Promise<Response | null> {
   // T07：armed 后不可达不回落（见文件头）。fetch 失败/超时 → 结构化 503；
   // 客户端信号断开（用户关页面）同样按不可达报，不再有进程内第二执行者。
   let signal: AbortSignal | undefined = request.signal;
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+  if (!hit.route.stream && typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
     signal = AbortSignal.any([request.signal, AbortSignal.timeout(GATEWAY_TIMEOUT_MS)]);
   }
   let res: Response;

@@ -63,12 +63,26 @@ process.env.LECTERN_DATA_DIR ??= dataDir;
 process.env.LECTERN_WORKSPACE ??= process.env.LECTERN_HOST_WORKSPACE ?? join(dataDir, "workspace");
 let realRuntime: RealRuntimeFace | undefined;
 try {
-  const { setSessionCredentialProvider } = await import("./assembly.js");
+  const { setSessionCredentialProvider, runtimeFor } = await import("./assembly.js");
   const { buildRealRuntimeFace } = await import("./real-runtime.js");
+  const { listProjects } = await import("../../lib/projects.js");
   const { credentialFor } = await import("./server.js");
   setSessionCredentialProvider(credentialFor);
   // T08（F05/PC12）：真实 runtime 面按会话归属/项目解析（见 real-runtime.ts）
   realRuntime = buildRealRuntimeFace({ credentialFor });
+  // T12（spec §4.2 启动对账 / §6.2）：预热全部已登记项目的 runtime——
+  // runtimeFor 构造即触发 registerLeaseRecovery 的立即扫描，遗留租约在
+  // Host 启动时结算（不再等首个会话请求惰性构造）。UI 首次拉到的列表就是
+  // 恢复后的状态（0.11.0 packaged-smoke 实测：惰性构造时列表停在初始
+  // 快照的「执行中」，只能等 UI 的 10s 轮询兜底）。MCP 仍是懒启动，
+  // 预热只建 store/装配。
+  try {
+    for (const project of listProjects()) {
+      void runtimeFor(project.path);
+    }
+  } catch {
+    /* 项目清单不可读：会话请求按归属惰性构造（原路径） */
+  }
 } catch (error) {
   console.error("[host] 真实 runtime 装配失败（只读端点降级）:", error instanceof Error ? error.message : String(error));
 }

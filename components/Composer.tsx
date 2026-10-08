@@ -258,13 +258,14 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   }, [models]);
 
   // 默认推荐模型（需求：侧栏去代理后，底部选择器默认选一个稳定模型）：
-  // 优先 deepseek-v4-flash，否则第一个可路由模型；只在用户未手动选择时生效一次。
+  // 优先 relay featured 的「推荐」标记（当前=glm-5.3），否则第一个可路由模型；
+  // 只在用户未手动选择时生效一次。
   const defaultModelApplied = useRef(false);
   useEffect(() => {
     if (defaultModelApplied.current || selectedModel) return;
     const routable = modelChoices.filter((m) => m.routable);
     if (routable.length === 0) return;
-    const pick = routable.find((m) => m.id === "deepseek-v4-flash") ?? routable[0]!;
+    const pick = routable.find((m) => m.tag === "推荐") ?? routable[0]!;
     defaultModelApplied.current = true;
     onSelectModel({ providerId: "openai", modelId: pick.id });
   }, [modelChoices, selectedModel, onSelectModel]);
@@ -324,7 +325,7 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   /** 已知不支持视觉输入的模型前缀（deepseek 官方 API 对 image content 直接 400，
    *  上游报错/挂起表现为会话「卡住」，发送前拦截）。 */
   const VISION_UNSAFE = /^(deepseek|o3-mini|gpt-4o-mini)/i;
-  const currentModelId = selectedModel?.modelId ?? "deepseek-v4-flash";
+  const currentModelId = selectedModel?.modelId ?? "glm-5.3";
 
   // 当前模型允许的推理档位（relay allowedReasoningEfforts 白名单）。
   // 未覆盖（目录没给 / 本地 Ollama）时 undefined = 不限制（沿用旧静态枚举行为，

@@ -115,6 +115,13 @@ Windows installer evidence and real signed artifacts remain mandatory before
 closing the corresponding P0 requirements. Cross-version update tests are
 described under "Cross-version update path" below.
 
+**GitHub Releases carry no installer assets** (policy since v0.11.2): large
+uploads through proxies stall, and every download surface — landing page,
+in-app updater, release notes — already points at OSS. Create the release with
+notes only (`gh release create v<x> --target <full-sha> --notes-file …`), and
+paste the OSS direct links from `dist/release-links.md` into the notes. The
+updater never reads GitHub, so nothing else changes.
+
 ## Cross-version update path
 
 The updater is first-party (`electron/updater.cjs` + `electron/update-contract.cjs`),

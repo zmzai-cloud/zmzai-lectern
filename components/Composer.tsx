@@ -35,7 +35,7 @@ function fmtTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-type ModelChoice = { id: string; name: string; channel: string; maxInputTokens?: number; routable: boolean; allowedReasoningEfforts?: string[] };
+type ModelChoice = { id: string; name: string; channel: string; maxInputTokens?: number; routable: boolean; allowedReasoningEfforts?: string[]; tag?: string; sub?: string };
 
 type FileHit = { path: string; type: "dir" | "file" };
 
@@ -225,8 +225,19 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   }, [popup, attachMenu]);
 
   // 模型维度平铺：relay /v1/models 已按调用者身份过滤
-  // （个人 key → allowedModels 子集；登录会话 → 全部），直接用它而非渠道分组视图
+  // （个人 key → allowedModels 子集；登录会话 → 全部），直接用它而非渠道分组视图。
+  // featured 标记（relay「模型与价格」配置的推荐/快速/深度等 tag）解析成
+  // 行内徽标 + 描述行，带 tag 的模型排前——选择器首先呈现场景入口，
+  // 纯模型名的条目按原序跟随（Cherry 式「场景名 + 描述」参考）。
   const modelChoices = useMemo<ModelChoice[]>(() => {
+    const tagMap = new Map<string, { tag?: string; sub?: string }>();
+    for (const f of models?.modelSelectorData?.featured ?? []) {
+      if (!f.id) continue;
+      const desc = (f.description ?? "").trim();
+      if (!desc) continue;
+      const split = /^([^·]+)·(.+)$/.exec(desc);
+      tagMap.set(f.id, split ? { tag: split[1]!.trim(), sub: split[2]!.trim() } : { sub: desc });
+    }
     const seen = new Set<string>();
     const out: ModelChoice[] = [];
     for (const m of models?.models ?? []) {
@@ -240,9 +251,10 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         maxInputTokens: m.maxInputTokens,
         routable: ch > 0,
         allowedReasoningEfforts: m.allowedReasoningEfforts,
+        ...tagMap.get(m.model),
       });
     }
-    return out;
+    return out.sort((a, b) => Number(Boolean(b.tag)) - Number(Boolean(a.tag)));
   }, [models]);
 
   // 默认推荐模型（需求：侧栏去代理后，底部选择器默认选一个稳定模型）：
@@ -603,7 +615,13 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
                   !m.routable && "opacity-50",
                 )}
               >
-                <span className="truncate text-xs font-medium text-ink">{m.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-xs font-medium text-ink">{m.name}</span>
+                    {m.tag && <span className="model-tag">{m.tag}</span>}
+                  </span>
+                  {m.sub && <span className="mt-0.5 block truncate text-[0.6875rem] text-ink-3">{m.sub}</span>}
+                </span>
                 <span className={cn("ml-auto shrink-0 font-mono text-[0.625rem]", m.routable ? "text-ink-3" : "text-danger")}>
                   {m.channel}
                   {m.routable && m.maxInputTokens ? ` · ${fmtTokens(m.maxInputTokens)}` : ""}

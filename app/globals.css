@@ -546,6 +546,19 @@ html[data-theme="dark"] {
   }
 }
 
+/* ===== 模型选择器：featured 场景徽标（relay「模型与价格」的 tag，如 推荐/快速/深度） =====
+ * 中性描边胶囊：纯白+墨黑体系内做层级，不引入语义色/品红（spot 仅行动位、
+ * 语义色讲好坏，徽标是分类信息，按契约两者都不借用）。 */
+.model-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 3px;
+  font-size: 0.625rem;
+  line-height: 14px;
+  color: var(--color-ink-2);
+}
+
 /* ===== Electron 集成标题栏（html.electron 由首帧脚本按 lecternNative 存在性注入） =====
  * 顶栏整体可拖拽窗口；交互元素恢复点击。浏览器中 -webkit-app-region 无效，天然无害。 */
 html.electron[data-platform="darwin"] header {

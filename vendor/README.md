@@ -1,14 +1,28 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.16.0.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.16.0` (production-chain-closure T06), vendored here so
-desktop builds and clean installs resolve the framework without depending on
-registry access. The framework repository is the source of truth; the version
-number is unique to these bytes and never re-packed under the same name (spec
-2026-09-28 §8). npm publish is a separate, explicitly authorized step — until
-then this tarball is the only distribution of 0.16.0.
+`zmzai-agent-framework-0.17.1.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.17.1`, vendored here so desktop builds and clean
+installs resolve the framework without depending on registry access. The
+framework repository is the source of truth; the version number is unique to
+these bytes and never re-packed under the same name (spec 2026-09-28 §8).
 
-What 0.16.0 changed (T06, production-chain fault closure):
+What 0.17.1 changed (fs workspace symlink robustness):
+
+- Production incident (2026-10-08): opening a home-directory snapshot as a
+  local project made every `glob`/`grep` call fail with `ENOENT: no such file
+  or directory, open '<root>/.workspace/agent'`. The snapshot contained broken
+  symlinks (`agent -> /mnt/...`, targets not present on this machine);
+  `createFsWorkspaceFiles.list()` walked with `readdir` Dirents (which do not
+  follow symlinks), fell through to `readFile`, and one broken link killed the
+  whole listing.
+- Fix: the walk now `stat`-follows symlinks (skipping broken ones silently),
+  follows directory symlinks only when they resolve back inside the workspace
+  root (listed paths must stay readable via `safeJoin`), dedupes by `realpath`
+  to terminate symlink self-loops, and tolerates per-entry read failures.
+  Regression tests cover broken / in-root / escaping / looping / file symlinks
+  plus a list↔read consistency assertion.
+
+What 0.17.0 changed (T06, production-chain fault closure):
 
 - End-to-end subagent chain test on the real runner (command service →
   scheduler → task lifecycle → attempt executor → real `subagentTools` with a

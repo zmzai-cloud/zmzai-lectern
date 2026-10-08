@@ -723,29 +723,37 @@ export default function App() {
     // 隔离副本状态以服务端为准（worktree 映射在 worktrees.db）
     client.worktreeStatus(activeId).then((st) => !cancelled && setActiveIsolation(st)).catch(() => undefined);
     let unsub = () => {};
+    // P1-7 自动档：全部「始终允许」；细粒度权限（设置 → 通用）：命中的域自动「始终允许」。
+    // live 与快照恢复两条路径共用这道闸——快照路径若无条件 setPending，重连/刷新会把
+    // 已被自动答复过的 permission.asked 挂成一块永远无人应答的死面板（0.11.0 实测
+    // 「授权并继续点不动」）。返回 true = 人工确认已弹面板。
+    const autoReplyOrPend = (req: PermissionRequest) => {
+      const domain = PERMISSION_DOMAIN_OF[req.permission];
+      const isAuto = autoModeRef.current;
+      const autoHit = isAuto || (domain && permAutoRef.current[domain] === "auto");
+      if (autoHit) {
+        void client
+          .replyPermission(activeId, req.id, "always", undefined, {
+            source: isAuto ? "auto" : "fine-grained",
+            permission: req.permission,
+            summary: req.metadata?.summary ?? req.metadata?.command ?? req.metadata?.filePath ?? "",
+          })
+          .catch(() => undefined);
+        return false;
+      }
+      setPending(req);
+      return true;
+    };
     const handleLive = (ev: LecternEvent) => {
       if (cancelled) return;
       lastEventAtRef.current = Date.now();
       if (ev.type === "session.status") setStatus((ev.data as { status: string }).status);
       else if (ev.type === "permission.asked") {
         const req = (ev.data as { request: PermissionRequest }).request;
-        // 侧边栏「待确认」即时反映（列表 API 10s 轮询只兜后台会话）
-        setSessions((prev) => prev.map((s) => (s.id === activeId ? { ...s, awaitingPermission: true } : s)));
-        // P1-7 自动档：全部「始终允许」；细粒度权限（设置 → 通用）：命中的域自动「始终允许」
-        // 两者都读 ref 镜像，配置/档位变更不触发重订阅
-        const domain = PERMISSION_DOMAIN_OF[req.permission];
-        const isAuto = autoModeRef.current;
-        const autoHit = isAuto || (domain && permAutoRef.current[domain] === "auto");
-        if (autoHit) {
-          void client
-            .replyPermission(activeId, req.id, "always", undefined, {
-              source: isAuto ? "auto" : "fine-grained",
-              permission: req.permission,
-              summary: req.metadata?.summary ?? req.metadata?.command ?? req.metadata?.filePath ?? "",
-            })
-            .catch(() => undefined);
-        } else {
-          setPending(req);
+        // 侧边栏「待确认」只在真的弹人工面板时亮；自动答复毫秒级往返，
+        // 先亮后灭是批量命令下的闪烁源头（列表 API 10s 轮询兜后台会话不变）
+        if (autoReplyOrPend(req)) {
+          setSessions((prev) => prev.map((s) => (s.id === activeId ? { ...s, awaitingPermission: true } : s)));
         }
       } else if (ev.type === "permission.replied") {
         setPending(null);
@@ -789,7 +797,7 @@ export default function App() {
           for (const ev of page.stateEvents ?? []) {
             // Restoring an approval must not silently repeat an external reply.
             if (ev.type === "session.status") setStatus((ev.data as { status: string }).status);
-            if (ev.type === "permission.asked") setPending((ev.data as { request: PermissionRequest }).request);
+            if (ev.type === "permission.asked") autoReplyOrPend((ev.data as { request: PermissionRequest }).request);
             projector.ingest(ev);
           }
           unsub = client.subscribe(activeId,handleLive,(state) => { if (!cancelled) setConnState(state); },page.snapshotSeq);

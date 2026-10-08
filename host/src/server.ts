@@ -502,10 +502,28 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           }
           const abortImpl = options.realRuntime?.abort ?? rt.runner.abort.bind(rt.runner);
           try {
-            await abortImpl(sessionId);
-            send(res, 200, { ok: true });
+            // abort 兜底超时：runner.abort 的 await 链（active.done/draining）在
+            // run 卡死时永不落地——0.11.0 packaged 实测 20s+ 无响应，停止按钮
+            // 整体失效。超时时 stopRequested 已登记、队列已清，僵尸链随后自行
+            // 收尾；先回 200（slow:true）让 UI 解锁，不再无限悬挂。
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                abortImpl(sessionId),
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(() => reject(new Error("ABORT_TIMEOUT")), 10_000);
+                }),
+              ]);
+              send(res, 200, { ok: true });
+            } finally {
+              if (timeout) clearTimeout(timeout);
+            }
           } catch (error) {
-            send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+            if (error instanceof Error && error.message === "ABORT_TIMEOUT") {
+              send(res, 200, { ok: true, slow: true });
+            } else {
+              send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+            }
           }
           return;
         }
@@ -541,6 +559,14 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             return;
           }
           const input: Record<string, unknown> = { text, ...(typeof body.requestId === "string" && body.requestId ? { requestId: body.requestId } : {}) };
+          // UI 的完整 prompt 输入透传（gateway 只并入 sessionId，其余字段原样可达）。
+          // 旧实现只转 text+requestId：Host 模式永远落 OPENAI_MODEL 兜底模型
+          // （0.11.0 表现为 deepseek-chat），用户在 UI 选的模型/档位全被丢弃。
+          // skillId 不在此列——需 loadSkill 解析成 {id,name,digest} 再传 runner。
+          for (const key of ["model", "agent", "effort", "references", "images"] as const) {
+            const value = body[key];
+            if (value !== undefined && value !== null) input[key] = value;
+          }
           const promptImpl = options.realRuntime?.prompt ?? ((sid: string, body2: Record<string, unknown>) => rt.runner.prompt(sid, body2 as never));
           try {
             const receipt = await promptImpl(sessionId, input);

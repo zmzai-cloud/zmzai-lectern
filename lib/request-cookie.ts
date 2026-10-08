@@ -10,6 +10,8 @@ import type { NextRequest } from "next/server";
 declare global {
   // eslint-disable-next-line no-var
   var __requestStore: AsyncLocalStorage<{ cookie: string | null }> | undefined;
+  // eslint-disable-next-line no-var
+  var __lecternCredentialStore: AsyncLocalStorage<{ cookie: string | null }> | undefined;
 }
 
 /** 单例挂 globalThis：与 cloudRuntime 同理，避免 Next.js dev 热重载后
@@ -24,23 +26,22 @@ export function withRequestCookie<T>(cookie: string | null, fn: () => T): T {
 /** 当前请求携带的完整 cookie 头（如 "muzhi_session=abc"），无则 null。
  *  ⚠ 仅在 withRequestCookie 包裹的上下文（prompt 流）内有值；
  *  普通代理路由请用 sessionCookieFrom(request)。 */
-/** 会话级凭据（M2b-B2 Host 模式）：Host 进程没有 ALS 上下文，模型请求的
+/** 会话级凭据（M2b-B2 Host 模式）：Host 进程没有请求级 ALS 上下文，模型请求的
  *  凭据来自 credentialRef 内存表；streamFnFor 在调用模型流时用本包裹注入。
+ *  必须用 ALS 而非模块级变量：openai adapter 的 stream 是 async 箭头函数，
+ *  首个 `await import(...)` 就把控制权交还本包裹的调用帧——模块变量方案在
+ *  finally 里同步还原，headers() 真正求值时凭据已被清空（Host 模式全部推理
+ *  请求裸奔 401，0.11.0 packaged 实测）。ALS 随 async 链路跨 await 存活。
  *  值不落日志/不进事件；请求结束即随作用域消失。 */
-let sessionCredential: string | null = null;
+const credentialStore: AsyncLocalStorage<{ cookie: string | null }> =
+  (globalThis.__lecternCredentialStore ??= new AsyncLocalStorage());
 
 export function withSessionCredential<T>(credential: string | null | undefined, fn: () => T): T {
-  const prior = sessionCredential;
-  sessionCredential = credential ?? null;
-  try {
-    return fn();
-  } finally {
-    sessionCredential = prior;
-  }
+  return credentialStore.run({ cookie: credential ?? null }, fn);
 }
 
 export function currentCookieHeader(): string | null {
-  return requestStore.getStore()?.cookie ?? sessionCredential ?? null;
+  return requestStore.getStore()?.cookie ?? credentialStore.getStore()?.cookie ?? null;
 }
 
 export const sessionCookieName = process.env.SESSION_COOKIE_NAME ?? "muzhi_session";

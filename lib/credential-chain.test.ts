@@ -23,4 +23,14 @@ describe("credential 链（B2）", () => {
       });
     });
   });
+
+  it("会话凭据跨 await 仍可见（adapter 的 stream 在首个 await import 后才求值 headers）", async () => {
+    // 0.11.0 回归：旧实现的模块级变量在 finally 里同步还原，凭据在
+    // headers() 真正执行前被清空 → Host 模式推理请求裸奔 401。
+    await withSessionCredential("muzhi_session=host-cred", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(currentCookieHeader()).toBe("muzhi_session=host-cred");
+    });
+    expect(currentCookieHeader()).toBeNull();
+  });
 });

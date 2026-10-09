@@ -44,14 +44,27 @@ export type ConnectionState = "connected" | "reconnecting" | "offline";
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string; detail?: { code?: string } } | null;
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      message?: string;
+      detail?: { code?: string; message?: string };
+    } | null;
     // 业务错误走 400+文案；裸 5xx（body 非 JSON）= 服务端未捕获异常，指到日志
     if (!body?.error && res.status >= 500) {
       throw Object.assign(new Error(`服务异常（${res.status}）：服务端未捕获错误，详情见运行日志（账户菜单 → 打开日志文件夹）`), { status: res.status });
     }
-    // detail.code（WorkflowError）一并附上：RECOVERY_REQUIRED 等需要 UI 给出
-    // 专门出路（可操作横幅），不能只靠一句 4s 消失的文案。
-    throw Object.assign(new Error(body?.error ?? `请求失败（${res.status}）`), { status: res.status, code: body?.detail?.code });
+    // 错误码识别双通道：优先 detail.code（Next 路由 WorkflowError / Host 对齐契约），
+    // 兜底「error 字段本身就是裸码」（Host 旧形状 {error:"RECOVERY_REQUIRED"}——
+    // 没有这一层，桌面模式的恢复横幅永远不触发，用户只看到一行英文码的 toast）。
+    const raw = typeof body?.error === "string" ? body.error : undefined;
+    const codeLike = raw != null && /^[A-Z][A-Z0-9_]{3,}$/.test(raw) ? raw : undefined;
+    const code = body?.detail?.code ?? codeLike;
+    const text =
+      body?.detail?.message ??
+      (codeLike != null && typeof body?.message === "string" && body.message ? body.message : undefined) ??
+      raw ??
+      `请求失败（${res.status}）`;
+    throw Object.assign(new Error(text), { status: res.status, code });
   }
   return res.json() as Promise<T>;
 }

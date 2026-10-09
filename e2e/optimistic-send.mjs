@@ -21,7 +21,7 @@ const base = () => ({
   parts: [{ id: "user-0-text", messageId: "user-0", sessionId: "probe-send", type: "text", text: "历史消息" }],
 });
 
-async function runCase(name, { promptDelay, promptStatus }) {
+async function runCase(name, { promptDelay, promptStatus, promptBody }) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -38,6 +38,7 @@ async function runCase(name, { promptDelay, promptStatus }) {
       return route.fulfill({ json: { messages: [base()], beforeCursor: null, hasMoreBefore: false, historyRevision: 1, snapshotSeq: 0, task: null, stateEvents: [] } });
     if (path === "/api/sessions/probe-send/prompt") {
       await new Promise((resolve) => setTimeout(resolve, promptDelay));
+      if (promptBody) return route.fulfill(promptBody);
       if (promptStatus === 500) return route.fulfill({ status: 500, json: { error: "发送失败（探针注入）" } });
       return route.fulfill({ json: { userMessageId: "server-echo", requestId: "req-1" } });
     }
@@ -66,7 +67,16 @@ async function runCase(name, { promptDelay, promptStatus }) {
     assert.equal(await textarea.inputValue(), "", `${name}: input must clear instantly on send`);
     assert.ok(await page.getByText(sent, { exact: false }).first().isVisible(), `${name}: optimistic bubble must be visible immediately`);
 
-    if (promptStatus === 500) {
+    if (promptBody) {
+      // ④ RECOVERY_REQUIRED（Host 网关形状）：横幅必须出现（detail.code 或裸码
+      //    error 字段都要能识别），toast 不得是英文裸码，原文回到输入框。
+      const banner = page.getByRole("button", { name: "核对并继续上次任务", exact: true });
+      await banner.waitFor({ timeout: 5000 });
+      await page.getByText(promptBody.expectToast, { exact: false }).first().waitFor({ timeout: 5000 });
+      assert.equal(await page.getByText("RECOVERY_REQUIRED", { exact: true }).count(), 0, `${name}: raw code must not leak into the toast`);
+      await page.waitForTimeout(200);
+      assert.equal(await textarea.inputValue(), sent, `${name}: text restored on recovery-required`);
+    } else if (promptStatus === 500) {
       // ② 失败恢复：toast 出现 + 原文回到输入框
       await page.getByText("发送失败（探针注入）").waitFor({ timeout: 5000 });
       await page.waitForTimeout(200);
@@ -91,6 +101,20 @@ async function runCase(name, { promptDelay, promptStatus }) {
 
 await runCase("instant-clear", { promptDelay: 1500, promptStatus: 200 });
 await runCase("failure-restore", { promptDelay: 1500, promptStatus: 500 });
+// Host 网关两种错误形状都要出「核对并继续」横幅（旧版 Host 只有裸码 error 字段，
+// 没有 detail.code——修复前桌面模式横幅永远不触发，用户只看到一行英文码 toast）。
+await runCase("recovery-host-legacy", {
+  promptDelay: 600,
+  promptBody: { status: 409, json: { error: "RECOVERY_REQUIRED", message: "恢复后重试" }, expectToast: "恢复后重试" },
+});
+await runCase("recovery-host-aligned", {
+  promptDelay: 600,
+  promptBody: {
+    status: 409,
+    json: { error: "上一任务的外部副作用尚未确认，请先核对后再继续", message: "上一任务的外部副作用尚未确认，请先核对后再继续", detail: { code: "RECOVERY_REQUIRED", message: "上一任务的外部副作用尚未确认，请先核对后再继续" } },
+    expectToast: "上一任务的外部副作用尚未确认",
+  },
+});
 await browser.close();
 if (process.exitCode) throw new Error("optimistic-send failed");
 console.log("optimistic-send: all assertions passed");

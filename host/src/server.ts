@@ -573,9 +573,15 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             send(res, 200, receipt);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            if (/REQUEST_ID_REUSED/.test(message)) send(res, 409, { error: "REQUEST_ID_REUSED", message: "同 requestId 换 payload 被拒" });
-            else if (/SESSION_NOT_FOUND/.test(message)) send(res, 404, { error: "SESSION_NOT_FOUND", message: "会话不存在" });
-            else if (/RECOVERY_REQUIRED/.test(message)) send(res, 409, { error: "RECOVERY_REQUIRED", message: "恢复后重试" });
+            // 错误契约与 Next 路由的 WorkflowError 对齐（error=人类可读文案，
+            // detail.code=机器码）：客户端把 error 字段直接当 toast 文案展示、
+            // 靠 detail.code 触发专门出路（如 RECOVERY_REQUIRED 的恢复横幅）。
+            // 旧形状 {error: 裸码} 让桌面用户看到一行 "RECOVERY_REQUIRED"
+            // 而横幅永远不出现（Web 路由做了转换，把它遮了三个月）。
+            const workflow = (status: number, code: string, text: string) => send(res, status, { error: text, message: text, detail: { code, message: text } });
+            if (/REQUEST_ID_REUSED/.test(message)) workflow(409, "REQUEST_ID_REUSED", "requestId 已用于不同的消息内容");
+            else if (/SESSION_NOT_FOUND/.test(message)) workflow(404, "SESSION_NOT_FOUND", "会话不存在");
+            else if (/RECOVERY_REQUIRED/.test(message)) workflow(409, "RECOVERY_REQUIRED", "上一任务的外部副作用尚未确认，请先核对后再继续");
             else send(res, 500, { error: "INTERNAL", message });
           }
           return;

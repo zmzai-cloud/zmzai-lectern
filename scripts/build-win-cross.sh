@@ -36,29 +36,12 @@ guard_mv() {
 echo "==> [0/5] 清理历史打包产物（dist/、.package-build）"
 guard_mv dist .package-build
 
-echo "==> [1/5] next build（生产构建，含 standalone 输出）"
-# 与 build-mac.sh 同一原因：默认堆上限会让 next build 以 exit 134 中止，本地脚本自抬。
-if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-12288}"
-fi
-# 清掉上次构建的 .next/types 与 tsbuildinfo：残留会导致类型检查阶段引用不存在的
-# 文件而 Failed to compile（与 mac 侧同一坑）。大目录 rm 会触发 WorkBuddy
-# safe-delete 守卫（>50 文件拦截），一律 mv 到 /tmp。
-guard_mv .next tsconfig.tsbuildinfo
-pnpm build
-
-# fail-fast：入口不存在就停，绝不打出会闪退的包
-[ -f .next/standalone/server.js ] || { echo "❌ .next/standalone/server.js 缺失，standalone 布局异常，中止打包" >&2; exit 1; }
-
-# fail-fast：产物不得混入本机数据（与 build-mac.sh 同款兜底，详见该处注释）
-node scripts/check-standalone-clean.mjs || exit 1
-
-echo "==> [2/5] 组装 standalone 运行时（静态资源/页面资源拷入 standalone）"
-# next build 不自动拷贝：standalone server 按相对路径找 .next/static 与 public
-guard_mv .next/standalone/public
-mkdir -p .next/standalone/.next
-cp -R public .next/standalone/public 2>/dev/null || mkdir -p .next/standalone/public
-cp -R .next/static .next/standalone/.next/static
+# web 产物（host bundle + next build + standalone 组装）对两平台完全相同，经
+# scripts/build-web.sh 统一构建并按 {version, sha, 工作区脏哈希} 标记复用——
+# 双平台发版按 mac → win 顺序跑时，这里直接复用 mac 刚构建的 .next，跳过
+# next build（省 ~12 分钟）；标记失效（有提交/改动）时自动重建。
+echo "==> [1/5] web 构建（host + next build + standalone，详见 scripts/build-web.sh）"
+bash scripts/build-web.sh || { echo "❌ web 构建失败，中止打包" >&2; exit 1; }
 
 echo "==> [3/5] 组装实体 node_modules（pnpm symlink / file: 依赖实体化）"
 # pnpm 下 next standalone 的 trace 产出的 node_modules 只含指向 .pnpm 的断链

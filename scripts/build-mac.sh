@@ -19,46 +19,12 @@ guard_mv() {
 echo "==> [0/5] 清理历史打包产物（避免 dist 累积旧版本 dmg/zip）"
 bash scripts/clean-dist.sh
 
-echo "==> [0/5] host build（M2c-S16：Host dist 进打包资源）"
-pnpm host:build || { echo "❌ host:build 失败，中止打包" >&2; exit 1; }
-[ -f host/dist/host/src/index.js ] || { echo "❌ host/dist/host/src/index.js 缺失" >&2; exit 1; }
-echo '{"type":"module"}' > host/dist/package.json
-
-echo "==> [1/5] next build（生产构建，含 standalone 输出）"
-# next build 的默认堆上限按可用内存推导（本机 64GB 也只给到 ~4GB），实测跑到
-# 「Reached heap limit Allocation failed」直接中止（exit 134），崩在打包第一步。
-# CI 靠 workflow 里的 NODE_OPTIONS 抬高，本地构建脚本必须自己抬——否则谁调谁崩。
-# 调用方已显式给了 --max-old-space-size 就尊重，不覆盖。
-if [[ "${NODE_OPTIONS:-}" != *max-old-space-size* ]]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${LECTERN_BUILD_HEAP_MB:-12288}"
-fi
-# 隔离整个旧 .next，避免开发缓存污染生产页面清单；备份保留在 /tmp。
-guard_mv .next tsconfig.tsbuildinfo
-pnpm build
-
-# fail-fast：入口不存在就停，绝不打出会闪退的包（曾因 Next workspace root
-# 误判导致 standalone 嵌套成 zmzai-harness/server.js）
-[ -f .next/standalone/server.js ] || { echo "❌ .next/standalone/server.js 缺失，standalone 布局异常，中止打包" >&2; exit 1; }
-
-# fail-fast：产物不得混入本机数据。Next 的文件追踪会把仓库根 data/（历史遗留的老
-# 数据目录，含真实会话库与 .secret）复制进 standalone 并随安装包公开发布——
-# v0.2.0~v0.4.3 双平台全部中招，只能全线下架重发。next.config.mjs 的
-# outputFileTracingExcludes 是主防线，这层是兜底。
-# nft tracing 会把根 .env（loadEnvFile 读取模式被静态分析）与 host 编译入口
-# （index.js，与 host/dist/host/src/index.js 逐字节同源）收进 standalone 根——
-# 已知 tracing 产物非运行时残留，检查前清掉；真残留（.workspace/logs/data）仍由
-# check-standalone-clean 拦截。根因（为何 0.9.0 构建未复现）待查，见发版记忆。
-for stray in .next/standalone/index.js .next/standalone/.env; do
-  [ -e "$stray" ] && mv "$stray" "/tmp/lectern-stray-$(basename "$stray")-$(date +%s)"
-done
-node scripts/check-standalone-clean.mjs || exit 1
-
-echo "==> [2/5] 组装 standalone 运行时（静态资源/页面资源拷入 standalone）"
-# next build 不自动拷贝：standalone server 按相对路径找 .next/static 与 public
-rm -rf .next/standalone/public
-mkdir -p .next/standalone/.next
-cp -R public .next/standalone/public 2>/dev/null || mkdir -p .next/standalone/public
-cp -R .next/static .next/standalone/.next/static
+# web 产物（host bundle + next build + standalone 组装）对两平台完全相同，经
+# scripts/build-web.sh 统一构建并按 {version, sha, 工作区脏哈希} 标记复用——
+# 同一次发版里第二个平台打包时自动跳过 next build（省 ~12 分钟）。堆上限、
+# 数据泄漏双防线、静态资源组装的说明都移到了那个脚本里。
+echo "==> [1/5] web 构建（host + next build + standalone，详见 scripts/build-web.sh）"
+bash scripts/build-web.sh || { echo "❌ web 构建失败，中止打包" >&2; exit 1; }
 
 echo "==> [3/5] 组装实体 node_modules（pnpm symlink / file: 依赖实体化）"
 # pnpm 下 next standalone 的 trace 产出的 node_modules 只含指向 .pnpm 的断链

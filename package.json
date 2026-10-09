@@ -36,6 +36,7 @@
     "verify:public": "node scripts/verify-public-release.mjs",
     "verify:update-path": "node scripts/verify-update-path.mjs",
     "build:mac": "bash scripts/build-mac.sh",
+    "build:web": "bash scripts/build-web.sh",
     "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",
     "build:win:cross": "bash scripts/build-win-cross.sh",
     "build:win:cross:upload": "bash scripts/build-win-cross.sh --upload",

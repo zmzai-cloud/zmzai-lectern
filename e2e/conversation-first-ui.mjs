@@ -93,16 +93,40 @@ try {
   assert.equal(await page.locator('[data-task-primary-status="true"]').count(), 1, "one primary task status");
   assert.equal(await page.getByRole("button", { name: "运行配置" }).count(), 1, "runtime controls are consolidated");
 
-  // ── 已读文件折叠为一行摘要、工具过程收拢成轻量折叠行（规格 §5.2 / §12.8）──
+  // ── 已读文件折叠为一行摘要、完成的过程收拢成「工作流程」组（Zcode 式）──
   const readContext = page.locator(".chat-read-context");
   assert.equal(await readContext.count(), 1, "read files collapse into a single summary row");
   assert.equal(await readContext.evaluate((element) => element.open), false, "the read summary is collapsed by default");
   const readSummary = await readContext.locator("summary").innerText();
   assert.ok(/已读取\s*3\s*个文件/.test(readSummary), readSummary);
-  const toolGroup = page.locator(".zmz-tool-group-trigger");
-  assert.equal(await toolGroup.count(), 1, "completed tool calls collapse into one lightweight row");
-  const toolGroupHeight = (await toolGroup.boundingBox())?.height ?? 0;
-  assert.ok(toolGroupHeight <= 32, `the tool group must stay a compact row: ${toolGroupHeight}`);
+  const workflow = page.locator(".chat-workflow-toggle");
+  assert.equal(await workflow.count(), 1, "the finished process collapses into one workflow row");
+  const workflowHeight = (await workflow.boundingBox())?.height ?? 0;
+  assert.ok(workflowHeight <= 32, `the workflow row must stay compact: ${workflowHeight}`);
+  assert.ok(/3\s*个步骤/.test(await workflow.innerText()), (await workflow.innerText()));
+  // grid 0fr 折叠：子行常驻 DOM（展开动画可逆），折叠以包裹层零高度断言——
+  // Playwright 的 isVisible 不认祖先 overflow:hidden 裁剪，不能用在子行上。
+  const collapsedRows = page.locator(".tool-card-trigger");
+  assert.equal(await collapsedRows.count(), 3, "per-tool rows stay in the DOM for the reversible grid animation");
+  const collapsedHeight = await page.locator(".chat-workflow-body-wrap").first().evaluate(el => el.getBoundingClientRect().height);
+  assert.equal(collapsedHeight, 0, `collapsed group body must have zero height: ${collapsedHeight}`);
+  await workflow.click();
+  await page.locator(".tool-card-trigger").first().waitFor();
+  assert.equal(await page.locator(".tool-card-trigger").count(), 3, "expanding reveals the ZCode-style per-tool rows");
+  for (const row of await page.locator(".tool-card-trigger").all()) {
+    const height = (await row.boundingBox())?.height ?? 0;
+    assert.ok(height <= 32, `tool rows must stay compact: ${height}`);
+  }
+  // 工具行详情同样 grid 折叠：收起必须精确归零（纵向 padding 残漏会露一条缝）
+  const detailCollapsed = await page.locator(".tool-card-detail-wrap").first().evaluate(el => el.getBoundingClientRect().height);
+  assert.equal(detailCollapsed, 0, `collapsed tool detail must be exactly zero height: ${detailCollapsed}`);
+  await page.locator(".tool-card-trigger").first().click();
+  await page.waitForTimeout(350);
+  const detailOpen = await page.locator(".tool-card-detail-wrap").first().evaluate(el => el.getBoundingClientRect().height);
+  assert.ok(detailOpen > 0, `expanded tool detail must have height: ${detailOpen}`);
+  assert.equal(await page.locator(".tool-card-flag").count(), 0, "completed rows carry no failure flag");
+  await workflow.click();
+  await page.waitForFunction(() => document.querySelector(".chat-workflow-toggle")?.getAttribute("aria-expanded") === "false");
   await readContext.locator("summary").click();
   await page.locator(".chat-read-context button").first().waitFor();
   assert.equal(await readContext.locator("button").count(), 3, "expanding the summary reveals the file list");

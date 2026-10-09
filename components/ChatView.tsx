@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useSessionReadState } from "@/lib/use-session-read-state";
-import { Markdown, PermissionCard, Reasoning, ToolCard, ToolGroup, cn } from "@zmzai/theme";
+import { Markdown, PermissionCard, Reasoning, ToolCard, cn } from "@zmzai/theme";
+import { Icon } from "@zmzai/theme/components/icon";
+import { toolGlyph, toolLabel } from "@zmzai/theme/components/tool-card";
 import { TaskDeliveryCard, TaskProgressCard } from "./TaskStatus";
 import type { TaskActionId, TaskPresentationView } from "@/lib/task-presentation";
 import { ArrowDown, LoaderCircle, RotateCw, Search } from "lucide-react";
@@ -11,6 +13,7 @@ import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
+type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
 import type { InputAttachmentRef, ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
 import { MessageAttachmentCard } from "./AttachmentCards";
@@ -89,61 +92,202 @@ function EditDiffCard({ path, diff, onOpenFile }: { path: string; diff: string; 
   );
 }
 
-/** 子任务可展开卡片（R3，opencode 式联动）：默认一行（agent + 描述 + 状态），
- *  展开看任务全文 + 子会话工具步骤实时流 + 结束统计。活动数据来自
- *  subagent.started/step/finished 事件投影（framework 桥接自子 runner）。 */
-function SubtaskCard({ part, activity }: { part: Extract<Part, { type: "subtask" }>; activity?: SubagentActivity }) {
+/** 子任务折叠行（ZCode/Codex 式）：子代理调用是一行弱化过程行——
+ *  `[users 图标] 子任务 · {agent} · {描述}`，运行中图标呼吸，完成后行尾带统计，
+ *  失败整行红 + 「失败」标记；展开看任务全文 + 子代理步骤流（每个子工具一行，
+ *  视觉与工具行同语言）+ 收尾统计。活动数据来自 subagent.started/step/finished
+ *  事件投影（framework 桥接自子 runner）。 */
+function SubtaskCard({ part, activity, onOpen }: { part: Extract<Part, { type: "subtask" }>; activity?: SubagentActivity; onOpen?: (child: { sessionId: string; agent: string; description: string }) => void }) {
   const [open, setOpen] = useState(false);
-  const running = !activity?.finished;
-  const failed = activity?.finished?.state === "error";
+  const finished = activity?.finished;
+  const running = !finished;
+  const failed = finished?.state === "error";
+  const toolCalls = finished?.toolCalls ?? activity?.steps.length ?? 0;
+  const stat = finished
+    ? `${toolCalls} 次工具${typeof finished.durationMs === "number" ? ` · ${finished.durationMs < 60_000 ? `${(finished.durationMs / 1000).toFixed(0)}s` : `${Math.floor(finished.durationMs / 60_000)} 分 ${Math.round((finished.durationMs % 60_000) / 1000)} 秒`}` : ""}`
+    : "";
   return (
-    <div className="overflow-hidden rounded-lg bg-surface-2/60">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
-      >
-        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0 text-ink-3">
-          <circle cx="8" cy="8" r="2" />
-          <circle cx="13.2" cy="3.5" r="1.4" />
-          <circle cx="13.2" cy="12.5" r="1.4" />
-          <path d="M9.7 7.1l2.3-2.4M9.7 8.9l2.3 2.4" />
-        </svg>
-        <span className="shrink-0 text-[0.6875rem] font-medium text-ink-2">子任务·{part.agent}</span>
-        <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-ink-3" title={part.description}>{part.description}</span>
-        <span
-          className={cn(
-            "shrink-0 rounded-pill px-1.5 py-0.5 text-[0.625rem]",
-            running ? "bg-live-tint text-live" : failed ? "bg-danger-tint text-danger" : "bg-surface-2 text-ink-3",
-          )}
-        >
-          {running ? "执行中" : failed ? "失败" : "完成"}
-        </span>
+    <div className={cn("chat-subtask", open && "open", running && "running", failed && "failed")}>
+      <button type="button" className="chat-subtask-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <Icon name="users" size={13} strokeWidth={1.4} className="chat-subtask-icon" />
+        <span className="shrink-0">子任务</span>
+        <span className="chat-subtask-sep" aria-hidden>·</span>
+        <span className="shrink-0">{part.agent}</span>
+        <span className="chat-subtask-sep" aria-hidden>·</span>
+        <span className="chat-subtask-desc" title={part.description}>{part.description}</span>
+        {failed && <span className="chat-subtask-flag">失败</span>}
+        {finished && !failed && stat && (
+          <>
+            <span className="chat-subtask-sep" aria-hidden>·</span>
+            <span className="shrink-0">{stat}</span>
+          </>
+        )}
+        {onOpen && (
+          <span
+            role="button"
+            tabIndex={0}
+            title="在右侧「子代理」页打开该子代理的完整对话"
+            onClick={(e) => { e.stopPropagation(); onOpen({ sessionId: part.childSessionId, agent: part.agent, description: part.description }); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onOpen({ sessionId: part.childSessionId, agent: part.agent, description: part.description }); } }}
+            className="shrink-0 rounded-pill px-2 py-0.5 text-[0.625rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            打开
+          </span>
+        )}
         <svg
           width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
-          className={cn("shrink-0 text-ink-3 transition-transform", open && "rotate-180")}
+          className={cn("chat-subtask-chevron", open && "open")}
         >
           <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      {open && (
-        <div className="space-y-1 border-t border-line px-3 py-2">
+      <div className="chat-subtask-body-wrap" inert={!open}>
+        <div className="chat-subtask-body">
           <div className="whitespace-pre-wrap text-[0.6875rem] leading-5 text-ink-3">{part.prompt}</div>
           {activity?.steps.map((step, i) => (
-            <div key={i} className="flex items-center gap-2 font-mono text-[0.625rem] text-ink-3">
-              <span className={cn("h-1 w-1 shrink-0 rounded-full", step.state === "error" ? "bg-danger" : "bg-success")} />
-              <span className="shrink-0 text-ink-2">{step.tool}</span>
-              {step.title && <span className="min-w-0 truncate">{step.title}</span>}
+            <div key={i} className={cn("flex min-w-0 items-center gap-2 text-[0.6875rem]", step.state === "error" ? "text-danger" : "text-ink-3")}>
+              <Icon name={toolGlyph(step.tool)} size={11} strokeWidth={1.4} className="shrink-0" />
+              <span className="shrink-0">{toolLabel(step.tool)}</span>
+              {step.title && (
+                <>
+                  <span className="chat-subtask-sep" aria-hidden>·</span>
+                  <span className="min-w-0 flex-1 truncate" title={step.title}>{step.title}</span>
+                </>
+              )}
             </div>
           ))}
-          {activity?.finished && (
-            <div className="pt-1 text-[0.625rem] text-ink-3">
-              {activity.finished.toolCalls ?? activity.steps.length} 次工具调用
-              {typeof activity.finished.durationMs === "number" ? ` · ${(activity.finished.durationMs / 1000).toFixed(1)}s` : ""}
+          {finished && stat && <div className="text-[0.625rem] text-ink-3">{stat}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 工作流程组（ZCode 式收起）：一轮运行结束后，该条消息的全部过程 parts
+ *  （思考块 + 工具调用，含被正文隔开的）收进一个组——行是「⚙ 工作流程 ·
+ *  N 个步骤 · 时长」，点击展开逐行过程（子行各自可再展开）。按相邻分段会把
+ *  中断-恢复的长会话切成十几个小组，已按轮次合并。运行中的活跃消息不折叠
+ *  （调用方逐行实时渲染）。 */
+function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
+  const [open, setOpen] = useState(false);
+  const tools = parts.flatMap((p) => (p.part.type === "tool" ? [p.part] : []));
+  // 失败计数含失败子代理（ZCode 式：收起态就能看到这轮有没有出过事）
+  const failed = tools.filter((t) => t.state.status === "error").length
+    + parts.filter((p) => p.part.type === "subtask" && p.subagent?.finished?.state === "error").length;
+  // 组时长 = 工具时间戳的首尾跨度（思考块无时间戳，不参与；拿不到就不显示）
+  const duration = useMemo(() => {
+    let start = Infinity;
+    let end = -Infinity;
+    for (const t of tools) {
+      const state = t.state;
+      if (!("time" in state)) continue;
+      const startMs = Date.parse(state.time.start);
+      if (Number.isFinite(startMs)) start = Math.min(start, startMs);
+      const endMs = "end" in state.time ? Date.parse(state.time.end) : Number.NaN;
+      if (Number.isFinite(endMs)) end = Math.max(end, endMs);
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+    const ms = end - start;
+    if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+    const s = ms / 1000;
+    if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m${Math.round(s % 60)}s`;
+  }, [tools]);
+  return (
+    <div className={cn("chat-workflow-group", open && "open")}>
+      <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <Icon name="settings" size={13} strokeWidth={1.4} />
+        <span>工作流程</span>
+        <span className="chat-workflow-sep" aria-hidden>·</span>
+        <span>{parts.length} 个步骤</span>
+        {failed > 0 && (
+          <>
+            <span className="chat-workflow-sep" aria-hidden>·</span>
+            <span className="chat-workflow-failed">{failed} 个失败</span>
+          </>
+        )}
+        {duration && (
+          <>
+            <span className="chat-workflow-sep" aria-hidden>·</span>
+            <span>{duration}</span>
+          </>
+        )}
+        <svg
+          width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+          className={cn("chat-workflow-chevron", open && "open")}
+        >
+          <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {/* 展开动画走 CSS grid 0fr→1fr（globals.css），与 theme 工具行/思考行的
+          framer 高度动画同参数（0.2s + 同一缓动），三种展开一个手感。
+          内容常驻 DOM（收起时 0fr + inert），动画因此可逆且可访问性正确。 */}
+      <div className="chat-workflow-body-wrap" inert={!open}>
+        <div className="chat-workflow-body">
+          {parts.map((p) => (
+            <PartView key={p.part.id} part={p.part} diff={p.diff} markdown onOpenFile={onOpenFile} subagent={p.subagent} onOpenChild={onOpenChild} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 运行中断折叠行（ZCode 式弱化）：错误不再摊开成一大块红框——收起是一行
+ *  「✗ 运行中断 · 一句话原因」（danger 色，与失败工具行同层级），展开才看
+ *  原始错误 / 可能原因 / 建议 / 断点统计。历史里的旧错误同样是安静的折叠行，
+ *  不再像一堆待处理的作业。该做什么由诊断建议与任务卡按钮直接表达。 */
+function ErrorCard({ error, isTail, todos, checkpoint, lastTool }: {
+  error: { name: string; message: string };
+  /** 断点统计只在「最后一条消息 + 空闲」时展示（同旧逻辑）：历史错误不重复报进度。 */
+  isTail: boolean;
+  todos: TodoItem[] | null;
+  checkpoint: SessionCheckpoint | null;
+  lastTool: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const d = diagnoseError(error.name, error.message);
+  const brief = d?.cause ?? error.message.replace(/\s+/g, " ").trim();
+  const done = todos?.filter((t) => t.status === "completed").length ?? 0;
+  const total = todos?.length ?? 0;
+  return (
+    <div className={cn("chat-error-card", open && "open")}>
+      <button type="button" className="chat-error-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <Icon name="cross" size={13} strokeWidth={1.4} />
+        <span className="shrink-0">运行中断</span>
+        <span className="chat-workflow-sep" aria-hidden>·</span>
+        <span className="chat-error-brief" title={`${error.name}: ${error.message}`}>{brief}</span>
+        <svg
+          width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+          className={cn("chat-error-chevron", open && "open")}
+        >
+          <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <div className="chat-error-body-wrap" inert={!open}>
+        <div className="chat-error-body">
+          <div className="break-all font-mono text-[0.6875rem] leading-5 text-ink-3">{error.name}: {error.message}</div>
+          {d && (
+            <div className="space-y-0.5 text-[0.6875rem] leading-5">
+              <div className="text-ink-2"><span className="font-medium text-ink">可能原因：</span>{d.cause}</div>
+              <div className="text-ink-3"><span className="font-medium text-ink-2">建议：</span>{d.hint}</div>
+            </div>
+          )}
+          {isTail && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] text-ink-3">
+              {total > 0 && <span>已完成 {done}/{total} 个步骤</span>}
+              {lastTool && <span>最后一步：<span className="font-mono">{lastTool}</span></span>}
+              {checkpoint && (
+                <span>
+                  已执行 <span className="font-mono">{checkpoint.toolCalls}</span> 个工具
+                  {typeof checkpoint.elapsedMs === "number" ? ` · ${(checkpoint.elapsedMs / 1000).toFixed(0)}s` : ""}
+                </span>
+              )}
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -201,7 +345,7 @@ function MessageText({ text, markdown = false }: { text: string; markdown?: bool
   </>;
 }
 
-function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity }) {
+function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenChild }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
   switch (part.type) {
     case "text":
       // assistant 正文用 Markdown（流式稳定、代码高亮）；用户消息保持纯文本。
@@ -246,7 +390,7 @@ function PartView({ part, diff, markdown = false, onOpenFile, subagent }: { part
       );
     }
     case "subtask": {
-      return <SubtaskCard part={part} activity={subagent} />;
+      return <SubtaskCard part={part} activity={subagent} onOpen={onOpenChild} />;
     }
     case "file":
       // 用户随消息发送的附件（规格 2 §12）：持久卡片，不是「产物文件」。
@@ -323,6 +467,12 @@ type Props = {
   /** 会话级权限模式（Codex 基准 ④）：Composer 常驻胶囊，点击循环。 */
   permissionMode?: PermissionMode;
   onCyclePermissionMode?: () => void;
+  /** 发送被 RECOVERY_REQUIRED 挡下（上一任务外部副作用未确认）：输入区上方挂
+   *  持久横幅，按钮一键放行任务——替代一句 4s 消失的死胡同提示。 */
+  recoveryBlocked?: boolean;
+  onResolveRecovery?: () => void;
+  /** 点击子任务行的「打开」→ 右侧工作台「子代理」页显示该子会话的完整对话。 */
+  onOpenChildSession?: (child: { sessionId: string; agent: string; description: string }) => void;
 };
 
 /** 任务计划卡：todo.updated 投影（Agent 拆解步骤的实时进度）。 */
@@ -480,7 +630,25 @@ function ArtifactCard({ artifact, onOpenFile, onOpenPreview }: { artifact: Artif
   );
 }
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode }: Props) {
+/** 状态行措辞：已知工具给自然动词短语，未知工具退回「正在使用 X」（toolLabel）。
+ *  裸英文工具名（task/read）对用户没有语义——工具行首已是中文动词，状态行
+ *  保持同一语言（用户反馈圈出「正在使用 task」）。 */
+const TOOL_ACTIVITY_PHRASE: Record<string, string> = {
+  read: "正在读取文件",
+  glob: "正在查找文件",
+  grep: "正在搜索代码",
+  search: "正在检索",
+  websearch: "正在联网检索",
+  bash: "正在执行命令",
+  terminal: "正在执行命令",
+  edit: "正在编辑文件",
+  write: "正在写入文件",
+  webfetch: "正在抓取网页",
+  web_fetch: "正在抓取网页",
+  task: "正在执行子任务",
+};
+
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode, recoveryBlocked, onResolveRecovery, onOpenChildSession }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint, task, taskAttempts } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -547,6 +715,20 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   // 断线时长：从进入非 connected 状态开始计时，恢复即清零（横幅展示「已断 Xs」）
   const [downSince, setDownSince] = useState<number | null>(null);
   const [downSeconds, setDownSeconds] = useState(0);
+  // 运行时长（Zcode 式单一状态行）：running 起拍计时、空闲清零。与 currentTool
+  // 一起构成 Composer 上方唯一运行状态——消息尾部不再放第二份「正在工作」，
+  // 两处状态各说各话只会让人疑惑（用户反馈）。
+  const [runSeconds, setRunSeconds] = useState(0);
+  useEffect(() => {
+    if (!running) {
+      setRunSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setRunSeconds(0);
+    const timer = setInterval(() => setRunSeconds(Math.round((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
   useEffect(() => {
     if (connState === "connected") {
       setDownSince(null);
@@ -610,7 +792,18 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   }, [historyState, todos, visible.length]);
   const readState = useSessionReadState(sessionId, messagesRef, !searchOpen && !historyState.hasNewer && !historyState.loading && !historyState.error && connState === "connected",
     [...visible].reverse().find(message => message.error || message.parts.some(item => item.part.type !== "reasoning" && (item.part.type !== "text" || item.part.text.trim().length > 0)))?.messageSeq ?? 0, 0);
-  const firstUnreadId = readState ? visible.find(message => message.role === "assistant" && (message.messageSeq ?? 0) > readState.lastReadMessageSeq && message.parts.some(item => item.part.type !== "reasoning"))?.id : undefined;
+  // 未读分隔线锚定「进入会话那一刻」的快照：只标记进入前就存在的未读消息
+  // （seq 落在 (进入时已读, 进入时最新] 区间）。之后流式产生的新消息是用户
+  // 当场看着产生的，不算未读——按实时 lastRead 判定的话，已读提交（底部驻留
+  // 判定 + 轮询往返）永远落后于新消息产生，盯着尾部看也会在眼前内容头上挂出
+  // 「未读消息」线（用户反馈的困惑源）。渲染期幂等初始化 ref，切会话重锚。
+  const unreadAnchor = useRef<{ lastRead: number; latest: number } | null>(null);
+  useEffect(() => { unreadAnchor.current = null; }, [sessionId]);
+  if (readState && !unreadAnchor.current) unreadAnchor.current = { lastRead: readState.lastReadMessageSeq, latest: readState.latestMessageSeq };
+  const anchor = unreadAnchor.current;
+  const firstUnreadId = anchor
+    ? visible.find(message => message.role === "assistant" && (message.messageSeq ?? 0) > anchor.lastRead && (message.messageSeq ?? 0) <= anchor.latest && message.parts.some(item => item.part.type !== "reasoning"))?.id
+    : undefined;
   useEffect(() => { onReadingHistory(searchOpen || showLatest || !!historyState.hasNewer); }, [searchOpen, showLatest, historyState.hasNewer, onReadingHistory]);
   useEffect(() => { followTail.current = true; setShowLatest(false); setSearchOpen(false); }, [sessionId]);
   // 用户消息「编辑重发」原位编辑态：气泡变 textarea，保存即截断重跑
@@ -895,92 +1088,63 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             );
           }
           // Agent 消息：全宽开放排版（主流惯例：无头像无标签，运行指示放内容尾部）
-          // M3 + N5 步骤条：整条消息里「已完成的普通工具」统一收拢成一个可展开的
-          // ToolGroup 步骤条（挂在非工具内容之后），不再被 text/reasoning 打断成多个
-          // 小组——长工具链（几十次调用）也只占一行摘要，点开才看细节。运行中/失败/
-          // 带 diff 的工具仍原位展示（它们需要即时反馈，不折叠）。
-          const blocks: React.ReactNode[] = [];
-          const doneTools: UiPart[] = [];
-          for (const p of m.parts) {
-            const plainDone = p.part.type === "tool" && p.part.state.status === "completed" && !p.diff && !p.subagent;
-            if (plainDone) {
-              doneTools.push(p);
+          // ZCode 式过程流，两种状态：
+          // · 运行中（活跃尾部消息）→ 每个过程 part 逐行实时展示（弱化折叠行，
+          //   图标 名称 · 摘要；运行中的工具保持单行折叠，呼吸图标即实时反馈）；
+          // · 本轮结束后 → **按轮次合并**（用户拍板）：同一条消息的全部过程
+          //   （思考 + 工具，含被正文隔开的）收进一个「工作流程」组，组行放在
+          //   首个过程 part 的位置（保持时间顺序：先干活后总结），正文原位。
+          //   按相邻分段会把中断-恢复的长会话切成十几个「1 个步骤」小组，碎片化
+          //   满屏（实测一个真实会话 17 组）。diff 卡、子任务卡是「结果」不进组。
+          type Slot = { kind: "part" | "live"; item: UiPart } | { kind: "flow"; items: UiPart[] };
+          const slots: Slot[] = [];
+          let flowGroup: { kind: "flow"; items: UiPart[] } | null = null;
+          for (const item of m.parts) {
+            // diff 卡（edit/write 落盘预览）是「结果」不进组；思考/工具/子任务是过程
+            const isFlow = (item.part.type === "reasoning" || item.part.type === "subtask" || (item.part.type === "tool" && !item.diff));
+            if (lastActive) {
+              slots.push({ kind: isFlow ? "live" : "part", item });
               continue;
             }
-            blocks.push(
-              <PartView key={`${m.id}-part-${p.part.id}`} part={p.part} diff={p.diff} markdown onOpenFile={onOpenFile} subagent={p.subagent} />,
-            );
+            if (isFlow) {
+              if (!flowGroup) {
+                flowGroup = { kind: "flow", items: [] };
+                slots.push(flowGroup);
+              }
+              flowGroup.items.push(item);
+              continue;
+            }
+            slots.push({ kind: "part", item });
           }
-          if (doneTools.length > 0) {
-            blocks.push(
-              <ToolGroup
-                key={`${m.id}-toolgrp`}
-                calls={doneTools.map((p) => {
-                  const t = p.part as Extract<Part, { type: "tool" }>;
-                  return { id: t.callId, tool: t.tool, state: t.state };
-                })}
-                sessionIdle={false}
-              />,
-            );
-          }
+          const blocks: React.ReactNode[] = slots.map((slot) =>
+            slot.kind === "flow" ? (
+              <WorkflowGroup key={`${m.id}-flow`} parts={slot.items} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
+            ) : (
+              <PartView key={`${m.id}-${slot.kind}-${slot.item.part.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} />
+            ),
+          );
           return (
             <div key={m.id} data-message-id={m.id} className="chat-assistant-message">
-              <div className="min-w-0 flex-1 space-y-2.5">
+              <div className="min-w-0 flex-1 space-y-1.5">
               {blocks}
               {m.error && (
-                <div className="rounded-sm border border-danger/40 bg-danger/5 px-3 py-2 text-xs leading-5 text-danger">
-                  <div>上游请求失败（{m.error.name}）：{m.error.message}</div>
-                  {/* N5 失败自动诊断：已知错误映射「原因 + 建议」，替代干巴巴的报错 */}
-                  {(() => {
-                    const d = diagnoseError(m.error.name, m.error.message);
-                    if (!d) return null;
-                    return (
-                      <div className="mt-1.5 space-y-0.5 border-t border-danger/20 pt-1.5 text-[0.6875rem] leading-5">
-                        <div className="text-ink-2"><span className="font-medium text-ink">可能原因：</span>{d.cause}</div>
-                        <div className="text-ink-3"><span className="font-medium text-ink-2">建议：</span>{d.hint}</div>
-                      </div>
-                    );
-                  })()}
-                  {/* N5 断点显式化：中断时展示「已完成进度 + 最后一步」，让用户
-                      一眼知道进行到哪、还剩什么，而非只有一条干巴巴的报错。 */}
-                  {idx === visible.length - 1 && !running && (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-danger/20 pt-1.5 text-[0.6875rem] text-ink-2">
-                      {(() => {
-                        const done = todos?.filter((t) => t.status === "completed").length ?? 0;
-                        const total = todos?.length ?? 0;
-                        const lastTool = m.parts
-                          .map((p) => p.part)
-                          .filter((p): p is Extract<Part, { type: "tool" }> => p.type === "tool")
-                          .pop()?.tool;
-                        return (
-                          <>
-                            {total > 0 && <span>已完成 {done}/{total} 个步骤</span>}
-                            {lastTool && <span>最后一步：<span className="font-mono">{lastTool}</span></span>}
-                            {/* N6 中途快照：长任务运行中落过 checkpoint，中断时展示「已执行 N 个工具 · 耗时」 */}
-                            {checkpoint && (
-                              <span>
-                                已执行 <span className="font-mono">{checkpoint.toolCalls}</span> 个工具
-                                {typeof checkpoint.elapsedMs === "number" ? ` · ${(checkpoint.elapsedMs / 1000).toFixed(0)}s` : ""}
-                              </span>
-                            )}
-                            <span className="text-ink-3">任务未交付时，下方任务卡会给出下一步动作；也可以直接在输入框里补一句接着做</span>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
+                <ErrorCard
+                  error={m.error}
+                  isTail={idx === visible.length - 1 && !running}
+                  todos={todos}
+                  checkpoint={checkpoint}
+                  lastTool={m.parts
+                    .map((p) => p.part)
+                    .filter((p): p is Extract<Part, { type: "tool" }> => p.type === "tool")
+                    .pop()?.tool}
+                />
               )}
               {/* P1 的「继续」chip 已删除（规格 3 §19）：它发的是前端拼出来的伪用户
                   消息，而任务目标/验收条件/剩余步骤全靠从上下文猜——多轮或压缩之后
                   必然漂移。上游抖动现在由框架自己在同一任务里退避重试，直到任务层
                   给出 blocked/failed；用户该做什么由下方任务卡的动作按钮表达。 */}
-              {lastActive && (
-                <div className="flex items-center gap-2 pt-0.5 text-[0.6875rem] text-live">
-                  <span className="streaming-caret" />
-                  正在工作…
-                </div>
-              )}
+              {/* 运行状态只在 Composer 上方状态行出现一处（流光标 + 当前工具 + 时长）。
+                  消息尾部不再放「正在工作…」——上下两处各说各话的状态是困惑源。 */}
               </div>
             </div>
           );
@@ -993,12 +1157,13 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         })}
         </div>
         {historyState.hasNewer && <button type="button" disabled={historyState.loading} className="my-3 w-full text-xs text-ink-3 disabled:opacity-40" onClick={() => { captureAnchor(); onLoadNewer(); }}>加载更新消息</button>}
-        {/* 任务区（规格 3 §14.1）。三件事按状态各就各位：
-            · 交付卡 —— 只在 task.delivered 后出现，是「任务完成」的唯一落点；
-            · 进度卡 —— 任务在推进或等用户时出现（含 blocker 与对应动作）；
-            · 本轮小结 —— 一次 Attempt 的收尾，折叠进轨迹，不再是醒目的完成卡。 */}
+        {/* 任务区（规格 3 §14.1）。分层原则（ZCode/Codex 基准）：状态不常驻会话流——
+            · 运行/排队/恢复等纯状态 → 顶部任务上下文条 + Composer 上方状态行，流里不留卡；
+            · 交付卡 —— task.delivered 后出现一次，是内容（做成了什么）不是状态；
+            · 行动卡 —— 只在任务等用户（needsUser：授权/补充/选择/外部确认）时出现，
+              带 blocker 说明与动作按钮，事情办完即消失。 */}
         {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
-        {task && taskView && !taskView.completed && taskView.status !== "failed" && taskView.status !== "cancelled" && (
+        {task && taskView && !taskView.completed && taskView.status !== "failed" && taskView.status !== "cancelled" && taskView.needsUser && (
           <TaskProgressCard task={task} view={taskView} attempts={taskAttempts} onAction={(action) => onTaskAction?.(action)} />
         )}
         {summary && !running && (
@@ -1056,11 +1221,35 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       </div>
       <div className="chat-input-dock" inert={searchOpen}>
       {(showLatest || historyState.hasNewer) && <button type="button" title="回到最新消息" aria-label="回到最新消息" className="chat-latest inline-flex items-center gap-1.5" onClick={() => { followTail.current = true; onReadingHistory(false); if (historyState.hasNewer || historyState.error) onLoadLatest(); else messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight }); setShowLatest(false); }}><ArrowDown size={14} />回到最新消息{readState && readState.unreadCount > 0 ? ` · ${readState.unreadCount} 条未读` : ""}</button>}
+      {/* 发送被挡（上一任务外部副作用未确认）：持久横幅 + 一键放行。这与断线横幅
+          同一层级——都是「现在做不了某件事 + 出路在这」的事，不是 4s 提示的事。 */}
+      {recoveryBlocked && (
+        <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-tint px-4 py-1.5 text-[0.6875rem] text-warning">
+          <span className="min-w-0 flex-1">上次任务中断，外部改动未确认——新消息暂时发不出</span>
+          <button
+            type="button"
+            onClick={() => onResolveRecovery?.()}
+            className="shrink-0 rounded-pill bg-warning/15 px-2.5 py-1 font-medium text-warning transition-colors hover:bg-warning/25"
+          >
+            核对并继续上次任务
+          </button>
+        </div>
+      )}
       {/* 状态与输入器共享同一个 grid row，避免隐式第三行挤压消息区。 */}
       <div className="flex h-7 shrink-0 items-center justify-center">
         {(whisper || running) && (
           <div className="flex items-center text-[0.6875rem] tracking-wide text-ink-3">
-            <span className="px-3">{running ? currentTool ? `正在使用 ${currentTool}…` : "正在思考…" : whisper}</span>
+            {running ? (
+              <span className="flex items-center gap-2 px-3">
+                <span className="streaming-caret" />
+                <span>{currentTool ? TOOL_ACTIVITY_PHRASE[currentTool] ?? `正在使用 ${toolLabel(currentTool)}` : "正在思考"}</span>
+                {runSeconds > 0 && (
+                  <span className="font-mono">{runSeconds < 60 ? `${runSeconds}s` : `${Math.floor(runSeconds / 60)} 分 ${runSeconds % 60} 秒`}</span>
+                )}
+              </span>
+            ) : (
+              <span className="px-3">{whisper}</span>
+            )}
           </div>
         )}
       </div>

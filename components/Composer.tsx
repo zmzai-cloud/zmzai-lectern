@@ -363,6 +363,13 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
     }
     // @ 引用的文件收集为上下文提示（agent 有 fs 工具，按路径自行读取）
     const references = [...new Set([...body.matchAll(/(^|\s)@([^\s@]+)/g)].map((m) => m[2]))];
+    // 乐观清空（用户反馈：点击发送，文字就该从输入框消失）：page.send 的 setEcho
+    // 同帧把气泡上屏，输入框再留着原文就是「发了没发走」的观感。失败时恢复——
+    // 恢复只落在空框上；await 窗口里用户已敲新内容则追加在上方，不覆盖。
+    const sentSkill = skill;
+    setText("");
+    setSkill(null);
+    setAtQuery(null);
     try {
       await onSend({
         text: body,
@@ -374,12 +381,11 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
     } catch (error) {
       // 发送失败时文字、附件与引用**完整保留**（规格 §7.5 / §18.9）：附件队列不动，
       // 服务端附件也还没绑定消息，重试复用同一批 id —— 不会重复上传。
+      setText((current) => (current.trim() ? `${body}\n${current}` : body));
+      if (sentSkill) setSkill(sentSkill);
       attachments.notify(error instanceof Error ? error.message : "发送失败，文字与附件已保留");
       return;
     }
-    setText("");
-    setSkill(null);
-    setAtQuery(null);
     // 只有 API 接受消息后才清空附件（此时服务端已绑定，不能再删文件）
     attachments.clear();
   }, [text, skill, onSend, attachments, effort, currentModelId]);
@@ -988,14 +994,16 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
             <span className="mr-1.5 hidden text-[0.6875rem] text-ink-3 sm:inline">{attachments.blockedReason}</span>
           )}
           {running ? (
+            /* 中止与发送共用轮廓（墨底白方块）：运行中止是常规操作不是危险操作，
+               红色警示只留给真正的破坏性确认——常驻红方块在跑任务时像报错。 */
             <button
               type="button"
               onClick={onAbort}
               title="中止"
               aria-label="中止"
-              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md border border-danger/50 text-danger transition-colors hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
             >
-              <span className="h-2.5 w-2.5 rounded-[2px] bg-danger" />
+              <span className="h-2.5 w-2.5 rounded-[2px] bg-bg" />
             </button>
           ) : (
             <button

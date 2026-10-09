@@ -117,7 +117,20 @@ export class ChatProjector {
   private pendingEdits = new Map<string, string[]>();
   // 子代理活动：childSessionId → steps/finished（part 定稿前后都能体现）
   private subagentActivity = new Map<string, SubagentActivity>();
-  private todos: TodoItem[] | null = null;
+  /** childSessionId → 挂载点（messageId/partId）：subagent.* 事件到达时回填
+   *  已存在 subtask part 的活动。恢复链路里 parts 先建、stateEvents 后放，
+   *  只靠 part 创建时抓快照会让活动永远挂不上（重开后子任务永远「执行中」）。 */
+  private subtaskIndex = new Map<string, { messageId: string; partId: string }>();
+
+  /** 把 subagent 活动表的最新值回填到对应 subtask part（事件乱序/恢复回放都成立）。 */
+  private attachSubagentActivity(childSessionId: string): void {
+    const hit = this.subtaskIndex.get(childSessionId);
+    if (!hit) return;
+    const message = this.messages.get(hit.messageId);
+    const item = message?.parts.get(hit.partId);
+    if (!message || !item || item.part.type !== "subtask") return;
+    message.parts.set(hit.partId, { ...item, subagent: this.subagentActivity.get(childSessionId) });
+  }  private todos: TodoItem[] | null = null;
   private reads: string[] = [];
   private editedPaths: string[] = [];
   /** 最近一次 run 终态小结（session.summary）。 */
@@ -265,7 +278,7 @@ export class ChatProjector {
 
   hasMessage(id: string): boolean { return this.messages.has(id); }
 
-  clearMessages(): void { this.messages.clear(); this.order = []; this.pendingEdits.clear(); this.subagentActivity.clear(); }
+  clearMessages(): void { this.messages.clear(); this.order = []; this.pendingEdits.clear(); this.subagentActivity.clear(); this.subtaskIndex.clear(); }
 
   /** Evict only transcript data; task/todo/artifact snapshots are independent. */
   trimMessages(keep: "head" | "tail", limit = MESSAGE_CACHE_LIMIT): boolean {
@@ -273,7 +286,7 @@ export class ChatProjector {
     const removed = keep === "head" ? this.order.splice(limit) : this.order.splice(0, this.order.length - limit);
     for (const id of removed) {
       const message = this.messages.get(id);
-      for (const item of message?.parts.values() ?? []) if (item.part.type === "subtask") this.subagentActivity.delete(item.part.childSessionId);
+      for (const item of message?.parts.values() ?? []) if (item.part.type === "subtask") { this.subagentActivity.delete(item.part.childSessionId); this.subtaskIndex.delete(item.part.childSessionId); }
       this.messages.delete(id);
     }
     this.pendingEdits.clear();
@@ -290,6 +303,7 @@ export class ChatProjector {
     this.order = [];
     this.pendingEdits.clear();
     this.subagentActivity.clear();
+    this.subtaskIndex.clear();
     this.todos = null;
     this.reads = [];
     this.editedPaths = [];
@@ -338,7 +352,12 @@ export class ChatProjector {
         const queue = path ? this.pendingEdits.get(path) : undefined;
         if (queue?.length) diff = queue.shift();
       }
-      m.parts.set(p.id, { part: p, diff, ...(p.type === "subtask" ? { subagent: this.subagentActivity.get(p.childSessionId) } : {}) });
+      if (p.type === "subtask") {
+        this.subtaskIndex.set(p.childSessionId, { messageId: m.id, partId: p.id });
+        m.parts.set(p.id, { part: p, diff, subagent: this.subagentActivity.get(p.childSessionId) });
+      } else {
+        m.parts.set(p.id, { part: p, diff });
+      }
     } else if (ev.type === "message.part.delta") {
       const d = ev.data as { messageId: string; partId: string; delta: string };
       const m = this.messages.get(d.messageId);
@@ -374,6 +393,16 @@ export class ChatProjector {
         const id = `error-${d.name.toLowerCase()}-${Date.now().toString(36)}`;
         this.messages.set(id, { id, role: "assistant", parts: new Map(), error: err });
         this.order.push(id);
+      }
+    } else if (ev.type === "session.status") {
+      // 新一轮开跑即宣告上一轮的「本轮」结束：清掉陈旧小结。否则上一轮失败后
+      // 用户新发任务，执行中新任务与审查页挂着的「本轮出错」同屏各说各话
+      // （用户点名的状态矛盾）。恢复回放同样成立：stateEvents 按 seq 排序，
+      // 旧 summary 先到、running 后到恰好把它清掉；空闲会话最新 status 非
+      // running，小结保留。
+      if ((ev.data as { status: string }).status === "running") {
+        this.summary = null;
+        this.summaryArtifacts = [];
       }
     } else if (ev.type === "session.summary") {
       // 任务终态小结（N5）：run 收尾的 AI 一句总结 + 结构化统计。
@@ -425,16 +454,19 @@ export class ChatProjector {
     } else if (ev.type === "subagent.started") {
       const d = ev.data as { id: string };
       this.subagentActivity.set(d.id, { steps: [] });
+      this.attachSubagentActivity(d.id);
     } else if (ev.type === "subagent.step") {
       const d = ev.data as { id: string; tool: string; title?: string; state?: string };
       const activity = this.subagentActivity.get(d.id) ?? { steps: [] };
       activity.steps.push({ tool: d.tool, title: d.title, state: d.state });
       this.subagentActivity.set(d.id, activity);
+      this.attachSubagentActivity(d.id);
     } else if (ev.type === "subagent.finished") {
       const d = ev.data as { id: string; state: string; durationMs?: number; toolCalls?: number };
       const activity = this.subagentActivity.get(d.id) ?? { steps: [] };
       activity.finished = { state: d.state, durationMs: d.durationMs, toolCalls: d.toolCalls };
       this.subagentActivity.set(d.id, activity);
+      this.attachSubagentActivity(d.id);
     }
   }
 

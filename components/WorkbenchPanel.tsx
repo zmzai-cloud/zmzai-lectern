@@ -12,6 +12,7 @@ import CanvasPane from "./CanvasPane";
 import FileEditor from "./FileEditor";
 import FileTree from "./FileTree";
 import ReviewPane from "./ReviewPane";
+import { SubagentPane } from "./SubagentPane";
 
 /** 顶部 tab：终端不再单独占位，常驻底部面板。 */
 type Tab = WorkbenchTab;
@@ -44,6 +45,18 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="1.5" y="2.5" width="13" height="10" rx="1.2" />
         <path d="M5.5 15h5M8 12.5V15" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "subagent",
+    label: "子代理",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <circle cx="5.5" cy="6" r="1.8" />
+        <path d="M2.5 12.5c.5-2 1.6-3 3-3s2.5 1 3 3" />
+        <circle cx="10.8" cy="4.5" r="1.5" />
+        <path d="M10.3 9.6c1.6.2 2.8 1.2 3.2 2.9" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -135,6 +148,11 @@ export default function WorkbenchPanel({
   initialTab = "review",
   initialTabExplicit = false,
   onTabChange,
+  subagentSession = null,
+  subagentRequest = null,
+  subagentChildren = [],
+  subagentFallback = null,
+  onSwitchSubagent,
 }: {
   openRequest?: { path: string; ts: number; line?: number; target?: OpenTarget } | null;
   /** 本轮 Agent 触碰过的文件（file.edited 投影，最新在前）——文件 Tab 顶部 chips + Git 高亮。 */
@@ -164,6 +182,21 @@ export default function WorkbenchPanel({
   initialTab?: WorkbenchTab;
   initialTabExplicit?: boolean;
   onTabChange?: (tab: WorkbenchTab, explicit: boolean) => void;
+  /** 子代理消息盒（「子代理」Tab）：当前打开的子会话；null = 空态引导。
+   *  由 page 持有（会话流里点子任务行的「打开」设置），不进 tab 自动推荐逻辑。 */
+  subagentSession?: { sessionId: string; agent: string; description: string } | null;
+  /** 外部要求切到子代理页的副通道（镜像 openRequest）：面板可能早已挂载在其他
+   *  Tab，initialTab 只在挂载时读一次唤不动它——带 ts 的请求对象每次变化都
+   *  强制切 Tab，手动关掉面板后再点「打开」也能重新唤出。 */
+  subagentRequest?: { ts: number } | null;
+  /** 本会话全部子任务（按派生顺序，含 running）：子代理页的 chips 切换源；
+   *  并行派生多个子代理时靠它在盒内切换，不必回会话流点「打开」。 */
+  subagentChildren?: { sessionId: string; agent: string; description: string; running: boolean }[];
+  /** 未显式选择时的自动内容：最近派生（跑着的优先）。跑着子代理却显示
+   *  空占位引导，是把「打开」当成了用户义务——盒子应该自己跟上。 */
+  subagentFallback?: { sessionId: string; agent: string; description: string } | null;
+  /** 盒内切换子代理（chips 点击）：只换内容，不抢 Tab、不弹面板。 */
+  onSwitchSubagent?: (child: { sessionId: string; agent: string; description: string }) => void;
 }) {
   const [tab, setTabState] = useState<Tab>(initialTab);
   const [fileTabs, setFileTabs] = useState<FileTab[]>([]);
@@ -299,6 +332,13 @@ export default function WorkbenchPanel({
     if (!openRequest) return;
     openFile(openRequest.path, openRequest.line, openRequest.target ?? "files");
   }, [openRequest, openFile]);
+
+  // 子代理页副通道：请求对象变化（ts）即强制切到「子代理」Tab——已挂载在
+  // 别的 Tab、或面板被手动关过再唤，都走这里，initialTab 管不到这两种。
+  useEffect(() => {
+    if (!subagentRequest) return;
+    setTab("subagent", true);
+  }, [subagentRequest, setTab]);
 
   const closeTab = (path: string) => {
     const tabToClose = fileTabs.find((t) => t.path === path);
@@ -513,6 +553,8 @@ export default function WorkbenchPanel({
               onOpenFiles={() => select("files")}
             />
           );
+        case "subagent":
+          return <SubagentPane session={subagentSession ?? subagentFallback} sessions={subagentChildren} onSelect={onSwitchSubagent} />;
       }
   };
 

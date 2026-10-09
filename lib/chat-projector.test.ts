@@ -64,6 +64,19 @@ describe("ChatProjector 产物按 run 归集", () => {
     expect(d.artifacts).toHaveLength(0);
   });
 
+  it("新一轮开跑（session.status=running）清掉上一轮小结——执行中的新任务不得与「本轮出错」同屏", () => {
+    const p = new ChatProjector();
+    p.ingest(summaryEvent("error") as never);
+    expect(p.data().summary?.kind).toBe("error");
+    p.ingest({ type: "session.status", data: { status: "running" } } as never);
+    expect(p.data().summary).toBeNull();
+    expect(p.data().summaryArtifacts).toHaveLength(0);
+    // 空闲状态事件不清（可追溯）：小结保留
+    p.ingest(summaryEvent("error") as never);
+    p.ingest({ type: "session.status", data: { status: "idle" } } as never);
+    expect(p.data().summary?.kind).toBe("error");
+  });
+
   it("多轮会话：每轮 summary 只挂自己的产物，不跨轮累积", () => {
     const p = new ChatProjector();
     // 第一轮：a1、a2 → summary1

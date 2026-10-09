@@ -13,7 +13,7 @@
  * - §9 按任务保存、旧版全局宽度只迁移一次、带版本号、上限清理、损坏值安全回退。
  */
 
-export type WorkbenchTab = "review" | "files" | "preview";
+export type WorkbenchTab = "review" | "files" | "preview" | "subagent";
 
 /** 当前断点下的布局模式（规格 §7）。 */
 export type LayoutMode = "desktop" | "overlay" | "single";
@@ -77,7 +77,7 @@ export const TASK_LAYOUT_VERSION = 1;
 export const LEGACY_WORKBENCH_OPEN_KEY = "lectern:workbench-open";
 export const LEGACY_WORKBENCH_WIDTH_KEY = "lectern:workbench-width";
 
-const TABS: readonly WorkbenchTab[] = ["review", "files", "preview"];
+const TABS: readonly WorkbenchTab[] = ["review", "files", "preview", "subagent"];
 
 export function isWorkbenchTab(value: unknown): value is WorkbenchTab {
   return typeof value === "string" && (TABS as readonly string[]).includes(value);

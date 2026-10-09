@@ -44,12 +44,14 @@ export type ConnectionState = "connected" | "reconnecting" | "offline";
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    const body = (await res.json().catch(() => null)) as { error?: string; detail?: { code?: string } } | null;
     // 业务错误走 400+文案；裸 5xx（body 非 JSON）= 服务端未捕获异常，指到日志
     if (!body?.error && res.status >= 500) {
-      throw new Error(`服务异常（${res.status}）：服务端未捕获错误，详情见运行日志（账户菜单 → 打开日志文件夹）`);
+      throw Object.assign(new Error(`服务异常（${res.status}）：服务端未捕获错误，详情见运行日志（账户菜单 → 打开日志文件夹）`), { status: res.status });
     }
-    throw Object.assign(new Error(body?.error ?? `请求失败（${res.status}）`), { status: res.status });
+    // detail.code（WorkflowError）一并附上：RECOVERY_REQUIRED 等需要 UI 给出
+    // 专门出路（可操作横幅），不能只靠一句 4s 消失的文案。
+    throw Object.assign(new Error(body?.error ?? `请求失败（${res.status}）`), { status: res.status, code: body?.detail?.code });
   }
   return res.json() as Promise<T>;
 }

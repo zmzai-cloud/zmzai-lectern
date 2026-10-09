@@ -252,6 +252,11 @@ export default function App() {
     sessionId?: string;
   } | null>(null);
   const [status, setStatus] = useState<string>("idle");
+  // 发送被 RECOVERY_REQUIRED 挡下（上一任务外部副作用未确认）：输入区上方挂
+  // 可操作横幅直到任务被放行。存 sessionId，切会话自动失效。
+  const [recoveryGate, setRecoveryGate] = useState<string | null>(null);
+  useEffect(() => { setRecoveryGate(null); }, [activeId]);
+  useEffect(() => { if (status === "running") setRecoveryGate(null); }, [status]);
   const [pending, setPending] = useState<PermissionRequest | null>(null);
   // 后台会话动态（P2-15 续）：id → 结束态；点击会话清除
   const [backgroundActivity, setBackgroundActivity] = useState<BackgroundActivity>({});
@@ -527,6 +532,40 @@ export default function App() {
     setOpenFileReq({ path, ts: Date.now(), target: "preview" });
     openWorkbench("preview");
   }, [openWorkbench]);
+  /** 子代理消息盒（会话流子任务行「打开」）：右侧工作台切到「子代理」页，
+   *  只读展示该子会话的完整对话。子会话选择是查看态不是任务偏好，切主会话即清。
+   *  subagentRequest（带 ts）是唤起副通道：面板可能挂载在别的 Tab 或已被手动
+   *  关闭，光改布局 tab 状态唤不动已挂载的面板——请求对象每次变化强制切页。 */
+  const [subagentSession, setSubagentSession] = useState<{ sessionId: string; agent: string; description: string } | null>(null);
+  const [subagentRequest, setSubagentRequest] = useState<{ ts: number } | null>(null);
+  useEffect(() => { setSubagentSession(null); }, [activeId]);
+  const openChildSessionInWorkbench = useCallback((child: { sessionId: string; agent: string; description: string }) => {
+    setSubagentSession(child);
+    setSubagentRequest({ ts: Date.now() });
+    openWorkbench("subagent");
+  }, [openWorkbench]);
+  /** 子会话清单（按派生顺序）：子代理 Tab 的自动内容源。显式点过「打开」用
+   *  subagentSession；否则跟随最近派生的一个（还有在跑的优先跑着的）——空占位
+   *  只属于真没有子任务的会话，跑着子代理却让人去会话流里找「打开」是反向操作。 */
+  const subagentChildren = useMemo(() => {
+    const out: { sessionId: string; agent: string; description: string; running: boolean }[] = [];
+    for (const m of chatData.messages) {
+      for (const item of m.parts) {
+        if (item.part.type !== "subtask") continue;
+        out.push({ sessionId: item.part.childSessionId, agent: item.part.agent, description: item.part.description, running: item.subagent != null && item.subagent.finished == null });
+      }
+    }
+    return out;
+  }, [chatData.messages]);
+  const subagentFallback = useMemo(() => {
+    const running = subagentChildren.filter((c) => c.running);
+    const pick = running.length > 0 ? running[running.length - 1] : subagentChildren[subagentChildren.length - 1];
+    return pick ? { sessionId: pick.sessionId, agent: pick.agent, description: pick.description } : null;
+  }, [subagentChildren]);
+  /** 盒内切换子代理（多子任务并行时的 chips）：只换内容，不抢 Tab、不弹面板。 */
+  const switchChildSession = useCallback((child: { sessionId: string; agent: string; description: string }) => {
+    setSubagentSession(child);
+  }, []);
   /** 工作台内切标签：标签与「是否显式选过」都是任务级偏好（规格 §7.1 / §9）。
    *  并排与抽屉共用同一个处理器，因此两条路径的偏好语义完全一致。 */
   const handleWorkbenchTabChange = useCallback((tab: WorkbenchTab, explicit: boolean) => {
@@ -1023,6 +1062,10 @@ export default function App() {
         if (sendIdentityRef.current?.requestId === requestId) sendIdentityRef.current = null;
       } catch (error) {
         setEcho(null); // 发送失败：撤回乐观气泡；文字与附件由 Composer 保留，重试不重复上传
+        // RECOVERY_REQUIRED：上一任务的外部副作用未确认，新消息一律被 409 挡下。
+        // 只给一句 4s 消失的文案等于死胡同（用户反馈「继续也发不出去」）——挂上
+        // 可操作横幅，按钮直接放行任务（resume），比让用户重打一遍「继续」更短。
+        if ((error as { code?: string } | null)?.code === "RECOVERY_REQUIRED") setRecoveryGate(sid);
         throw error;
       }
       // prompt 可能排队返回，刷新标题等元数据；AI 摘要标题异步落库，延迟再刷一次
@@ -1215,6 +1258,19 @@ export default function App() {
     [activeId],
   );
 
+  /** RECOVERY_REQUIRED 横幅的「核对并继续」：与任务卡的 recheck 同一条 resume
+   *  通路（§13.2），给「想发消息却被挡」的用户一条一键出路。 */
+  const handleResolveRecovery = useCallback(() => {
+    if (!activeId) return;
+    void client
+      .resumeTask(activeId)
+      .then((result) => {
+        setRecoveryGate(null);
+        if (!result.resumed) setDoneToast("任务已不在等待状态，无需继续");
+      })
+      .catch(() => setDoneToast("继续失败，请重试"));
+  }, [activeId]);
+
   const taskTitle = useMemo(() => taskTitleOf(chatData), [chatData]);
 
   // 项目名由侧栏切换器上抛（§4.2：上下文条要能辨识当前项目）。用回调身份稳定引用，
@@ -1344,6 +1400,9 @@ export default function App() {
               onSelectModel={setSelectedModel}
               onSend={send}
               onReply={reply}
+              recoveryBlocked={recoveryGate !== null && recoveryGate === activeId}
+              onResolveRecovery={handleResolveRecovery}
+              onOpenChildSession={openChildSessionInWorkbench}
               taskView={taskView}
               onTaskAction={handleTaskAction}
               stalled={stalled}
@@ -1370,7 +1429,7 @@ export default function App() {
                   onDragChange={setWorkbenchDragging}
                 />
                 <div className="min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ width: workbenchWidth }}>
-                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+                  <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} subagentSession={subagentSession} subagentRequest={subagentRequest} subagentChildren={subagentChildren} subagentFallback={subagentFallback} onSwitchSubagent={switchChildSession} />
                 </div>
               </>
             )}
@@ -1413,7 +1472,7 @@ export default function App() {
       {workbenchDrawer && (
         <div className="panel-scrim" role="presentation" onMouseDown={() => (compactPanels ? setActiveOverlay(null) : updateTaskLayout({ open: false }))}>
           <div className="panel-overlay panel-overlay-right" onMouseDown={(event) => event.stopPropagation()}>
-            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} />
+            <WorkbenchPanel key={activeId ?? "new-task"} sessionId={activeId} openRequest={openFileReq} editedPaths={chatData.editedPaths} artifactPaths={canvasArtifactPaths} summary={chatData.summary} task={chatData.task} initialTab={workbenchTab} initialTabExplicit={workbenchTabExplicit} onTabChange={handleWorkbenchTabChange} subagentSession={subagentSession} subagentRequest={subagentRequest} subagentChildren={subagentChildren} subagentFallback={subagentFallback} onSwitchSubagent={switchChildSession} />
           </div>
         </div>
       )}

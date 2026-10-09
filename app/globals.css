@@ -279,14 +279,55 @@ html[data-theme="dark"] {
 .task-sidebar { min-width: 0; }
 .task-sidebar { container-type: inline-size; }
 @container (max-width: 240px) { .task-new-shortcut { display: none; } }
-.chat-view .zmz-tool-group-trigger { border: 0; background: transparent; padding: 5px 0; width: fit-content; color: var(--color-ink-3); }
-.chat-view .zmz-tool-group-trigger:hover { color: var(--color-ink); }
-.chat-view .zmz-tool-group-trigger small { display: none; }
-.chat-view .zmz-tool-group-label { font-family: var(--font-sans); font-size: 12px; }
-.chat-view .zmz-reasoning { border-left: 0; padding-left: 0; }
-.chat-view .zmz-reasoning-toggle { font-family: var(--font-sans); font-size: 12px; letter-spacing: 0; text-transform: none; }
-.chat-view .tool-card::before { display: none; }
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
+/* 工作流程组（Zcode 式收起）：与工具过程行同款弱化裸行；展开后纯缩进子行，
+   无背景无连线——层级仍由颜色深浅承担。 */
+.chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.7rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
+.chat-workflow-toggle:hover { color: var(--color-ink); }
+.chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }
+.chat-workflow-failed { flex: 0 0 auto; color: var(--color-danger); }
+/* 箭头与工具行/思考行同规则：收起时隐藏（裸文字行不挂常亮三角），
+   hover / 键盘聚焦浮现提示可点，展开时常亮并转向上（可收起）。 */
+.chat-workflow-chevron { flex: 0 0 auto; opacity: 0; color: var(--color-muted); transition: opacity 0.15s var(--ease-spring), transform 0.15s var(--ease-spring); }
+.chat-workflow-toggle:hover .chat-workflow-chevron, .chat-workflow-toggle:focus-visible .chat-workflow-chevron { opacity: 1; }
+.chat-workflow-chevron.open { opacity: 1; transform: rotate(180deg); }
+/* 展开动画：grid-template-rows 0fr→1fr（无需 JS 测高），参数与 theme 的
+   framer 高度动画一致（0.2s + --ease-spring），工具行/思考行/工作流程组同手感。
+   内容常驻 DOM（收起时 0fr + overflow hidden + 透明），高度动画因此可逆。 */
+.chat-workflow-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
+.chat-workflow-group.open .chat-workflow-body-wrap { grid-template-rows: 1fr; }
+.chat-workflow-body { display: grid; gap: 0.25rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-workflow-group.open .chat-workflow-body { opacity: 1; }
+/* 运行中断折叠行：与工作流程组同款形态，但整行 danger（与失败工具行同层级）。
+   展开才看原始错误 / 原因建议 / 断点统计——历史错误不再摊成大红框。 */
+.chat-error-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.7rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-danger); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: filter 0.15s var(--ease-spring); }
+.chat-error-toggle:hover { filter: brightness(1.12); }
+.chat-error-brief { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-error-chevron { flex: 0 0 auto; opacity: 0; color: var(--color-muted); transition: opacity 0.15s var(--ease-spring), transform 0.15s var(--ease-spring); }
+.chat-error-toggle:hover .chat-error-chevron, .chat-error-toggle:focus-visible .chat-error-chevron { opacity: 1; }
+.chat-error-chevron.open { opacity: 1; transform: rotate(180deg); }
+.chat-error-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
+.chat-error-card.open .chat-error-body-wrap { grid-template-rows: 1fr; }
+.chat-error-body { display: grid; gap: 0.5rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-error-card.open .chat-error-body { opacity: 1; }
+/* 子任务折叠行：与工作流程组/错误行同款裸行；运行中图标呼吸，失败整行 danger。
+   步骤流（chat-subtask-body 内）与工具行同语言（图标 + 名称 · 摘要）。 */
+@keyframes chat-subtask-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.chat-subtask-toggle { display: flex; width: 100%; min-height: 1.7rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
+.chat-subtask-toggle:hover { color: var(--color-ink); }
+.chat-subtask-sep { flex: 0 0 auto; opacity: 0.65; }
+.chat-subtask-desc { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-subtask.running .chat-subtask-icon { color: var(--color-live); animation: chat-subtask-pulse 1.2s ease-in-out infinite; }
+.chat-subtask.failed .chat-subtask-toggle { color: var(--color-danger); }
+.chat-subtask.failed .chat-subtask-toggle:hover { color: var(--color-danger); filter: brightness(1.12); }
+.chat-subtask-flag { flex: 0 0 auto; color: var(--color-danger); font-size: 0.68rem; font-weight: 500; }
+.chat-subtask-chevron { flex: 0 0 auto; opacity: 0; color: var(--color-muted); transition: opacity 0.15s var(--ease-spring), transform 0.15s var(--ease-spring); }
+.chat-subtask-toggle:hover .chat-subtask-chevron, .chat-subtask-toggle:focus-visible .chat-subtask-chevron { opacity: 1; }
+.chat-subtask-chevron.open { opacity: 1; transform: rotate(180deg); }
+.chat-subtask-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
+.chat-subtask.open .chat-subtask-body-wrap { grid-template-rows: 1fr; }
+.chat-subtask-body { display: grid; gap: 0.25rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-subtask.open .chat-subtask-body { opacity: 1; }
 .chat-view .markdown-body :not(pre) > code { border: 0; border-radius: 4px; }
 .chat-view .markdown-body table { display: block; max-width: 100%; overflow-x: auto; }
 .chat-view .md-codeblock { border-radius: 8px; }

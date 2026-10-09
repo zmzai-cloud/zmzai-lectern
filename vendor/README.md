@@ -1,10 +1,19 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.17.1.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.17.1`, vendored here so desktop builds and clean
+`zmzai-agent-framework-0.17.2.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.17.2`, vendored here so desktop builds and clean
 installs resolve the framework without depending on registry access. The
 framework repository is the source of truth; the version number is unique to
 these bytes and never re-packed under the same name (spec 2026-09-28 §8).
+
+What 0.17.2 changed (subagent activity replay):
+
+- The session-restore `stateEvents` query never included
+  `subagent.started/step/finished`, so reopening a session left every subtask
+  row stuck on 执行中 forever — the UI attaches subagent activity when those
+  events replay, but they were simply not returned. The query now matches the
+  three subagent event types alongside the collapse-resistant incremental
+  events (no `MAX(seq)` collapse for them, same as before).
 
 What 0.17.1 changed (fs workspace symlink robustness):
 

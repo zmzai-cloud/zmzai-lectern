@@ -68,6 +68,8 @@ jobs:
       - run: pnpm test:task-delivery-ui
       - run: pnpm test:attachments-ui
       - run: pnpm test:message-search-ui
+      - run: pnpm test:subagent-pane-follow
+      - run: pnpm test:optimistic-send
       - run: pnpm test:message-recovery-ui
       - run: pnpm test:pdf-preview-ui
       - name: Preserve UI evidence

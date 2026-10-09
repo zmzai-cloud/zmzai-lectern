@@ -82,13 +82,21 @@ try {
   // 改为看**侧栏本身**的可见性：已经开着就不碰它，确实收起才去点。
   const sidebar = page.locator(".task-sidebar");
   const expandSidebar = page.getByRole("button", { name: "展开会话栏", exact: true });
-  // CI 时序差（2026-09-20/24 两次撞上）：按钮可见但处于「宽屏自动常驻 vs 窄屏
-  // 手动收起」切换窗，click 可能整段超时。点击只是手段，目标是侧栏可见——
-  // 点不到（已自动展开/切换窗内）就不阻塞，交给下方 waitFor 兜底。
-  if (!(await sidebar.isVisible())) {
-    await expandSidebar.click({ timeout: 8000 }).catch(() => {});
+  // CI 时序差（2026-09-20/24、10-09 三次撞上）：390→1440 切换窗内，展开按钮
+  // 可能整段超时（宽屏自动常驻把按钮改标成「收起」，locator 落空），单次
+  // click-catch 兜不住。改成有界重试环——每轮「点一下（点不到就算了）等 6s」，
+  // 三种卡法都能自愈：桌面+sidebarOpen=false 点开即常驻；卡在窄断点点开是覆盖层
+  // （.task-sidebar 照样可见）；本来就开着则 waitFor 直接过。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await sidebar.isVisible()) break;
+    await expandSidebar.click({ timeout: 6000 }).catch(() => {});
+    try {
+      await sidebar.waitFor({ timeout: 6000 });
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
   }
-  await sidebar.waitFor();
   initialFails = false;
   await retry.click();
   await page.getByText("A history 49", { exact: true }).waitFor();

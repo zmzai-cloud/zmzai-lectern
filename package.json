@@ -28,6 +28,8 @@
     "test:workbench-ui": "node e2e/workbench-resize-ui.mjs",
     "test:touch-ui": "node e2e/touch-drag-ui.mjs",
     "test:message-search-ui": "node e2e/message-search-ui.mjs",
+    "test:subagent-pane-follow": "node e2e/subagent-pane-follow.mjs",
+    "test:optimistic-send": "node e2e/optimistic-send.mjs",
     "test:message-recovery-ui": "node e2e/message-recovery-ui.mjs",
     "test:pdf-preview-ui": "node e2e/pdf-preview-ui.mjs",
     "verify:release": "node scripts/release-validation.mjs release dist",

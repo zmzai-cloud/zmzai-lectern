@@ -94,8 +94,12 @@ try {
   const abortButton = page.getByRole("button", { name: "中止", exact: true });
   await abortButton.waitFor();
   const abortClass = (await abortButton.getAttribute("class")) ?? "";
-  assert.ok(abortClass.includes("bg-ink"), `abort should be ink-solid: ${abortClass}`);
+  assert.ok(abortClass.includes("border-line"), `abort should be a neutral outlined secondary (F1 dual-button): ${abortClass}`);
   assert.ok(!abortClass.includes("danger"), `abort must not be danger-red: ${abortClass}`);
+  // F1 双按钮：运行中发送键仍在（主位墨底，空输入禁用），排队入口可见
+  const sendWhileRunning = page.getByRole("button", { name: "发送", exact: true });
+  assert.equal(await sendWhileRunning.count(), 1, "send button stays visible while running (queue affordance)");
+  assert.ok(await sendWhileRunning.isDisabled(), "send is disabled with empty input while running");
 
   // ③ 展开运行中的工具卡：不再有第二份「正在等待工具返回结果…」
   const toolRow = page.locator(".tool-card-trigger").first();

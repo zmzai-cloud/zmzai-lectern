@@ -345,20 +345,22 @@ function MessageText({ text, markdown = false }: { text: string; markdown?: bool
   </>;
 }
 
-function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenChild }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
+function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenChild, emphasis = false }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void; emphasis?: boolean }) {
   switch (part.type) {
     case "text":
       // assistant 正文用 Markdown（流式稳定、代码高亮）；用户消息保持纯文本。
       // 两种形态都包 per-block 悬停工具条（复制全文）。
+      // emphasis（走查 F4）：交付后的结论段——同字号的正文流里「答案」和过场
+      // 叙述长一个样，扫一眼分不清；结论段加一档字重与行距，仅靠排版分层。
       return markdown ? (
         <TextBlock text={part.text}>
-          <div className="text-[0.875rem] leading-[1.65] text-ink">
+          <div className={cn("text-[0.875rem] leading-[1.65] text-ink", emphasis && "chat-final-answer")}>
             <MessageText text={part.text} markdown />
           </div>
         </TextBlock>
       ) : (
         <TextBlock text={part.text}>
-          <div className="whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink"><MessageText text={part.text} /></div>
+          <div className={cn("whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink", emphasis && "chat-final-answer")}><MessageText text={part.text} /></div>
         </TextBlock>
       );
     case "reasoning":
@@ -712,6 +714,23 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     }
     return null;
   }, [visible, running]);
+  // 交付后的结论段（走查 F4）：任务完成时，最新一条 assistant 消息里最后一段
+  // 非空正文即「答案」。过场叙述（“接下来我派两个子代理…”）与结论同为正文，
+  // 扫一眼分不清主次——结论段加一档排版分量（chat-final-answer）。
+  const finalAnswerPartId = useMemo(() => {
+    if (!taskView?.completed) return null;
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const m = visible[i]!;
+      if (m.role !== "assistant") continue;
+      for (let j = m.parts.length - 1; j >= 0; j--) {
+        const item = m.parts[j]!;
+        if (item.part.type === "text" && item.part.text.trim()) return item.part.id;
+      }
+      // 最新 assistant 消息只有过程没有正文 → 没有结论可强调
+      return null;
+    }
+    return null;
+  }, [visible, taskView?.completed]);
   // 断线时长：从进入非 connected 状态开始计时，恢复即清零（横幅展示「已断 Xs」）
   const [downSince, setDownSince] = useState<number | null>(null);
   const [downSeconds, setDownSeconds] = useState(0);
@@ -1032,7 +1051,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               );
             }
             return (
-              <div key={m.id} data-message-id={m.id} className="group flex justify-end">
+              <div key={m.id} data-message-id={m.id} className={cn("group flex justify-end", m.id === "__echo__" && "chat-echo-pending")}>
                 <div className="chat-user-message relative">
                   <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
                     {m.skill && (
@@ -1120,7 +1139,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             slot.kind === "flow" ? (
               <WorkflowGroup key={`${m.id}-flow`} parts={slot.items} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
             ) : (
-              <PartView key={`${m.id}-${slot.kind}-${slot.item.part.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} />
+              <PartView key={`${m.id}-${slot.kind}-${slot.item.part.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} />
             ),
           );
           return (
@@ -1262,6 +1281,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         onAbort={onAbort}
         permissionMode={permissionMode}
         onCyclePermissionMode={onCyclePermissionMode}
+        sendBlocked={recoveryBlocked}
       />
       </div>
       {searchOpen && sessionId && <SessionMessageSearch key={sessionId} sessionId={sessionId} onClose={() => { setSearchOpen(false); requestAnimationFrame(() => searchButtonRef.current?.focus()); }} />}

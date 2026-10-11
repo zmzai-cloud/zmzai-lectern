@@ -94,6 +94,7 @@ export default function SessionMessageSearch({ sessionId, onClose }: { sessionId
       <form className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2" onSubmit={event => { event.preventDefault(); void search(); }}>
         <Search size={16} className="shrink-0 text-ink-3" />
         <input ref={inputRef} autoFocus aria-label="搜索当前会话" placeholder="搜索当前会话" maxLength={200} value={query} onChange={event => setQuery(event.target.value)} className="h-8 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none" />
+        {!busy && !error && results.length > 0 && <span className="shrink-0 font-mono text-[0.625rem] text-ink-3">{results.length} 条{cursor ? "+" : ""}</span>}
         {busy && <LoaderCircle size={14} className="shrink-0 animate-spin text-ink-3" />}
         <button ref={closeRef} type="button" title="关闭搜索" aria-label="关闭搜索" className={iconButton} onClick={onClose}><X size={16} /></button>
       </form>

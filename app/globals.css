@@ -282,6 +282,12 @@ html[data-theme="dark"] {
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
 /* 工作流程组（Zcode 式收起）：与工具过程行同款弱化裸行；展开后纯缩进子行，
    无背景无连线——层级仍由颜色深浅承担。 */
+/* 乐观回显（走查 F2）：发送瞬间的气泡半透明，真实 message.updated 落地后
+   换成实体消息转实——“到底发没发出去”的不确定感靠这一档透明度表达。 */
+.chat-echo-pending { opacity: 0.55; }
+/* 交付后结论段（走查 F4）：答案与过场叙述同为正文，扫一眼分不清——结论段
+   加一档字号/行距/字重，仅排版分层，不引线框。 */
+.chat-final-answer { font-size: 0.9375rem; line-height: 1.75; font-weight: 500; }
 .chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.7rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
 .chat-workflow-toggle:hover { color: var(--color-ink); }
 .chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }

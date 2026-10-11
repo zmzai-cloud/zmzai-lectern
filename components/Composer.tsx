@@ -69,6 +69,10 @@ type Props = {
   /** 会话级权限模式（Codex 基准 ④）：胶囊常驻展示，点击循环切换。 */
   permissionMode?: PermissionMode;
   onCyclePermissionMode?: () => void;
+  /** 发送被恢复闸挡下（上一任务外部副作用未确认）：发送键禁用，唯一出路是
+   *  上方「核对并继续上次任务」横幅——中断态三个入口并存没有主次，正是
+   *  走查 F3 要收敛的（输入框看着能用，一发就被 409 弹回才是死胡同）。 */
+  sendBlocked?: boolean;
 };
 
 /** 权限胶囊三态表达（demo 基准）：完全访问 amber / 每次确认 蓝 / 只读与默认 灰。 */
@@ -85,7 +89,7 @@ const PERM_PILL: Record<PermissionMode, { label: string; cls: string }> = {
  * SKILL.md 的 markdown 随本次 prompt 注入（与 framework PluginSkill 同源约定）；
  * 推理力度随本次 prompt 下发（relay reasoning_effort，framework thinkingLevel）。
  */
-export default function Composer({ sessionId, running, selectedModel, onSelectModel, onSend, onAbort, permissionMode, onCyclePermissionMode }: Props) {
+export default function Composer({ sessionId, running, selectedModel, onSelectModel, onSend, onAbort, permissionMode, onCyclePermissionMode, sendBlocked = false }: Props) {
   const [text, setText] = useState("");
   const [models, setModels] = useState<ModelsState | null>(null);
   const [skills, setSkills] = useState<SkillOption[]>([]);
@@ -695,11 +699,12 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
         <div className="absolute bottom-full left-1/2 mb-2 max-h-72 w-full max-w-3xl -translate-x-1/2 overflow-y-auto rounded-md border border-line bg-surface p-1.5 shadow-lg ring-1 ring-line">
           <div className="px-2 py-1.5 text-[0.6875rem] font-semibold text-ink-3">推理力度 · 对本条消息生效</div>
           {([
-            { value: "off" as const, label: "默认", hint: "不发送 reasoning_effort（最兼容）" },
-            { value: "minimal" as const, label: "最小", hint: "minimal" },
-            { value: "low" as const, label: "低", hint: "low" },
-            { value: "medium" as const, label: "中", hint: "medium" },
-            { value: "high" as const, label: "高", hint: "high" },
+            // hint 是给用户看的语义（走查 F6：裸参数名不自解释）
+            { value: "off" as const, label: "默认", hint: "不额外思考，直接回答（最兼容）" },
+            { value: "minimal" as const, label: "最小", hint: "极简思考，最快" },
+            { value: "low" as const, label: "低", hint: "轻量思考" },
+            { value: "medium" as const, label: "中", hint: "平衡思考与速度" },
+            { value: "high" as const, label: "高", hint: "深入思考，更慢更细" },
           ] as const).map((opt) => {
             // off 永远可用；有白名单时非白名单档位禁用（避免 relay 400）
             const unsupported = opt.value !== "off" && allowedEfforts !== undefined && !allowedEfforts.has(opt.value);
@@ -993,34 +998,43 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
           {!running && attachments.blockedReason && (
             <span className="mr-1.5 hidden text-[0.6875rem] text-ink-3 sm:inline">{attachments.blockedReason}</span>
           )}
-          {running ? (
-            /* 中止与发送共用轮廓（墨底白方块）：运行中止是常规操作不是危险操作，
-               红色警示只留给真正的破坏性确认——常驻红方块在跑任务时像报错。 */
+          {/* 运行态双按钮（走查 F1）：发送键不再被中止顶掉——framework 本就支持
+              排队（enqueuePrompt），此前运行中打完字却没有任何可见的发送入口。
+              发送保持主位（墨底），中止退为次要（描边）；空的输入框让发送禁用，
+              中止自然成为当前唯一可点项。 */}
+          <div className="flex items-center gap-1.5">
+          {running && (
             <button
               type="button"
               onClick={onAbort}
               title="中止"
               aria-label="中止"
-              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
+              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md border border-line text-ink transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong"
             >
-              <span className="h-2.5 w-2.5 rounded-[2px] bg-bg" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              // 有失败附件时不允许发送（用户需重试或移除），上传中也不允许——
-              // 否则会发出一个缺少附件的消息，而用户以为文件已经带上了。
-              disabled={(!text.trim() && attachments.readyRefs.length === 0) || attachments.blockedReason !== null}
-              title={attachments.blockedReason ?? "发送（⏎）"}
-              aria-label="发送"
-              className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <span className="h-2.5 w-2.5 rounded-[2px] bg-ink" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={submit}
+            // 恢复闸（F3）：发送必被 409 弹回时禁用，横幅是唯一出路。
+            // 附件失败/上传中同样不发半个包（规格 §7.5 / §18.8）。
+            disabled={(!text.trim() && attachments.readyRefs.length === 0) || attachments.blockedReason !== null || sendBlocked}
+            title={
+              sendBlocked
+                ? "上一任务中断未确认——先点上方「核对并继续上次任务」"
+                : running
+                  ? "发送（不打断当前任务，本条排队执行）"
+                  : (attachments.blockedReason ?? "发送（⏎）")
+            }
+            aria-label="发送"
+            className="chat-primary-action flex h-8 w-8 items-center justify-center rounded-md bg-ink text-bg transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selected-strong disabled:cursor-not-allowed disabled:opacity-25"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          </div>
         </div>
       </div>
     </div>

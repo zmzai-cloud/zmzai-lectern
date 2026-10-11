@@ -72,6 +72,9 @@ async function runCase(name, { promptDelay, promptStatus, promptBody }) {
       //    error 字段都要能识别），toast 不得是英文裸码，原文回到输入框。
       const banner = page.getByRole("button", { name: "核对并继续上次任务", exact: true });
       await banner.waitFor({ timeout: 5000 });
+      // F3：恢复闸挂上后发送键禁用——横幅是唯一出路，输入框不再是假入口
+      const sendButton = page.getByRole("button", { name: "发送", exact: true });
+      assert.ok(await sendButton.isDisabled(), `${name}: send must be disabled while recovery-blocked`);
       await page.getByText(promptBody.expectToast, { exact: false }).first().waitFor({ timeout: 5000 });
       assert.equal(await page.getByText("RECOVERY_REQUIRED", { exact: true }).count(), 0, `${name}: raw code must not leak into the toast`);
       await page.waitForTimeout(200);

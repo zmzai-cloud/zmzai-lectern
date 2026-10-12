@@ -35,7 +35,9 @@ node scripts/prepare-prod-package.mjs
 (cd .package-build && npm install --omit=dev --no-audit --no-fund --loglevel=error)
 # 替换前保存 trace 命中的最小依赖清单（npm 全量里大量纯 JS 包已被 webpack
 # bundle 进 .next/server，运行时不再 require，按 trace 白名单删掉才瘦得下来）
-node scripts/save-trace-pkgs.mjs .next/trace-pkgs.txt
+# trace 清单在 web 阶段已生成（pnpm 布局还在时）；共享 web 构建复用下这里
+# 只做兜底——正常路径不重算（standalone/node_modules 已是 npm 实体，重算必失败）
+[ -f .next/trace-pkgs.txt ] || node scripts/save-trace-pkgs.mjs .next/trace-pkgs.txt
 guard_mv .next/standalone/node_modules
 mv .package-build/node_modules .next/standalone/node_modules
 # 瘦身两刀：① prune 按 trace 白名单删冗余纯 JS 包 ② shrink 裁剪 native 平台/语言

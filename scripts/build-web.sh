@@ -77,5 +77,10 @@ mkdir -p .next/standalone/.next
 cp -R public .next/standalone/public 2>/dev/null || mkdir -p .next/standalone/public
 cp -R .next/static .next/standalone/.next/static
 
+echo "==> [web] 保存 trace 命中包清单（save-trace）"
+# 必须在 pnpm 布局的 standalone/node_modules 还在时跑（平台包的第 [3/5] 步会把
+# 它整体换成 npm 实体，之后 .pnpm 就没了）。平台脚本按「文件存在即跳过」复用。
+node scripts/save-trace-pkgs.mjs .next/trace-pkgs.txt
+
 current_identity > "$marker"
 echo "==> [web] 完成，复用标记已写入 ${marker}"

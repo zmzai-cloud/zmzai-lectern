@@ -396,11 +396,14 @@ function SessionRow({
         <details className="task-row-menu absolute right-1.5 top-1.5 z-10" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); } }}>
           <summary aria-label="任务操作" className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md bg-surface text-ink-3 hover:text-ink">···</summary>
           <div className="task-row-options absolute right-0 top-full z-20 mt-1 w-40 rounded-lg border border-line bg-bg p-1.5 shadow-md" onClick={(e) => { const details = e.currentTarget.closest("details"); if (details) details.open = false; }}>
+          {/* 菜单项尺寸/排布由 globals.css 的 .task-row-options 统一接管
+              （全宽 32px 行）——这里只留颜色语义类，别再写 h-5/w-5 之类的
+              死类（与 CSS 打架，误导后来者以为这是图标按钮）。 */}
           <button
             type="button"
             title="停止任务"
             onClick={(e) => { e.stopPropagation(); onAbort?.(s.id); }}
-            className={cn("flex h-5 w-5 items-center justify-center rounded-sm bg-surface text-ink-3 transition-colors hover:text-warning", !s.running && "hidden")}
+            className={cn("text-ink-3 transition-colors hover:text-warning", !s.running && "hidden")}
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1" /></svg>
             <span>停止任务</span>
@@ -412,7 +415,7 @@ function SessionRow({
               e.stopPropagation();
               onTogglePinned(s.id);
             }}
-            className={cn("flex h-5 w-5 items-center justify-center rounded-sm bg-surface transition-colors", s.pinned ? "text-accent" : "text-ink-3 hover:text-ink")}
+            className={cn("transition-colors", s.pinned ? "text-accent" : "text-ink-3 hover:text-ink")}
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill={s.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.4">
               <path d="M9.5 2.5l4 4L6 14l-1-1 2-2-3.5.5L3 11l3-3-3.5-1 1-1L8 5.5l1-1L9.5 2.5z" strokeLinejoin="round" />
@@ -426,7 +429,7 @@ function SessionRow({
               e.stopPropagation();
               onToggleArchived(s.id);
             }}
-            className="flex h-5 w-5 items-center justify-center rounded-sm bg-surface text-ink-3 transition-colors hover:text-ink"
+            className="text-ink-3 transition-colors hover:text-ink"
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <rect x="2.5" y="3" width="11" height="10" rx="1.2" />
@@ -442,13 +445,17 @@ function SessionRow({
               e.stopPropagation();
               onStartRename(s.id, s.title || "");
             }}
-            className="flex h-5 w-5 items-center justify-center rounded-sm bg-surface text-ink-3 transition-colors hover:text-ink"
+            className="text-ink-3 transition-colors hover:text-ink"
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M11.3 2.3a1.5 1.5 0 0 1 2.1 2.1L5 12.8l-3 .7.7-3 8.6-8.2z" strokeLinejoin="round" />
             </svg>
             <span>重命名</span>
           </button>
+          {/* 删除是破坏性操作（连带消息记录，确认后不可恢复）：与安全操作
+              用分隔线分域 + 常态即 danger 色——hover 才变红在四连排的菜单里
+              几乎不可见，误触引导不足（走查二轮发现）。 */}
+          <div className="my-1 h-px bg-line" aria-hidden />
           <button
             type="button"
             title="删除会话"
@@ -456,7 +463,7 @@ function SessionRow({
               e.stopPropagation();
               if (window.confirm(`删除会话「${s.title || "未命名"}」？消息记录将一并删除。`)) onDelete(s.id);
             }}
-            className="flex h-5 w-5 items-center justify-center rounded-sm bg-surface text-ink-3 transition-colors hover:text-danger"
+            className="text-danger transition-colors hover:opacity-80"
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8" strokeLinecap="round" strokeLinejoin="round" />

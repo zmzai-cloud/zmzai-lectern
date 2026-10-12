@@ -342,7 +342,7 @@ html[data-theme="dark"] {
 .task-row-menu { opacity: 0; }
 .task-row:hover .task-row-menu, .task-row:focus-within .task-row-menu, .task-row-menu[open] { opacity: 1; }
 .task-row-menu summary::-webkit-details-marker { display: none; }
-.task-row-options button { width: 100%; height: 32px; gap: 9px; justify-content: flex-start; padding-inline: 8px; border-radius: 6px; background: transparent; font-size: 12px; }
+.task-row-options button { display: flex; align-items: center; width: 100%; height: 32px; gap: 9px; justify-content: flex-start; padding-inline: 8px; border-radius: 6px; background: transparent; font-size: 12px; }
 .task-row-options button:hover { background: var(--color-surface-2); }
 @media (hover: none) { .task-row-menu { opacity: 1; } }
 .task-context { background: var(--color-bg); }

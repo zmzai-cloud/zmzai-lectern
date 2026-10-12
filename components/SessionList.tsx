@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "@zmzai/theme";
 import { usePlatform } from "@/lib/use-platform";
+import { confirmDialog } from "@/components/ConfirmDialog";
 import type { SessionListItem } from "@/lib/types";
 import { groupTasks, unreadTaskCount, type TaskGroup } from "@/lib/task-groups";
 import { presentTask, sessionListOutcome } from "@/lib/task-presentation";
@@ -461,7 +462,13 @@ function SessionRow({
             title="删除会话"
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm(`删除会话「${s.title || "未命名"}」？消息记录将一并删除。`)) onDelete(s.id);
+              // 自绘确认框（替代原生 confirm）：危险分级 + 应用语言统一。
+              void confirmDialog({
+                title: `删除会话「${s.title || "未命名"}」？`,
+                description: "消息记录将一并删除，不可恢复。",
+                confirmLabel: "删除",
+                danger: true,
+              }).then((ok) => { if (ok) onDelete(s.id); });
             }}
             className="text-danger transition-colors hover:opacity-80"
           >

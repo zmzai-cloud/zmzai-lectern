@@ -152,6 +152,34 @@ export const client = {
     post("/api/memory/candidates", { projectId, id, action, ...(statement !== undefined ? { statement } : {}) })
       .then((r) => j<{ ok: boolean; candidate?: { id: number; statement: string; status: string }; error?: string }>(r)),
 
+  /** K1 绑定面（T19c 设置区消费）。 */
+  memoryBinding: (projectId: string) =>
+    fetch(`/api/memory/binding?projectId=${encodeURIComponent(projectId)}`)
+      .then((r) => j<{
+        projectId: string;
+        projectName: string;
+        autoBankId: string;
+        binding: { bankId: string; bankName: string; source: string; syncPolicy: string; enabled: number; bindingVersion: number } | null;
+        banks: Array<{ bankId: string; name: string; memoryCount: number | null; source: string }>;
+        banksError?: string;
+      }>(r)),
+
+  memoryBindingPost: (body: { projectId?: string; action?: string; bankId?: string; bankName?: string; syncPolicy?: string; enabled?: boolean }) =>
+    post("/api/memory/binding", body)
+      .then((r) => j<{ ok?: boolean; binding?: { bankId: string; bankName: string; source: string; syncPolicy: string; enabled: number }; error?: string; message?: string }>(r)),
+
+  memoryOutbox: (projectId: string) =>
+    fetch(`/api/memory/outbox?projectId=${encodeURIComponent(projectId)}`)
+      .then((r) => j<{ rows: Array<{ id: number; state: string; attempts: number; lastError: string | null; operationId: string | null; updatedAt: string; payload: { content: string } }> }>(r)),
+
+  memoryOutboxAction: (projectId: string, body: { id?: number; action: "retry" | "drain" }) =>
+    post("/api/memory/outbox", { projectId, ...body })
+      .then((r) => j<{ ok?: boolean; report?: { sent: number; succeeded: number; failed: number; paused: boolean }; error?: string }>(r)),
+
+  memoryRecallLog: (projectId: string) =>
+    fetch(`/api/memory/recall-log?projectId=${encodeURIComponent(projectId)}&limit=10`)
+      .then((r) => j<{ entries: Array<{ sessionId: string; hitCount: number; at: string; goalDigest: string }> }>(r)),
+
   authLogout: () => post("/api/auth/logout").then((r) => j<{ ok: boolean }>(r)),
 
   login: (email: string, password: string) =>

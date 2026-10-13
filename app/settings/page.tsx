@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, SlidersHorizontal, ShieldCheck, History, KeyRound, Plug, Blocks, Sparkles } from "lucide-react";
+import { ArrowLeft, SlidersHorizontal, ShieldCheck, History, KeyRound, Plug, Blocks, Sparkles, Brain } from "lucide-react";
 import { Button, Navbar } from "@zmzai/theme";
 
 import AccountBlock from "@/components/AccountBlock";
@@ -18,13 +18,14 @@ import type { KeyStatus, McpStatuses, PermissionDomain, PermissionSettings, Plug
  * 所有修改保存即生效，无需重启。
  */
 
-type SectionId = "general" | "agent" | "audit" | "credentials" | "mcp" | "plugins" | "skills";
+type SectionId = "general" | "agent" | "audit" | "credentials" | "memory" | "mcp" | "plugins" | "skills";
 
 const PRIMARY_NAV: { id: SectionId; label: string }[] = [
   { id: "general", label: "通用" },
   { id: "agent", label: "Agent 与权限" },
   { id: "audit", label: "权限日志" },
   { id: "credentials", label: "模型与凭据" },
+  { id: "memory", label: "记忆" },
 ];
 
 const EXTENSION_NAV: { id: Extract<SectionId, "mcp" | "plugins" | "skills">; label: string }[] = [
@@ -32,12 +33,13 @@ const EXTENSION_NAV: { id: Extract<SectionId, "mcp" | "plugins" | "skills">; lab
   { id: "plugins", label: "插件" },
   { id: "skills", label: "技能" },
 ];
-const SECTION_ICON = { general: SlidersHorizontal, agent: ShieldCheck, audit: History, credentials: KeyRound, mcp: Plug, plugins: Blocks, skills: Sparkles };
+const SECTION_ICON = { general: SlidersHorizontal, agent: ShieldCheck, audit: History, credentials: KeyRound, memory: Brain, mcp: Plug, plugins: Blocks, skills: Sparkles };
 const SECTION_DESCRIPTION: Record<SectionId, string> = {
   general: "让 Lectern 适合你的工作习惯。",
   agent: "选择 Agent 在工作中可以执行的操作。",
   audit: "查看每一次授权决定及其来源。",
   credentials: "连接模型服务，管理访问凭据。",
+  memory: "项目长期记忆：连接 memory.zmzai.cloud，管理绑定、候选与同步。",
   mcp: "连接外部工具和数据源。",
   plugins: "管理工作区与本机的扩展能力。",
   skills: "浏览 Agent 可以使用的技能。",
@@ -292,6 +294,252 @@ function FailoverCard() {
         </div>
       )}
     </Card>
+  );
+}
+
+/** K1 记忆（设置 → 记忆）：作用于当前活跃项目；全部接口缺省 projectId=active。 */
+function MemoryCard() {
+  const [status, setStatus] = useState<{ connected: boolean; prefix: string | null; deviceId: string; origin: string } | null>(null);
+  const [info, setInfo] = useState<{
+    projectName: string;
+    autoBankId: string;
+    binding: { bankId: string; bankName: string; source: string; syncPolicy: string; enabled: number; bindingVersion: number } | null;
+    banks: Array<{ bankId: string; name: string; memoryCount: number | null; source: string }>;
+    banksError?: string;
+  } | null>(null);
+  const [candidates, setCandidates] = useState<Array<{ id: number; statement: string; kind: string; scope: string }>>([]);
+  const [rows, setRows] = useState<Array<{ id: number; state: string; attempts: number; lastError: string | null; updatedAt: string; payload: { content: string } }>>([]);
+  const [recalls, setRecalls] = useState<Array<{ sessionId: string; hitCount: number; at: string; goalDigest: string }>>([]);
+  const [rebindBank, setRebindBank] = useState("");
+  const [edits, setEdits] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    void client.memoryStatus().then(setStatus).catch(() => undefined);
+    void client.memoryBinding("").then(setInfo).catch(() => undefined);
+    void client.memoryCandidates("", "pending").then((d) => setCandidates(d.candidates ?? [])).catch(() => undefined);
+    void client.memoryOutbox("").then((d) => setRows(d.rows ?? [])).catch(() => undefined);
+    void client.memoryRecallLog("").then((d) => setRecalls(d.entries ?? [])).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const act = async (label: string, fn: () => Promise<{ ok?: boolean; connected?: boolean; error?: string; message?: string }>) => {
+    setBusy(true);
+    try {
+      const result = await fn();
+      if (result.ok) setNotice(label);
+      else setNotice(result.error ?? result.message ?? `${label}失败`);
+      refresh();
+    } catch {
+      setNotice(`${label}失败`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sourceLabel = (source: string) => (source === "agent" ? "Agent 工作区" : source === "lectern" ? "Lectern" : "手动");
+
+  return (
+    <>
+      <Card
+        title="服务连接"
+        desc="登录后自动接通（PAT 后台签发，无连接按钮）；运行期全程使用 PAT，浏览器 cookie 只在签发那一步使用。"
+      >
+        <div className="flex items-center gap-2 text-xs text-ink-2">
+          <span className={status?.connected ? "text-success" : "text-ink-3"}>
+            {status ? (status.connected ? `已连接 ${status.origin}` : `未连接（登录后自动接通）`) : "…"}
+          </span>
+          {status?.connected && <span className="text-ink-3">{status.prefix}… · 设备 {status.deviceId}</span>}
+          <span className="flex-1" />
+          {status?.connected && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act("已撤销本设备凭据", () => client.memoryDisconnect())}
+              className="shrink-0 text-[0.6875rem] text-ink-3 transition-colors hover:text-danger disabled:opacity-50"
+            >
+              撤销本设备凭据
+            </button>
+          )}
+        </div>
+        {notice && <div className="mt-2 text-xs text-ink-3">{notice}</div>}
+      </Card>
+
+      <Card
+        title={`项目绑定 · ${info?.projectName ?? "…"}`}
+        desc="项目首个任务自动创建专属知识库并绑定；可换绑任意有权知识库（含 Agent 工作区，跨端共享记忆）。换绑后旧待上传记录不会发往新库。"
+      >
+        {info?.binding ? (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 rounded-sm border border-line bg-bg px-2.5 py-1.5 text-xs">
+              <span className="truncate font-medium text-ink">{info.binding.bankName}</span>
+              <span className="shrink-0 text-[0.625rem] text-ink-3">{sourceLabel(info.binding.source)} · v{info.binding.bindingVersion}</span>
+              <span className="font-mono text-[0.625rem] text-ink-3">{info.binding.bankId}</span>
+              <span className="flex-1" />
+              <label className="flex shrink-0 items-center gap-1.5 text-[0.6875rem] text-ink-3">
+                <input
+                  type="checkbox"
+                  checked={info.binding.enabled === 1}
+                  disabled={busy}
+                  onChange={(e) => act(e.target.checked ? "已启用" : "已停用", () => client.memoryBindingPost({ enabled: e.target.checked }))}
+                />
+                召回启用
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[0.6875rem] text-ink-3">写入策略</span>
+              {(["off", "manual", "auto"] as const).map((policy) => (
+                <button
+                  key={policy}
+                  type="button"
+                  disabled={busy || info.binding!.syncPolicy === policy}
+                  onClick={() => act(`写入策略已切换为 ${policy}`, () => client.memoryBindingPost({ syncPolicy: policy }))}
+                  className={`rounded-sm border px-2 py-1 text-[0.6875rem] transition-colors disabled:opacity-60 ${
+                    info.binding!.syncPolicy === policy ? "border-ink/40 bg-surface-2 text-ink" : "border-line text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  {policy === "off" ? "关闭" : policy === "manual" ? "候选待审（推荐）" : "直接写入"}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={rebindBank}
+                onChange={(e) => setRebindBank(e.target.value)}
+                className="min-w-56 rounded-sm border border-line bg-bg px-2 py-1.5 text-xs text-ink"
+              >
+                <option value="">换绑到…（选择知识库）</option>
+                {info.banks.map((bank) => (
+                  <option key={bank.bankId} value={`${bank.bankId}\t${bank.name}`}>
+                    {bank.name}（{sourceLabel(bank.source)}{bank.bankId === info.binding?.bankId ? " · 当前" : ""}）
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy || !rebindBank}
+                onClick={() => {
+                  const [bankId, bankName] = rebindBank.split("\t");
+                  void act("已换绑", () => client.memoryBindingPost({ action: "rebind", bankId, bankName }));
+                  setRebindBank("");
+                }}
+              >
+                换绑
+              </Button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => act("已恢复自动绑定", () => client.memoryBindingPost({ action: "rebind-auto" }))}
+                className="text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50"
+              >
+                恢复自动绑定
+              </button>
+            </div>
+            {info.banksError && <div className="text-[0.6875rem] text-ink-3">知识库列表不可达（{info.banksError}），换绑暂不可用</div>}
+          </div>
+        ) : (
+          <div className="text-xs text-ink-3">尚未绑定——项目跑第一个任务后自动创建并绑定；接通服务后即生效。</div>
+        )}
+      </Card>
+
+      {candidates.length > 0 && (
+        <Card title={`候选待审（${candidates.length}）`} desc="交付后自动提炼的项目知识候选；采纳后进入同步队列，丢弃永不写入云端。">
+          <div className="space-y-2">
+            {candidates.map((candidate) => (
+              <div key={candidate.id} className="rounded-sm border border-line bg-bg px-2.5 py-2 text-xs">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="shrink-0 text-[0.625rem] text-ink-3">{candidate.kind} · {candidate.scope}</span>
+                  <span className="flex-1" />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => act("已丢弃", () => client.memoryCandidateAction("", candidate.id, "discard"))}
+                    className="shrink-0 text-[0.6875rem] text-ink-3 transition-colors hover:text-danger disabled:opacity-50"
+                  >
+                    丢弃
+                  </button>
+                </div>
+                <input
+                  value={edits[candidate.id] ?? candidate.statement}
+                  onChange={(e) => setEdits((prev) => ({ ...prev, [candidate.id]: e.target.value }))}
+                  className="w-full rounded-sm border border-line bg-bg px-2 py-1.5 text-xs text-ink"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void act("已采纳，进入同步队列", () =>
+                      client.memoryCandidateAction("", candidate.id, "approve", edits[candidate.id] ?? candidate.statement),
+                    )
+                  }
+                  className="mt-1.5 text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50"
+                >
+                  采纳（可先改写语句）
+                </button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {rows.length > 0 && (
+        <Card title={`同步队列（${rows.length}）`} desc="本地持久 outbox：同幂等键指数退避重试，状态不明的条目先对账不盲发。">
+          <div className="space-y-1">
+            {rows.map((row) => (
+              <div key={row.id} className="flex items-center gap-2 rounded-sm border border-line bg-bg px-2.5 py-1.5 text-xs">
+                <span className="shrink-0 text-[0.625rem] text-ink-3">{row.state}</span>
+                <span className="min-w-0 flex-1 truncate text-ink-2">{row.payload.content}</span>
+                {row.attempts > 0 && <span className="shrink-0 text-[0.625rem] text-ink-3">×{row.attempts}</span>}
+                {row.lastError && <span className="shrink-0 text-[0.625rem] text-ink-3">{row.lastError}</span>}
+                {(row.state === "failed" || row.state === "unknown") && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => act("已重新入队", () => client.memoryOutboxAction("", { id: row.id, action: "retry" }))}
+                    className="shrink-0 text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50"
+                  >
+                    重试
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act("已触发同步", () => client.memoryOutboxAction("", { action: "drain" }))}
+            className="mt-2 text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50"
+          >
+            立即同步一轮
+          </button>
+        </Card>
+      )}
+
+      {recalls.length > 0 && (
+        <Card title="最近召回" desc="任务中注入的项目记忆来源（最近 10 次）。">
+          <div className="space-y-1">
+            {recalls.map((recall, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-ink-3">
+                <span className="shrink-0">{new Date(recall.at).toLocaleString()}</span>
+                <span className="shrink-0 text-ink-2">{recall.hitCount} 条</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-[0.625rem]">{recall.sessionId}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </>
   );
 }
 
@@ -739,6 +987,8 @@ export default function SettingsPage() {
                 <FailoverCard />
               </>
             )}
+
+            {section === "memory" && <MemoryCard />}
 
             {section === "mcp" && (
               <Card

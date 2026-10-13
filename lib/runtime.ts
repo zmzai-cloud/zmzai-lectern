@@ -38,6 +38,7 @@ import { loadMcpConfig } from "./mcp-config.js";
 import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
 import { recallSection } from "./memory/service.js";
 import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
+import { startMemoryOutboxWorker } from "./memory/outbox.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
 import { WorkflowError } from "./workflow-error.js";
 import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants.js";
@@ -324,6 +325,10 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   const sessionStore = createSqliteSessionStore({ dataDir: dir });
   const eventLog = createSqliteEventLog({ dataDir: dir });
   registerLeaseRecovery({ store: sessionStore, log: eventLog });
+
+  // K1 outbox worker（T19b）：每分钟入队 approved 候选 + drain（恢复扫描/退避/
+  // operationStatus 对账）。globalThis 守卫防重复；unref 不挡进程退出。
+  startMemoryOutboxWorker(project.id);
 
   // T03（PC03）：子代理运行限额——根 Task 与 Host 全局（全进程共享 admission 计数）。
   const subagentLimits = {

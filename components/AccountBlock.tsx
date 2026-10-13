@@ -43,6 +43,13 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     return () => { window.removeEventListener("lectern:theme-change", sync); window.removeEventListener("storage", sync); };
   }, [refresh]);
 
+  // K1 记忆自动接通：登录态出现即后台静默签发 PAT（服务端 upsert-by-name，
+  // 重复触发不堆积；失败等下个触发点重试，不打扰用户）。cookie 只在此步使用。
+  useEffect(() => {
+    if (!auth?.loggedIn) return;
+    void client.memoryConnect().catch(() => undefined);
+  }, [auth?.loggedIn]);
+
   useEffect(() => {
     const bridge = window.lecternNative;
     if (!bridge?.updateState) return;

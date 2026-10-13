@@ -16,7 +16,18 @@ import type { PermissionAction, PermissionDomain, PermissionSettings } from "./t
 const settingsFile = resolve(dataDir, "settings.json");
 const secretFile = resolve(dataDir, ".secret");
 
-export type HarnessSettings = { personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; failoverEndpoints?: FailoverEndpointInput[] };
+export type HarnessSettings = {
+  personalKey?: string;
+  personalKeyPrefix?: string;
+  relayUrl?: string;
+  ollamaUrl?: string;
+  failoverEndpoints?: FailoverEndpointInput[];
+  /** 记忆服务 PAT（memory.zmzai.cloud，K1）：自动接通产出，加密落盘 */
+  memoryPat?: string;
+  memoryPatPrefix?: string | null;
+  /** 本设备短标识（PAT 命名 lectern-<id> 用，非机密） */
+  memoryDeviceId?: string;
+};
 
 /** 降级端点（设置页可增删改，持久化在 settings.json）。apiKey 属敏感凭据，落盘前加密。 */
 export type FailoverEndpointInput = { baseUrl: string; apiKey?: string; modelId?: string };
@@ -54,7 +65,7 @@ function decrypt(encoded: string): string | null {
 
 /** ---- settings.json 读写（明文自动迁移为密文） ---- */
 
-type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[] };
+type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[]; memoryPatEnc?: string; memoryPatPrefix?: string; memoryDeviceId?: string };
 
 type StoredFailoverEndpoint = { baseUrl: string; apiKeyEnc?: string; apiKey?: string; modelId?: string };
 
@@ -74,7 +85,13 @@ function write(next: StoredSettings) {
 
 function read(): HarnessSettings {
   const stored = readStored();
-  const next: HarnessSettings = { relayUrl: stored.relayUrl, ollamaUrl: stored.ollamaUrl, personalKeyPrefix: stored.personalKeyPrefix };
+  const next: HarnessSettings = {
+    relayUrl: stored.relayUrl,
+    ollamaUrl: stored.ollamaUrl,
+    personalKeyPrefix: stored.personalKeyPrefix,
+    memoryPatPrefix: stored.memoryPatPrefix ?? null,
+    memoryDeviceId: stored.memoryDeviceId,
+  };
   if (stored.personalKeyEnc) {
     next.personalKey = decrypt(stored.personalKeyEnc) ?? undefined;
   } else if (stored.personalKey) {
@@ -82,6 +99,7 @@ function read(): HarnessSettings {
     next.personalKey = stored.personalKey;
     write({ ...stored, personalKeyEnc: encrypt(stored.personalKey), personalKey: undefined });
   }
+  if (stored.memoryPatEnc) next.memoryPat = decrypt(stored.memoryPatEnc) ?? undefined;
   // 降级端点：apiKey 解密，旧版明文自动迁移为密文
   if (stored.failoverEndpoints?.length) {
     next.failoverEndpoints = stored.failoverEndpoints.map((ep) => {
@@ -212,4 +230,39 @@ export function authHeaders(cookie: string | null): Record<string, string> {
 export function ollamaBase(): string | null {
   const url = read().ollamaUrl ?? process.env.OLLAMA_URL ?? null;
   return url ? url.replace(/\/$/, "") : null;
+}
+
+/** ---- 记忆服务 PAT（K1）：自动接通产出，AES-256-GCM 加密落盘 ---- */
+
+export function saveMemoryPat(token: string): void {
+  const stored = readStored();
+  stored.memoryPatEnc = encrypt(token.trim());
+  stored.memoryPatPrefix = token.trim().slice(0, 12);
+  write(stored);
+}
+
+export function clearMemoryPat(): void {
+  const stored = readStored();
+  delete stored.memoryPatEnc;
+  delete stored.memoryPatPrefix;
+  write(stored);
+}
+
+/** PAT 惰性读取（verifier 模式：每次现读，设置更新即时生效，不缓存进程内）。 */
+export function memoryPat(): string | null {
+  return read().memoryPat ?? null;
+}
+
+export function memoryPatPrefix(): string | null {
+  return read().memoryPatPrefix ?? null;
+}
+
+/** 本设备短标识（PAT 命名 lectern-<id>，多设备互不顶号）；首次生成后持久。 */
+export function ensureMemoryDeviceId(): string {
+  const stored = readStored();
+  if (stored.memoryDeviceId && /^[a-z0-9]{4,12}$/.test(stored.memoryDeviceId)) return stored.memoryDeviceId;
+  const id = Math.random().toString(36).slice(2, 8);
+  stored.memoryDeviceId = id;
+  write(stored);
+  return id;
 }

@@ -29,8 +29,7 @@ function bankSource(bankId: string): BankSource {
  * GET /api/memory/binding?projectId= — 当前绑定 + 有权 bank 列表（带来源标记）。
  * bank 列表来自 memory.zmzai.cloud（PAT）；不可达时 binding 仍返回（banks 空 + degraded）。
  */
-export async function GET(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const GET = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const project = resolveProject(request.nextUrl.searchParams.get("projectId"));
     const binding = getMemoryBinding(project.id);
     const client = createMemoryClient();
@@ -47,7 +46,6 @@ export async function GET(request: NextRequest) {
       ...(result.ok ? {} : { banksError: result.kind }),
     });
   });
-}
 
 /**
  * POST /api/memory/binding
@@ -55,8 +53,7 @@ export async function GET(request: NextRequest) {
  * - {action:"rebind-auto"} → 恢复自动绑定（确定性 lec_ bank，服务端幂等建库后绑）
  * - {syncPolicy:"off"|"manual"|"auto"} / {enabled:boolean} → 策略与开关
  */
-export async function POST(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const POST = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: string;
       action?: string;
@@ -96,4 +93,3 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: "VALIDATION", message: "需要 action/syncPolicy/enabled 之一" }, { status: 400 });
   });
-}

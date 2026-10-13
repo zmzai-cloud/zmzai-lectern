@@ -20,8 +20,7 @@ export type MemoryTraceEntry = {
  * GET /api/memory/recall-log?sessionId=…[&limit=5] 或 ?projectId=…[&limit=10]
  * 会话记忆行的数据源（sessionId）/ 项目设置「最近召回」（projectId）。
  */
-export async function GET(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const GET = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const sp = request.nextUrl.searchParams;
     const limitRaw = Number(sp.get("limit") ?? "5");
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 20) : 5;
@@ -63,4 +62,3 @@ export async function GET(request: NextRequest) {
       entries,
     });
   });
-}

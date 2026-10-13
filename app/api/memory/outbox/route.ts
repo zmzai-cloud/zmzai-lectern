@@ -14,15 +14,12 @@ export const runtime = "nodejs";
  *   同幂等键重发由服务端去重表兜住不重复写入）
  * - POST {projectId?, action: "drain"} → 手动触发一轮 drain（联调/自愈用）
  */
-export async function GET(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const GET = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const project = resolveProject(request.nextUrl.searchParams.get("projectId"));
     return NextResponse.json({ projectId: project.id, rows: listOutbox(project.id) });
   });
-}
 
-export async function POST(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const POST = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const body = (await request.json().catch(() => ({}))) as { projectId?: string; id?: number; action?: string };
     const project = resolveProject(body.projectId ?? null);
 
@@ -37,7 +34,6 @@ export async function POST(request: NextRequest) {
     if (!ok) return NextResponse.json({ error: "NOT_FOUND", message: "仅 failed/unknown 可重试" }, { status: 404 });
     return NextResponse.json({ ok: true });
   });
-}
 
 function resolveProject(projectId: string | null) {
   if (projectId) {

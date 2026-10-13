@@ -13,17 +13,14 @@ export const runtime = "nodejs";
  * - POST {projectId?, id, action: approve|discard, statement?} → 审阅动作（可顺带改写语句）
  * approved 由 T19b 的 outbox 入队消费；discard 永不写入云端。
  */
-export async function GET(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const GET = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const project = resolveProject(request.nextUrl.searchParams.get("projectId"));
     const statusRaw = request.nextUrl.searchParams.get("status");
     const status = statusRaw === "pending" || statusRaw === "approved" || statusRaw === "discarded" ? statusRaw : undefined;
     return NextResponse.json({ projectId: project.id, candidates: listCandidates(project.id, status) });
   });
-}
 
-export async function POST(request: NextRequest) {
-  return withWorkflowErrors(async () => {
+export const POST = withWorkflowErrors(async (request: NextRequest): Promise<Response> => {
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: string;
       id?: number;
@@ -40,7 +37,6 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ ok: true, candidate: row });
   });
-}
 
 function resolveProject(projectId: string | null) {
   if (projectId) {

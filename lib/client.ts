@@ -143,6 +143,15 @@ export const client = {
 
   memoryDisconnect: () => fetch("/api/memory", { method: "DELETE" }).then((r) => j<{ connected: boolean }>(r)),
 
+  /** K1 候选待审（T19c UI 消费）。 */
+  memoryCandidates: (projectId: string, status?: string) =>
+    fetch(`/api/memory/candidates?projectId=${encodeURIComponent(projectId)}${status ? `&status=${status}` : ""}`)
+      .then((r) => j<{ projectId: string; candidates: Array<{ id: number; statement: string; kind: string; status: string; scope: string; createdAt: string }> }>(r)),
+
+  memoryCandidateAction: (projectId: string, id: number, action: "approve" | "discard", statement?: string) =>
+    post("/api/memory/candidates", { projectId, id, action, ...(statement !== undefined ? { statement } : {}) })
+      .then((r) => j<{ ok: boolean; candidate?: { id: number; statement: string; status: string }; error?: string }>(r)),
+
   authLogout: () => post("/api/auth/logout").then((r) => j<{ ok: boolean }>(r)),
 
   login: (email: string, password: string) =>

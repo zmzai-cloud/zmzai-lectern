@@ -37,6 +37,7 @@ import { relayBase } from "./relay.js";
 import { loadMcpConfig } from "./mcp-config.js";
 import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
 import { recallSection } from "./memory/service.js";
+import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
 import { WorkflowError } from "./workflow-error.js";
 import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants.js";
@@ -398,6 +399,11 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠
     runnerOptions: {
+      // K1 候选管线（T19a）：task_deliver 打标 → onRunEnd 异步提炼候选（fire-and-forget，
+      // 不阻塞交付回执）。syncPolicy=off/纯问答不提炼；manual=待审、auto=直通 approved
+      // （T19b outbox 消费 approved）。提炼走 relay chat/completions 直调（flash 级），
+      // Host 进程用 credentialRef 包 ALS——与模型流同一条凭据通道。
+      hooks: [memoryCandidateHooks(project, (sessionId) => sessionCredentialProvider?.(sessionId))],
       // K1 记忆召回：ContextBuilder 每 attempt 单点回调，service 内部按 session
       // 缓存（根目标一次）+ 子代理跳过 + 未接通/超时返回 undefined 旁路降级。
       // 本注入点是唯一装配位——Next 进程内与 Host（assembly re-export 本工厂）

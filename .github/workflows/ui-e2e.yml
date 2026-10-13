@@ -86,7 +86,8 @@ jobs:
     # 原生剪贴板只能在有真实 GUI 会话与系统剪贴板的 macOS 上验证。
     # Windows Explorer 一侧仍未覆盖——不要因为这个 job 绿了就声称跨平台已验证。
     runs-on: macos-15
-    timeout-minutes: 30
+    # 0.14.0：测试量增长（588→628）后实测 ~31m，30m 硬超时连续两次误杀——对齐 windows 侧 45m。
+    timeout-minutes: 45
     env:
       LECTERN_TEST_URL: http://127.0.0.1:3100
       LECTERN_DATA_DIR: /tmp/lectern-e2e/data

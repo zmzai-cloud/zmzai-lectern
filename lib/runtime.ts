@@ -36,6 +36,7 @@ import { capsFor } from "./model-caps.js";
 import { relayBase } from "./relay.js";
 import { loadMcpConfig } from "./mcp-config.js";
 import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
+import { recallSection } from "./memory/service.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
 import { WorkflowError } from "./workflow-error.js";
 import { dataDir as baseDataDir, defaultWorkspaceRoot } from "./runtime-constants.js";
@@ -397,6 +398,11 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠
     runnerOptions: {
+      // K1 记忆召回：ContextBuilder 每 attempt 单点回调，service 内部按 session
+      // 缓存（根目标一次）+ 子代理跳过 + 未接通/超时返回 undefined 旁路降级。
+      // 本注入点是唯一装配位——Next 进程内与 Host（assembly re-export 本工厂）
+      // 两形态共用，PAT 惰性现读对两进程同时生效。
+      memoryContextFor: (session, text) => recallSection(project, session.id, text),
       // B2：Host 模式凭据通道——ALS 不可用时按 sessionId 取 credentialRef
       // 包住每次模型流（个人 key 仍优先；cookie 仅在无 key 时由 authHeaders 采用）
       streamFnFor: (session) => {

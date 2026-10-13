@@ -142,7 +142,7 @@ export type EnsureBindingResult =
  * 幂等：已有 binding 直接返回；bankId 确定性派生 + 服务端同 owner 幂等，
  * 建库失败不落 binding，下个根目标自然重触发。
  */
-export async function ensureAutoBinding(project: Project, client: Pick<MemoryClient, "createBank">): Promise<EnsureBindingResult> {
+export async function ensureAutoBinding(project: Pick<Project, "id" | "name">, client: Pick<MemoryClient, "createBank">): Promise<EnsureBindingResult> {
   const existing = getMemoryBinding(project.id);
   if (existing) return { ok: true, binding: existing, created: false };
 

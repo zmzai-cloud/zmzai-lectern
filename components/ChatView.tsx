@@ -464,6 +464,13 @@ type Props = {
   } | null;
   /** 隔离操作结果横幅（page.tsx 持有，8s 自动消退）。 */
   wtNotice?: { kind: "ok" | "error"; text: string } | null;
+  /** K1 记忆召回痕迹（弱化过程行：命中数 + 来源 bank，点击展开逐条）。 */
+  memoryTrace?: {
+    bankName: string;
+    hitCount: number;
+    at: string;
+    hits: Array<{ text: string; score?: number; memoryId?: string }> | null;
+  } | null;
   /** 回溯重发：编辑某条用户消息并从此重跑（page.tsx 调 API，截断 + 重跑由服务端完成）。 */
   onRewind: (messageId: string, text: string) => void;
   /** 会话级权限模式（Codex 基准 ④）：Composer 常驻胶囊，点击循环。 */
@@ -650,7 +657,7 @@ const TOOL_ACTIVITY_PHRASE: Record<string, string> = {
   task: "正在执行子任务",
 };
 
-export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, onRewind, permissionMode, onCyclePermissionMode, recoveryBlocked, onResolveRecovery, onOpenChildSession }: Props) {
+export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, memoryTrace, onRewind, permissionMode, onCyclePermissionMode, recoveryBlocked, onResolveRecovery, onOpenChildSession }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint, task, taskAttempts } = data;
   // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
   // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
@@ -922,6 +929,24 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         >
           <span className="truncate">{wtNotice.text}</span>
         </div>
+      )}
+      {/* K1 记忆召回痕迹（弱化过程行，与读取 pill 同族）：命中数 + 来源 bank，展开逐条 */}
+      {memoryTrace && memoryTrace.hitCount > 0 && (
+        <details className="mx-auto w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] shrink-0 px-6 py-2">
+          <summary className="cursor-pointer text-xs text-ink-3">
+            项目记忆 {memoryTrace.hitCount} 条 · 来自「{memoryTrace.bankName}」
+          </summary>
+          <ul className="space-y-1 pt-2">
+            {(memoryTrace.hits ?? []).map((hit, i) => (
+              <li key={hit.memoryId ?? i} className="text-xs text-ink-2">
+                {hit.text}
+                {typeof hit.score === "number" && (
+                  <span className="ml-1.5 text-ink-3">相关度 {hit.score.toFixed(2)}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (

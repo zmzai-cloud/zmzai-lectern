@@ -319,6 +319,13 @@ export default function App() {
   // active 会话的隔离状态（切换会话时按服务端为准查询）+ 操作结果横幅
   const [activeIsolation, setActiveIsolation] = useState<SessionIsolation | null>(null);
   const [wtNotice, setWtNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  // K1 记忆召回痕迹（切换会话拉取最近一次；弱化过程行展示）
+  const [memoryTrace, setMemoryTrace] = useState<{
+    bankName: string;
+    hitCount: number;
+    at: string;
+    hits: Array<{ text: string; score?: number; memoryId?: string }> | null;
+  } | null>(null);
 
   const toggleIsolateNew = useCallback(() => {
     setIsolateNew((v) => {
@@ -760,8 +767,18 @@ export default function App() {
     setConnState("connected");
     setActiveIsolation(null);
     setWtNotice(null);
+    setMemoryTrace(null);
     // 隔离副本状态以服务端为准（worktree 映射在 worktrees.db）
     client.worktreeStatus(activeId).then((st) => !cancelled && setActiveIsolation(st)).catch(() => undefined);
+    // K1 记忆召回痕迹（recall_log 最近一条；无记录/未绑定静默无行）
+    void fetch(`/api/memory/recall-log?sessionId=${encodeURIComponent(activeId)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ binding: { bankName: string } | null; entries: Array<{ hitCount: number; at: string; hits: Array<{ text: string; score?: number; memoryId?: string }> | null }> }>) : null))
+      .then((data) => {
+        if (cancelled || !data?.entries?.length || !data.binding) return;
+        const latest = data.entries[0];
+        setMemoryTrace({ bankName: data.binding.bankName, hitCount: latest.hitCount, at: latest.at, hits: latest.hits });
+      })
+      .catch(() => undefined);
     let unsub = () => {};
     // P1-7 自动档：全部「始终允许」；细粒度权限（设置 → 通用）：命中的域自动「始终允许」。
     // live 与快照恢复两条路径共用这道闸——快照路径若无条件 setPending，重连/刷新会把
@@ -1415,6 +1432,7 @@ export default function App() {
               onOpenArtifact={() => openWorkbench("preview")}
               echo={echo}
               wtNotice={wtNotice}
+              memoryTrace={memoryTrace}
               onRewind={handleRewind}
               permissionMode={permissionMode}
               onCyclePermissionMode={activeId ? cyclePermissionMode : undefined}

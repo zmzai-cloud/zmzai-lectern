@@ -299,7 +299,7 @@ function FailoverCard() {
 
 /** K1 记忆（设置 → 记忆）：作用于当前活跃项目；全部接口缺省 projectId=active。 */
 function MemoryCard() {
-  const [status, setStatus] = useState<{ connected: boolean; prefix: string | null; deviceId: string; origin: string } | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean; status: "connected" | "signed_out" | "disabled"; prefix: string | null; deviceId: string; origin: string } | null>(null);
   const [info, setInfo] = useState<{
     projectName: string;
     autoBankId: string;
@@ -357,10 +357,15 @@ function MemoryCard() {
       >
         <div className="flex items-center gap-2 text-xs text-ink-2">
           <span className={status?.connected ? "text-success" : "text-ink-3"}>
-            {status ? (status.connected ? `已连接 ${status.origin}` : `未连接（登录后自动接通）`) : "…"}
+            {status ? (status.status === "disabled" ? "已停用（点击启用后自动接通）" : status.connected ? `已连接 ${status.origin}` : `未连接（登录后自动接通）`) : "…"}
           </span>
           {status?.connected && <span className="text-ink-3">{status.prefix}… · 设备 {status.deviceId}</span>}
           <span className="flex-1" />
+          {status?.status === "disabled" && (
+            <button type="button" disabled={busy} onClick={() => act("已重新启用自动接通", () => client.memoryEnable())} className="shrink-0 text-[0.6875rem] text-ink-3 transition-colors hover:text-ink disabled:opacity-50">
+              启用自动接通
+            </button>
+          )}
           {status?.connected && (
             <button
               type="button"

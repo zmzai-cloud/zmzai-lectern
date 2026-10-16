@@ -55,9 +55,11 @@ export function actCandidate(
   if (statement !== undefined) {
     const trimmed = statement.trim();
     if (trimmed.length < 4 || trimmed.length > MAX_STATEMENT_CHARS) return null;
-    db.prepare("UPDATE memory_candidates SET statement = ?, status = ? WHERE id = ? AND projectId = ?").run(trimmed, next, id, projectId);
+    const changed = db.prepare("UPDATE memory_candidates SET statement = ?, status = ? WHERE id = ? AND projectId = ? AND status = 'pending'").run(trimmed, next, id, projectId);
+    if (changed.changes !== 1) return null;
   } else {
-    db.prepare("UPDATE memory_candidates SET status = ? WHERE id = ? AND projectId = ?").run(next, id, projectId);
+    const changed = db.prepare("UPDATE memory_candidates SET status = ? WHERE id = ? AND projectId = ? AND status = 'pending'").run(next, id, projectId);
+    if (changed.changes !== 1) return null;
   }
   const row = db.prepare("SELECT * FROM memory_candidates WHERE id = ? AND projectId = ?").get(id, projectId) as
     | Record<string, unknown>

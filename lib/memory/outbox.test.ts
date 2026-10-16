@@ -13,6 +13,8 @@ vi.mock("../projects", () => ({
 }));
 vi.mock("../settings", () => ({
   memoryPat: () => "zmk_test_pat",
+  memoryAccountUserId: () => "u_test",
+  ensureMemoryInstallNonce: () => "0123456789abcdef0123456789abcdef",
 }));
 
 import { drainOutbox, enqueueApprovedCandidates, listOutbox, retryOutboxRow } from "./outbox.js";
@@ -41,7 +43,7 @@ async function seedApprovedCandidate(statement: string, kind = "command"): Promi
 beforeEach(async () => {
   state.data = mkdtempSync(join(tmpdir(), "k1-outbox-"));
   resetMemoryDbHandlesForTest();
-  await ensureAutoBinding(project, { createBank: vi.fn(async () => ({ ok: true as const, data: { ok: true as const, bankId: "x" } })) });
+  await ensureAutoBinding(project, { createBank: vi.fn(async () => ({ ok: true as const, data: { ok: true as const, bankId: "x" } })) }, "u_test");
 });
 
 afterEach(() => {
@@ -87,6 +89,23 @@ describe("drainOutbox 状态机", () => {
     const report2 = await drainOutbox(project.id, clientWith({ retain }));
     expect(report2.succeeded).toBe(1);
     expect(listOutbox(project.id)[0].state).toBe("succeeded");
+  });
+
+  it("并发 drain 只领取一次，换绑后迟到回执不能覆盖 orphaned", async () => {
+    await seedApprovedCandidate("并发领取语句");
+    enqueueApprovedCandidates(project.id);
+    let finish!: (result: { ok: true; data: { operationId: string } }) => void;
+    const pending = new Promise<{ ok: true; data: { operationId: string } }>((resolve) => { finish = resolve; });
+    const retain = vi.fn(() => pending);
+    const first = drainOutbox(project.id, clientWith({ retain }));
+    await vi.waitFor(() => expect(listOutbox(project.id)[0].state).toBe("sending"));
+    const second = await drainOutbox(project.id, clientWith({ retain }));
+    expect(second.sent).toBe(0);
+    rebindMemory(project.id, { bankId: "ws_newbank", bankName: "新库", source: "manual", accountUserId: "u_test" });
+    finish({ ok: true, data: { operationId: "old-bank-operation" } });
+    await first;
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(listOutbox(project.id)[0].state).toBe("orphaned");
   });
 
   it("网络失败：退避内不重发；3 次后退避→failed；手动重试后可恢复", async () => {
@@ -145,13 +164,14 @@ describe("drainOutbox 状态机", () => {
     expect(listOutbox(project.id)[0].state).toBe("unknown");
   });
 
-  it("bindingVersion 不匹配的 pending → orphaned（重绑后旧记录绝不发新 bank）", async () => {
+  it("重绑：旧 pending 孤儿化，旧 approved 候选不重新入队新 bank", async () => {
     await seedApprovedCandidate("旧版本语句");
     enqueueApprovedCandidates(project.id);
-    rebindMemory(project.id, { bankId: "ws_newbank", bankName: "新库", source: "manual" });
+    rebindMemory(project.id, { bankId: "ws_newbank", bankName: "新库", source: "manual", accountUserId: "u_test" });
     const retain = vi.fn(async () => ({ ok: true as const, data: { operationId: "op-never" } }));
     await drainOutbox(project.id, clientWith({ retain }));
     expect(retain).not.toHaveBeenCalled();
-    expect(listOutbox(project.id)[0].state).toBe("orphaned");
+    expect(listOutbox(project.id).map((row) => row.state)).toEqual(["orphaned"]);
+    expect(openMemoryDb(project.id).prepare("SELECT status FROM memory_candidates").get()).toMatchObject({ status: "discarded" });
   });
 });

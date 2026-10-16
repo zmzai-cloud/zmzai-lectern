@@ -6,7 +6,7 @@
  * （触发自动重签自愈），网络异常 → kind:"network"，其余非 2xx → kind:"server"。
  * 调用方（memory-service）对失败一律旁路降级，永不阻塞任务。
  */
-import { memoryPat } from "../settings.js";
+import { clearMemoryPat, memoryAccountUserId, memoryPat, memoryPatForAccount } from "../settings.js";
 import { memoryApiBase } from "./origin.js";
 
 export type MemoryFailure =
@@ -32,6 +32,10 @@ export type MemoryCapabilities = {
 export interface MemoryClientDeps {
   /** 注入测试用；默认每次现读 settings（PAT 惰性语义） */
   patProvider?: () => string | null;
+  /** Current authenticated account; absent means fail closed. */
+  accountUserIdProvider?: () => string | null;
+  /** Called once on 401 to trigger cookie-based PAT re-sign. */
+  onUnauthorized?: () => Promise<boolean>;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
 }
@@ -40,9 +44,11 @@ async function call<T>(
   deps: MemoryClientDeps,
   path: string,
   init: { method: string; body?: unknown; timeoutMs: number },
+  retried = false,
 ): Promise<MemoryResult<T>> {
-  const pat = (deps.patProvider ?? memoryPat)();
-  if (!pat) return { ok: false, kind: "unauthenticated", status: 401 };
+  const account = (deps.accountUserIdProvider ?? memoryAccountUserId)();
+  const pat = deps.patProvider ? deps.patProvider() : memoryPatForAccount(account);
+  if (!pat || (!deps.patProvider && !account)) return { ok: false, kind: "unauthenticated", status: 401 };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs);
@@ -56,7 +62,11 @@ async function call<T>(
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
       signal: controller.signal,
     });
-    if (res.status === 401) return { ok: false, kind: "unauthenticated", status: 401 };
+    if (res.status === 401) {
+      clearMemoryPat();
+      if (!retried && deps.onUnauthorized && await deps.onUnauthorized()) return call(deps, path, init, true);
+      return { ok: false, kind: "unauthenticated", status: 401 };
+    }
     if (!res.ok) {
       const message = await res.text().catch(() => "");
       return { ok: false, kind: "server", status: res.status, message: message.slice(0, 200) };

@@ -137,11 +137,12 @@ export const client = {
   authStatus: () => fetch("/api/auth/status").then((r) => j<AuthStatus>(r)),
 
   /** K1 记忆服务：接通状态（设置页展示）与后台自动接通（失败静默，等下个触发点）。 */
-  memoryStatus: () => fetch("/api/memory").then((r) => j<{ origin: string; connected: boolean; prefix: string | null; deviceId: string }>(r)),
+  memoryStatus: () => fetch("/api/memory").then((r) => j<{ origin: string; connected: boolean; status: "connected" | "signed_out" | "disabled"; prefix: string | null; deviceId: string }>(r)),
 
   memoryConnect: () => post("/api/memory", {}).then((r) => j<{ connected: boolean; prefix?: string | null; deviceId?: string; loggedIn?: boolean; error?: string }>(r)),
 
-  memoryDisconnect: () => fetch("/api/memory", { method: "DELETE" }).then((r) => j<{ connected: boolean }>(r)),
+  memoryDisconnect: () => fetch("/api/memory", { method: "DELETE" }).then((r) => j<{ connected: boolean; ok?: boolean; error?: string }>(r)),
+  memoryEnable: () => post("/api/memory?enable=1", {}).then((r) => j<{ connected?: boolean; ok?: boolean; error?: string }>(r)),
 
   /** K1 候选待审（T19c UI 消费）。 */
   memoryCandidates: (projectId: string, status?: string) =>

@@ -123,7 +123,7 @@ describe("actCandidate 审阅动作", () => {
     expect(edited).toMatchObject({ status: "approved", statement: "改写后的语句" });
 
     const [row2] = listCandidates("p1", "approved");
-    expect(actCandidate("p1", row2.id, "discard")?.status).toBe("discarded");
+    expect(actCandidate("p1", row2.id, "discard")).toBeNull(); // 已采纳不可再改写/丢弃
 
     expect(actCandidate("p1", 9999, "approve")).toBeNull();
     expect(actCandidate("p1", row2.id, "discard", "x")).toBeNull(); // 改写长度 <4

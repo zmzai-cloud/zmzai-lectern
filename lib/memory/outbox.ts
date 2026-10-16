@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 
 import { getMemoryBinding, openMemoryDb } from "./binding.js";
+import { memoryAccountUserId } from "../settings.js";
 import { createMemoryClient, type MemoryClient } from "./client.js";
 
 export type OutboxState = "pending" | "sending" | "accepted" | "succeeded" | "failed" | "unknown" | "orphaned";
@@ -44,7 +45,8 @@ export function outboxIdempotencyKey(bindingVersion: number, candidateId: number
  */
 export function enqueueApprovedCandidates(projectId: string): number {
   const binding = getMemoryBinding(projectId);
-  if (!binding || binding.enabled !== 1) return 0;
+  const accountUserId = memoryAccountUserId();
+  if (!binding || binding.enabled !== 1 || !accountUserId || binding.accountUserId !== accountUserId) return 0;
 
   const db = openMemoryDb(projectId);
   const candidates = db
@@ -109,7 +111,8 @@ export type DrainReport = { sent: number; succeeded: number; failed: number; pau
 export async function drainOutbox(projectId: string, client: Pick<MemoryClient, "retain" | "operationStatus"> = createMemoryClient()): Promise<DrainReport> {
   const report: DrainReport = { sent: 0, succeeded: 0, failed: 0, paused: false };
   const binding = getMemoryBinding(projectId);
-  if (!binding || binding.enabled !== 1) return report;
+  const accountUserId = memoryAccountUserId();
+  if (!binding || binding.enabled !== 1 || !accountUserId || binding.accountUserId !== accountUserId) return report;
 
   const db = openMemoryDb(projectId);
   const now = new Date().toISOString();
@@ -152,7 +155,10 @@ export async function drainOutbox(projectId: string, client: Pick<MemoryClient, 
       continue;
     }
     const payload = JSON.parse(String(row.payload)) as { content: string; tags?: string[]; context?: string };
-    db.prepare("UPDATE memory_outbox SET state = 'sending', updatedAt = ? WHERE id = ?").run(now, Number(row.id));
+    const claimed = db.prepare(
+      "UPDATE memory_outbox SET state = 'sending', updatedAt = ? WHERE id = ? AND projectId = ? AND state = 'pending' AND bindingVersion = ?",
+    ).run(now, Number(row.id), projectId, binding.bindingVersion);
+    if (claimed.changes !== 1) continue;
 
     const result = await client.retain(binding.bankId, payload.content, {
       idempotencyKey: String(row.idempotencyKey),
@@ -164,10 +170,10 @@ export async function drainOutbox(projectId: string, client: Pick<MemoryClient, 
     if (result.ok) {
       const operationId = (result.data as { operationId?: unknown }).operationId;
       if (typeof operationId === "string" && operationId) {
-        db.prepare("UPDATE memory_outbox SET state = 'accepted', operationId = ?, attempts = attempts + 1, lastError = NULL, updatedAt = ? WHERE id = ?").run(operationId, now, Number(row.id));
+        db.prepare("UPDATE memory_outbox SET state = 'accepted', operationId = ?, attempts = attempts + 1, lastError = NULL, updatedAt = ? WHERE id = ? AND state = 'sending' AND bindingVersion = ?").run(operationId, now, Number(row.id), binding.bindingVersion);
       } else {
         // 未走 async（服务端同步完成）——直接终态
-        db.prepare("UPDATE memory_outbox SET state = 'succeeded', attempts = attempts + 1, lastError = NULL, updatedAt = ? WHERE id = ?").run(now, Number(row.id));
+        db.prepare("UPDATE memory_outbox SET state = 'succeeded', attempts = attempts + 1, lastError = NULL, updatedAt = ? WHERE id = ? AND state = 'sending' AND bindingVersion = ?").run(now, Number(row.id), binding.bindingVersion);
         report.succeeded += 1;
       }
       report.sent += 1;
@@ -176,17 +182,17 @@ export async function drainOutbox(projectId: string, client: Pick<MemoryClient, 
 
     if (result.kind === "unauthenticated") {
       // 401：PAT 失效，暂停本轮（不做失败计数）；Next 自动重签自愈后下轮续传
-      db.prepare("UPDATE memory_outbox SET state = 'pending', lastError = 'UNAUTHENTICATED', updatedAt = ? WHERE id = ?").run(now, Number(row.id));
+      db.prepare("UPDATE memory_outbox SET state = 'pending', lastError = 'UNAUTHENTICATED', updatedAt = ? WHERE id = ? AND state = 'sending' AND bindingVersion = ?").run(now, Number(row.id), binding.bindingVersion);
       report.paused = true;
       break;
     }
 
     const attempts = Number(row.attempts) + 1;
     if (attempts >= 3) {
-      db.prepare("UPDATE memory_outbox SET state = 'failed', attempts = ?, lastError = ?, updatedAt = ? WHERE id = ?").run(attempts, result.kind, now, Number(row.id));
+      db.prepare("UPDATE memory_outbox SET state = 'failed', attempts = ?, lastError = ?, updatedAt = ? WHERE id = ? AND state = 'sending' AND bindingVersion = ?").run(attempts, result.kind, now, Number(row.id), binding.bindingVersion);
       report.failed += 1;
     } else {
-      db.prepare("UPDATE memory_outbox SET state = 'pending', attempts = ?, lastError = ?, updatedAt = ? WHERE id = ?").run(attempts, result.kind, now, Number(row.id));
+      db.prepare("UPDATE memory_outbox SET state = 'pending', attempts = ?, lastError = ?, updatedAt = ? WHERE id = ? AND state = 'sending' AND bindingVersion = ?").run(attempts, result.kind, now, Number(row.id), binding.bindingVersion);
     }
   }
 

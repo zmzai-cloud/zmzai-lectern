@@ -8,7 +8,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { memoryPat } from "../settings.js";
+import { memoryAccountUserId, memoryPat } from "../settings.js";
 import type { Project } from "../projects.js";
 import { ensureAutoBinding, getMemoryBinding, recordRecall } from "./binding.js";
 import { createMemoryClient, type MemoryRecallHit } from "./client.js";
@@ -20,7 +20,7 @@ const RECALL_MAX_FACTS = 12;
 const QUERY_MAX_CHARS = 400;
 const CACHE_MAX_ENTRIES = 64;
 
-type CacheEntry = { bankId: string; section: string | undefined; hits: MemoryRecallHit[] };
+type CacheEntry = { bankId: string; bindingVersion: number; accountUserId: string; goalDigest: string; section: string | undefined; hits: MemoryRecallHit[] };
 
 const cache = new Map<string, CacheEntry>();
 
@@ -31,6 +31,7 @@ export type RecallSectionDeps = {
   recall: typeof client.recall;
   record: typeof recordRecall;
   pat: () => string | null;
+  accountUserId?: () => string | null;
 };
 
 export async function recallSection(
@@ -43,23 +44,26 @@ export async function recallSection(
   if (sessionId.startsWith("ses_sub_")) return undefined;
 
   const get = deps?.getBinding ?? getMemoryBinding;
+  const accountUserId = (deps?.accountUserId ?? memoryAccountUserId)();
+  if (!accountUserId) return undefined;
   let binding = get(project.id);
 
-  if (!binding) {
-    // 未接通不建库（无 PAT 的 createBank 必失败，白打）；接通后首个根目标补建
+  if (!binding || binding.accountUserId !== accountUserId) {
+    // 旧版无账号绑定必须迁移到账号隔离 bank；其他账号绑定则拒绝。
     const pat = (deps?.pat ?? memoryPat)();
     if (!pat) return undefined;
-    const ensured = await (deps?.ensureBinding ?? ensureAutoBinding)(project, client);
+    const ensured = await (deps?.ensureBinding ?? ensureAutoBinding)(project, client, accountUserId);
     if (!ensured.ok) return undefined;
     binding = ensured.binding;
   }
-  if (!binding.enabled) return undefined;
+  if (!binding.enabled || binding.accountUserId !== accountUserId) return undefined;
+  const goalDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-  // 根目标级缓存：同 session 命中且 bank 未换 → 直接复用（换绑条目失效）
+  // Root-goal cache: same session + same root goal + same account/binding only.
   const cached = cache.get(sessionId);
-  if (cached && cached.bankId === binding.bankId) return cached.section;
+  if (cached && cached.bankId === binding.bankId && cached.bindingVersion === binding.bindingVersion && cached.accountUserId === accountUserId && cached.goalDigest === goalDigest) return cached.section;
 
-  const recall = deps?.recall ?? client.recall.bind(client);
+  const recall = deps?.recall ?? client.recall;
   const result = await recall(binding.bankId, text.slice(0, QUERY_MAX_CHARS), { maxTokens: RECALL_MAX_TOKENS });
   if (!result.ok) return undefined; // 超时/401/网络——无记忆继续，不缓存失败
 
@@ -78,12 +82,12 @@ export async function recallSection(
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  cache.set(sessionId, { bankId: binding.bankId, section, hits });
+  cache.set(sessionId, { bankId: binding.bankId, bindingVersion: binding.bindingVersion, accountUserId, goalDigest, section, hits });
 
   const record = deps?.record ?? recordRecall;
   record(project.id, {
     sessionId,
-    goalDigest: createHash("sha256").update(text).digest("hex").slice(0, 16),
+    goalDigest,
     hitCount: hits.length,
     hits,
   });

@@ -230,7 +230,7 @@ export type AuthStatus = {
   loggedIn: boolean;
   cookieName: string;
   /** 已登录时的用户 profile（name/email，账户块展示用）。 */
-  user?: { name: string; email: string } | null;
+  user?: { id: string; name: string; email: string } | null;
 };
 
 // ===== 文件系统 / Git / 终端（原 Inspector 面板，现由 WorkbenchPanel 承载）=====

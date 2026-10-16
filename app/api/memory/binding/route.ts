@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createMemoryClient, type MemoryBankRow } from "@/lib/memory/client";
+import { memoryAccountUserId } from "@/lib/settings";
 import { deterministicBankId, getMemoryBinding, rebindMemory, setMemoryEnabled, setMemorySyncPolicy } from "@/lib/memory/binding";
 import { getActiveProject, listProjects } from "@/lib/projects";
 import { withWorkflowErrors } from "@/lib/workflow-error";
@@ -65,29 +66,44 @@ export const POST = withWorkflowErrors(async (request: NextRequest): Promise<Res
     const project = resolveProject(body.projectId ?? null);
 
     if (body.action === "rebind") {
+      const accountUserId = memoryAccountUserId();
+      if (!accountUserId) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       const bankId = (body.bankId ?? "").trim();
-      const bankName = (body.bankName ?? "").trim() || bankId;
       if (!bankId) return NextResponse.json({ error: "VALIDATION", message: "bankId 必填" }, { status: 400 });
-      const binding = rebindMemory(project.id, { bankId, bankName, source: "manual" });
+      const client = createMemoryClient();
+      const available = await client.listBanks();
+      if (!available.ok || !available.data.banks.some((bank) => bank.bankId === bankId)) {
+        return NextResponse.json({ error: "FORBIDDEN", message: "当前账户不可绑定该知识库" }, { status: 403 });
+      }
+      const bankName = available.data.banks.find((bank) => bank.bankId === bankId)!.name;
+      const binding = rebindMemory(project.id, { bankId, bankName, source: "manual", accountUserId });
       return NextResponse.json({ ok: true, binding });
     }
 
     if (body.action === "rebind-auto") {
+      const accountUserId = memoryAccountUserId();
+      if (!accountUserId) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       const client = createMemoryClient();
-      const bankId = deterministicBankId(project.id);
+      const bankId = deterministicBankId(project.id, accountUserId);
       const created = await client.createBank(bankId, project.name);
       if (!created.ok) {
         return NextResponse.json({ error: "BANK_CREATE_FAILED", message: `自动建库失败（${created.kind}）` }, { status: 502 });
       }
-      const binding = rebindMemory(project.id, { bankId, bankName: project.name, source: "auto" });
+      const binding = rebindMemory(project.id, { bankId, bankName: project.name, source: "auto", accountUserId });
       return NextResponse.json({ ok: true, binding });
     }
 
     if (body.syncPolicy === "off" || body.syncPolicy === "manual" || body.syncPolicy === "auto") {
+      if (!memoryAccountUserId() || getMemoryBinding(project.id)?.accountUserId !== memoryAccountUserId()) {
+        return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+      }
       setMemorySyncPolicy(project.id, body.syncPolicy);
       return NextResponse.json({ ok: true, binding: getMemoryBinding(project.id) });
     }
     if (typeof body.enabled === "boolean") {
+      if (!memoryAccountUserId() || getMemoryBinding(project.id)?.accountUserId !== memoryAccountUserId()) {
+        return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+      }
       setMemoryEnabled(project.id, body.enabled);
       return NextResponse.json({ ok: true, binding: getMemoryBinding(project.id) });
     }

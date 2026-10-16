@@ -27,6 +27,19 @@ describe("MemoryClient 鉴权与错误面", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("401 可触发一次重签并以新 PAT 重试，最多一次", async () => {
+    let token = "zmk_old";
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: "UNAUTHENTICATED" }))
+      .mockResolvedValueOnce(jsonResponse(200, { banks: [] }));
+    const onUnauthorized = vi.fn(async () => { token = "zmk_new"; return true; });
+    const client = createMemoryClient({ patProvider: () => token, fetchImpl: fetchImpl as typeof fetch, onUnauthorized, baseUrl: "https://memory.example" });
+    expect((await client.listBanks()).ok).toBe(true);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((fetchImpl.mock.calls[1][1].headers as Record<string, string>).authorization).toBe("Bearer zmk_new");
+  });
+
   it("请求带 Bearer PAT；401 → unauthenticated", async () => {
     const { client, fetchImpl } = clientWith();
     fetchImpl.mockResolvedValueOnce(jsonResponse(401, { error: "UNAUTHENTICATED" }));

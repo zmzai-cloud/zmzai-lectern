@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Vite's builtin enumeration omits node:sqlite on some Node versions.
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
+vi.mock("../settings", () => ({ memoryPat: () => "zmk_test", memoryAccountUserId: () => "u_test" }));
 
 import { invalidateMemoryForSession, recallSection, resetMemoryCacheForTest } from "./service.js";
 import type { EnsureBindingResult, MemoryBinding } from "./binding.js";
@@ -16,7 +17,7 @@ function binding(overrides: Partial<MemoryBinding> = {}): MemoryBinding {
     origin: "https://memory.example",
     bankId: "lec_bank1",
     bankName: "服务测试",
-    accountUserId: null,
+    accountUserId: "u_test",
     bindingVersion: 1,
     enabled: 1,
     syncPolicy: "manual",
@@ -42,6 +43,7 @@ function deps() {
     ),
     record: vi.fn(),
     pat: vi.fn((): string | null => "zmk_x"),
+    accountUserId: vi.fn((): string | null => "u_test"),
   };
 }
 
@@ -69,7 +71,7 @@ describe("recallSection 降级与门控", () => {
     const d = deps();
     d.getBinding.mockReturnValue(null);
     const section = await recallSection(project, "ses_1", "怎么跑测试", d);
-    expect(d.ensureBinding).toHaveBeenCalledWith(project, expect.anything());
+    expect(d.ensureBinding).toHaveBeenCalledWith(project, expect.anything(), "u_test");
     expect(section).toContain("项目记忆");
     expect(section).toContain("- 构建用 pnpm test");
   });
@@ -106,16 +108,18 @@ describe("recallSection 降级与门控", () => {
 });
 
 describe("recallSection 根目标级缓存", () => {
-  it("同 session 复用（recall 只打一次）；invalidate 后重召", async () => {
+  it("同 session 同根目标复用；新目标与 invalidate 后重召", async () => {
     const d = deps();
     await recallSection(project, "ses_1", "第一次目标", d);
-    await recallSection(project, "ses_1", "内部续跑", d);
+    await recallSection(project, "ses_1", "第一次目标", d);
     expect(d.recall).toHaveBeenCalledTimes(1);
     expect(d.record).toHaveBeenCalledTimes(1);
 
+    await recallSection(project, "ses_1", "新根目标", d);
+    expect(d.recall).toHaveBeenCalledTimes(2);
     invalidateMemoryForSession("ses_1");
     await recallSection(project, "ses_1", "重召", d);
-    expect(d.recall).toHaveBeenCalledTimes(2);
+    expect(d.recall).toHaveBeenCalledTimes(3);
   });
 
   it("不同 session 各自召回", async () => {

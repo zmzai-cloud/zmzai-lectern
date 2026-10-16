@@ -27,6 +27,14 @@ export type HarnessSettings = {
   memoryPatPrefix?: string | null;
   /** 本设备短标识（PAT 命名 lectern-<id> 用，非机密） */
   memoryDeviceId?: string;
+  /** 持久化安装随机数，参与默认 bank 派生，避免跨设备/用户碰撞。 */
+  memoryInstallNonce?: string;
+  /** PAT 所属的服务端账户，无法验证时不会复用该 PAT。 */
+  memoryAccountUserId?: string;
+  /** 最近一次调用返回 401，需重新签发 PAT。 */
+  memoryPatRevoked?: boolean;
+  /** 用户主动撤销本设备凭据后暂停自动接通，直到显式重新启用。 */
+  memoryAutoDisabled?: boolean;
 };
 
 /** 降级端点（设置页可增删改，持久化在 settings.json）。apiKey 属敏感凭据，落盘前加密。 */
@@ -65,7 +73,7 @@ function decrypt(encoded: string): string | null {
 
 /** ---- settings.json 读写（明文自动迁移为密文） ---- */
 
-type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[]; memoryPatEnc?: string; memoryPatPrefix?: string; memoryDeviceId?: string };
+type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[]; memoryPatEnc?: string; memoryPatPrefix?: string; memoryDeviceId?: string; memoryInstallNonce?: string; memoryAccountUserId?: string; memoryPatRevoked?: boolean; memoryAutoDisabled?: boolean };
 
 type StoredFailoverEndpoint = { baseUrl: string; apiKeyEnc?: string; apiKey?: string; modelId?: string };
 
@@ -234,10 +242,15 @@ export function ollamaBase(): string | null {
 
 /** ---- 记忆服务 PAT（K1）：自动接通产出，AES-256-GCM 加密落盘 ---- */
 
-export function saveMemoryPat(token: string): void {
+export function saveMemoryPat(token: string, accountUserId: string): void {
+  const trimmed = token.trim();
+  const account = accountUserId.trim();
+  if (!trimmed || !account) throw new Error("记忆 PAT 必须绑定账户身份");
   const stored = readStored();
-  stored.memoryPatEnc = encrypt(token.trim());
-  stored.memoryPatPrefix = token.trim().slice(0, 12);
+  stored.memoryPatEnc = encrypt(trimmed);
+  stored.memoryPatPrefix = trimmed.slice(0, 12);
+  stored.memoryAccountUserId = account;
+  delete stored.memoryPatRevoked;
   write(stored);
 }
 
@@ -245,7 +258,39 @@ export function clearMemoryPat(): void {
   const stored = readStored();
   delete stored.memoryPatEnc;
   delete stored.memoryPatPrefix;
+  delete stored.memoryAccountUserId;
+  delete stored.memoryPatRevoked;
   write(stored);
+}
+
+export function markMemoryPatRevoked(): void {
+  const stored = readStored();
+  stored.memoryPatRevoked = true;
+  write(stored);
+}
+
+export function memoryPatRevoked(): boolean {
+  return readStored().memoryPatRevoked === true;
+}
+
+export function memoryAutoConnectDisabled(): boolean {
+  return readStored().memoryAutoDisabled === true;
+}
+
+export function setMemoryAutoConnectDisabled(disabled: boolean): void {
+  const stored = readStored();
+  stored.memoryAutoDisabled = disabled;
+  write(stored);
+}
+
+export function memoryAccountUserId(): string | null {
+  return readStored().memoryAccountUserId?.trim() || null;
+}
+
+/** 返回 PAT 所属账户；没有身份元数据时 fail closed，不复用旧 PAT。 */
+export function memoryPatForAccount(accountUserId: string | null): string | null {
+  if (!accountUserId || memoryAccountUserId() !== accountUserId) return null;
+  return memoryPat();
 }
 
 /** PAT 惰性读取（verifier 模式：每次现读，设置更新即时生效，不缓存进程内）。 */
@@ -261,8 +306,18 @@ export function memoryPatPrefix(): string | null {
 export function ensureMemoryDeviceId(): string {
   const stored = readStored();
   if (stored.memoryDeviceId && /^[a-z0-9]{4,12}$/.test(stored.memoryDeviceId)) return stored.memoryDeviceId;
-  const id = Math.random().toString(36).slice(2, 8);
+  const id = randomBytes(8).toString("hex").slice(0, 12);
   stored.memoryDeviceId = id;
   write(stored);
   return id;
+}
+
+/** Stable per-install nonce. It is not a credential; it only namespaces local default banks. */
+export function ensureMemoryInstallNonce(): string {
+  const stored = readStored();
+  if (stored.memoryInstallNonce && /^[a-f0-9]{32}$/.test(stored.memoryInstallNonce)) return stored.memoryInstallNonce;
+  const nonce = randomBytes(16).toString("hex");
+  stored.memoryInstallNonce = nonce;
+  write(stored);
+  return nonce;
 }

@@ -12,6 +12,10 @@ const state = vi.hoisted(() => ({ data: "" }));
 vi.mock("../projects", () => ({
   dataDirFor: (p: { id: string }) => join(state.data, p.id),
 }));
+vi.mock("../settings", () => ({
+  memoryAccountUserId: () => "u_test",
+  ensureMemoryInstallNonce: () => "0123456789abcdef0123456789abcdef",
+}));
 
 import {
   deterministicBankId,
@@ -75,6 +79,19 @@ describe("ensureAutoBinding（项目自动建库）", () => {
     const again = await ensureAutoBinding(project, client);
     expect(again.ok && again.created).toBe(false);
     expect(client.createBank).toHaveBeenCalledTimes(1);
+  });
+
+  it("默认项目按账号区分，切换账户自动建新库并孤儿化旧队列", async () => {
+    expect(deterministicBankId("default", "u_test")).not.toBe(deterministicBankId("default", "u_other"));
+    const client = okClient();
+    await ensureAutoBinding(project, client, "u_test");
+    const before = getMemoryBinding(project.id)!;
+    const switched = await ensureAutoBinding(project, client, "u_other");
+    expect(switched.ok).toBe(true);
+    if (!switched.ok) return;
+    expect(switched.binding.accountUserId).toBe("u_other");
+    expect(switched.binding.bankId).not.toBe(before.bankId);
+    expect(switched.binding.bindingVersion).toBe(before.bindingVersion + 1);
   });
 
   it("建库失败不落 binding（下个根目标自然重触发）", async () => {

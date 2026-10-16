@@ -47,7 +47,13 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   // 重复触发不堆积；失败等下个触发点重试，不打扰用户）。cookie 只在此步使用。
   useEffect(() => {
     if (!auth?.loggedIn) return;
-    void client.memoryConnect().catch(() => undefined);
+    const connectIfNeeded = () => void client.memoryStatus()
+      .then((status) => status.connected || status.status === "disabled" ? undefined : client.memoryConnect())
+      .catch(() => undefined);
+    connectIfNeeded();
+    // 401 会清掉失效 PAT；已登录期间定期检查，仅断开时重签，避免每轮吊销可用 PAT。
+    const timer = window.setInterval(connectIfNeeded, 60_000);
+    return () => window.clearInterval(timer);
   }, [auth?.loggedIn]);
 
   useEffect(() => {

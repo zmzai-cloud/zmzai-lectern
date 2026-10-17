@@ -22,6 +22,37 @@ function statusForBlocker(kind: TaskBlockerView["kind"]): TaskLifecycleStatus {
 
 export type TodoItem = { content: string; status: "pending" | "in_progress" | "completed" | "cancelled" };
 
+/** 工作流程收起行的工具概览（UI 归类口径与 ChatView 工具行一致）。
+ *  连续/累计同类合并计数，最多 3 类 + 「等」；空序列返回空串。 */
+const FLOW_TOOL_LABEL: Record<string, string> = {
+  read: "读取",
+  glob: "查找",
+  grep: "搜索",
+  search: "检索",
+  websearch: "联网",
+  webfetch: "抓取",
+  web_fetch: "抓取",
+  bash: "执行",
+  terminal: "执行",
+  edit: "编辑",
+  write: "写入",
+  task: "子任务",
+};
+
+export function summarizeFlowTools(tools: string[]): string {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const tool of tools) {
+    const label = FLOW_TOOL_LABEL[tool] ?? tool;
+    const next = (counts.get(label) ?? 0) + 1;
+    counts.set(label, next);
+    if (next === 1) order.push(label);
+  }
+  const parts = order.slice(0, 3).map((label) => (counts.get(label)! > 1 ? `${label} ${counts.get(label)}` : label));
+  if (order.length > 3) parts.push("等");
+  return parts.join(" · ");
+}
+
 export type SubagentStep = { tool: string; title?: string; state?: string };
 export type SubagentActivity = { steps: SubagentStep[]; finished?: { state: string; durationMs?: number; toolCalls?: number } };
 export type UiPart = { part: Part; diff?: string; subagent?: SubagentActivity };

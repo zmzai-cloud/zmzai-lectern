@@ -12,7 +12,7 @@ import type { ConnectionState } from "@/lib/client";
 import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
-import type { ChatViewData, TodoItem } from "@/lib/chat-projector";
+import { summarizeFlowTools, type ChatViewData, type TodoItem } from "@/lib/chat-projector";
 type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
 import type { InputAttachmentRef, ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
@@ -171,9 +171,12 @@ function SubtaskCard({ part, activity, onOpen }: { part: Extract<Part, { type: "
 function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
   const [open, setOpen] = useState(false);
   const tools = parts.flatMap((p) => (p.part.type === "tool" ? [p.part] : []));
-  // 失败计数含失败子代理（ZCode 式：收起态就能看到这轮有没有出过事）
+  // 失败计数含失败子代理（ZCode 式：收起态就能看到这轮有没有出事）
   const failed = tools.filter((t) => t.state.status === "error").length
     + parts.filter((p) => p.part.type === "subtask" && p.subagent?.finished?.state === "error").length;
+  // 收起态概览：真实工具记录归类的短语（读取 3 · 编辑 2），不是 AI 摘要——
+  // 多轮长会话回看时各组不再长得一模一样。
+  const overview = useMemo(() => summarizeFlowTools(tools.map((t) => t.tool)), [tools]);
   // 组时长 = 工具时间戳的首尾跨度（思考块无时间戳，不参与；拿不到就不显示）
   const duration = useMemo(() => {
     let start = Infinity;
@@ -201,6 +204,12 @@ function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; on
         <span>工作流程</span>
         <span className="chat-workflow-sep" aria-hidden>·</span>
         <span>{parts.length} 个步骤</span>
+        {overview && (
+          <>
+            <span className="chat-workflow-sep" aria-hidden>·</span>
+            <span className="min-w-0 truncate">{overview}</span>
+          </>
+        )}
         {failed > 0 && (
           <>
             <span className="chat-workflow-sep" aria-hidden>·</span>
@@ -234,7 +243,29 @@ function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; on
   );
 }
 
-/** 运行中断折叠行（ZCode 式弱化）：错误不再摊开成一大块红框——收起是一行
+/** K1 记忆引用行（弱化过程行，与读取 pill 同族）：命中数 + 来源 bank，展开逐条。
+ *  锚定在最新一条用户消息前——召回属于那一轮，不是整个会话的全局状态。 */
+function MemoryTraceRow({ trace }: { trace: NonNullable<Props["memoryTrace"]> }) {
+  return (
+    <details className="mx-auto mb-1 w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] px-6 py-1">
+      <summary className="cursor-pointer text-xs text-ink-3">
+        引用项目记忆 {trace.hitCount} 条 · 来自「{trace.bankName}」
+      </summary>
+      <ul className="space-y-1 pt-2">
+        {(trace.hits ?? []).map((hit, i) => (
+          <li key={hit.memoryId ?? i} className="text-xs text-ink-2">
+            {hit.text}
+            {typeof hit.score === "number" && (
+              <span className="ml-1.5 text-ink-3">相关度 {hit.score.toFixed(2)}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/** 运行中断折叠行（ZCode 弱化）：错误不再摊开成一大块红框——收起是一行
  *  「✗ 运行中断 · 一句话原因」（danger 色，与失败工具行同层级），展开才看
  *  原始错误 / 可能原因 / 建议 / 断点统计。历史里的旧错误同样是安静的折叠行，
  *  不再像一堆待处理的作业。该做什么由诊断建议与任务卡按钮直接表达。 */
@@ -708,6 +739,13 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     return [...messages, echoMessage];
   }, [messages, echo]);
   const running = status === "running";
+  // 最新一条用户消息 id（含乐观 echo）——记忆引用行锚点：召回发生在这一轮开始。
+  const lastUserMessageId = useMemo(() => {
+    for (let i = visible.length - 1; i >= 0; i--) {
+      if (visible[i]!.role === "user") return visible[i]!.id;
+    }
+    return null;
+  }, [visible]);
   // N6 实时进度：运行中当前工具 = 所有消息里最后一个 status==="running" 的 tool。
   // 从投影快照反向找（不额外订阅），rAF 批量渲染已保证实时性足够。
   const currentTool = useMemo(() => {
@@ -930,24 +968,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           <span className="truncate">{wtNotice.text}</span>
         </div>
       )}
-      {/* K1 记忆召回痕迹（弱化过程行，与读取 pill 同族）：命中数 + 来源 bank，展开逐条 */}
-      {memoryTrace && memoryTrace.hitCount > 0 && (
-        <details className="mx-auto w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] shrink-0 px-6 py-2">
-          <summary className="cursor-pointer text-xs text-ink-3">
-            项目记忆 {memoryTrace.hitCount} 条 · 来自「{memoryTrace.bankName}」
-          </summary>
-          <ul className="space-y-1 pt-2">
-            {(memoryTrace.hits ?? []).map((hit, i) => (
-              <li key={hit.memoryId ?? i} className="text-xs text-ink-2">
-                {hit.text}
-                {typeof hit.score === "number" && (
-                  <span className="ml-1.5 text-ink-3">相关度 {hit.score.toFixed(2)}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      {/* K1 记忆引用行已迁移：锚定在最新一条用户消息前（MemoryTraceRow），
+          召回属于那一轮而不是会话全局状态。 */}
       {/* 上下文读取 pill（P2-13）：本轮 Agent 读过的文件，点击联动打开 */}
       {reads.length > 0 && (
         <details className="chat-read-context mx-auto w-full max-w-[calc(var(--conversation-content-max)_+_3rem)] shrink-0 px-6 py-2">
@@ -1041,7 +1063,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             if (editing?.id === m.id) {
               // 原位编辑态：气泡变 textarea，保存即回溯重跑（服务端截断该消息之后的历史）
               return (
-                <div key={m.id} data-message-id={m.id} className="flex justify-end">
+                <div key={m.id} data-message-id={m.id}>
+                  {m.id === lastUserMessageId && memoryTrace && memoryTrace.hitCount > 0 && <MemoryTraceRow trace={memoryTrace} />}
+                  <div className="flex justify-end">
                   <div className="chat-user-message w-full">
                     <textarea
                       autoFocus
@@ -1072,11 +1096,14 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                       </button>
                     </div>
                   </div>
+                  </div>
                 </div>
               );
             }
             return (
-              <div key={m.id} data-message-id={m.id} className={cn("group flex justify-end", m.id === "__echo__" && "chat-echo-pending")}>
+              <div key={m.id} data-message-id={m.id} className={cn("group", m.id === "__echo__" && "chat-echo-pending")}>
+                {m.id === lastUserMessageId && memoryTrace && memoryTrace.hitCount > 0 && <MemoryTraceRow trace={memoryTrace} />}
+                <div className="flex justify-end">
                 <div className="chat-user-message relative">
                   <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
                     {m.skill && (
@@ -1127,6 +1154,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                       </button>
                     )}
                   </div>
+                </div>
                 </div>
               </div>
             );
@@ -1210,7 +1238,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         {task && taskView && !taskView.completed && taskView.status !== "failed" && taskView.status !== "cancelled" && taskView.needsUser && (
           <TaskProgressCard task={task} view={taskView} attempts={taskAttempts} onAction={(action) => onTaskAction?.(action)} />
         )}
-        {summary && !running && (
+        {/* 结尾去重：任务已交付时不再叠加「本轮已结束」摘要卡——结论在正文，
+            完成依据/改动/剩余项在交付卡，第三块重复总结只会稀释两者。 */}
+        {summary && !running && !taskView?.completed && (
           <SummaryCard
             summary={summary}
             timeline={(() => {

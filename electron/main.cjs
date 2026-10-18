@@ -607,6 +607,10 @@ app.whenReady().then(async () => {
   registerGlobalShortcut();
   startCookieWatch();
   if (updater.configure()) setTimeout(() => void updater.check(), 10_000);
+  // 自动更新：启动即清理上次替换留下的旧版备份（能启动=新版确认成功），
+  // 并把数据目录注入 updater（读 settings.json 的 autoUpdate 偏好）。
+  updater.cleanupStaleBackup();
+  updater.setDataDir(resolveDataDir(app.getPath("userData")));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -644,6 +648,9 @@ app.on("before-quit", (event) => {
       verifierHandle?.server.close();
     } catch { /* 已关闭 */ }
     webProcess?.kill();
+    // 自动更新第二级：就绪的更新在收尾完成后静默安装（detached 替换脚本
+    // 在本进程退出后执行），下次打开即新版。失败不影响退出。
+    await updater.installOnQuitIfReady().catch(() => false);
     app.exit(0);
   })();
 });

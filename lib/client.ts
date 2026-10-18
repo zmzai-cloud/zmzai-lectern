@@ -183,6 +183,12 @@ export const client = {
 
   authLogout: () => post("/api/auth/logout").then((r) => j<{ ok: boolean }>(r)),
 
+  /** 应用内自动更新偏好（electron main 同口径读取 settings.json）。 */
+  autoUpdateGet: () => fetch("/api/settings/auto-update").then((r) => j<{ enabled: boolean }>(r)),
+
+  autoUpdateSet: (enabled: boolean) =>
+    post("/api/settings/auto-update", { enabled }).then((r) => j<{ enabled: boolean; error?: string }>(r)),
+
   login: (email: string, password: string) =>
     post("/api/auth/login", { email, password }).then((r) => j<{ error?: string }>(r)),
 

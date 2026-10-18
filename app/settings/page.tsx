@@ -557,6 +557,9 @@ export default function SettingsPage() {
   // ===== 通用：relay 端点 =====
   const [relayDraft, setRelayDraft] = useState("");
   const [relaySaved, setRelaySaved] = useState(false);
+  // ===== 通用：自动更新 =====
+  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [autoUpdateBusy, setAutoUpdateBusy] = useState(false);
   // ===== 通用：权限与自动执行 =====
   const [perm, setPerm] = useState<PermissionSettings>({});
   const [permSaved, setPermSaved] = useState(false);
@@ -616,6 +619,23 @@ export default function SettingsPage() {
       setRelaySaved(true);
       setSaved(true);
     });
+
+  // 自动更新开关：保存即生效（electron main 每次检查/退出安装时现读同一份 settings.json）
+  const saveAutoUpdatePref = async (enabled: boolean) => {
+    setAutoUpdateBusy(true);
+    try {
+      const result = await client.autoUpdateSet(enabled);
+      setAutoUpdate(result.enabled);
+    } catch {
+      /* 保存失败保持原值；下次进设置页重新拉取 */
+    } finally {
+      setAutoUpdateBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void client.autoUpdateGet().then((d) => setAutoUpdate(d.enabled)).catch(() => undefined);
+  }, []);
 
   // 恢复默认 = 清除 settings.json 里的 relayUrl（回到 env/默认端点）
   const resetRelay = () =>
@@ -831,6 +851,25 @@ export default function SettingsPage() {
                       <div className="mt-0.5 text-xs leading-5 text-ink-3">跟随系统、浅色和深色三种模式。</div>
                     </div>
                     <ThemeToggle />
+                  </div>
+                </Card>
+                <Card title="自动更新" desc="启动时自动检查新版本并后台静默下载；下载完成后在你退出 Lectern 时自动安装，下次打开即新版。任务运行中的退出照常由你控制；关闭后仍可从左下角账户菜单手动检查更新。">
+                  <div className="flex items-center gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-ink">自动检查、下载并安装更新</div>
+                      <div className="mt-0.5 text-xs leading-5 text-ink-3">
+                        {autoUpdate ? "开启——新版本就绪后退出时自动升级（旧版保留一份备份）" : "关闭——仅手动检查更新"}
+                      </div>
+                    </div>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-ink-3">
+                      <input
+                        type="checkbox"
+                        checked={autoUpdate}
+                        disabled={autoUpdateBusy}
+                        onChange={(e) => void saveAutoUpdatePref(e.target.checked)}
+                      />
+                      {autoUpdateBusy ? "保存中…" : autoUpdate ? "已开启" : "已关闭"}
+                    </label>
                   </div>
                 </Card>
                 <Card title="模型服务地址" desc="用于获取可用模型和发送消息。保存后，从下一条消息开始使用新地址。">

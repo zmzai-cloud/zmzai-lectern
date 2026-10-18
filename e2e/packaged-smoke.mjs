@@ -321,7 +321,16 @@ try {
     } };
     const originalFetch = globalThis.fetch;
     const originalDialog = dialog.showMessageBox;
-    globalThis.__restoreUpdateSmoke = () => { globalThis.fetch = originalFetch; dialog.showMessageBox = originalDialog; };
+    globalThis.__restoreUpdateSmoke = () => {
+      globalThis.fetch = originalFetch; dialog.showMessageBox = originalDialog;
+      // 清除假下载包：退出时自动安装（installOnQuitIfReady）会对 downloaded 再做
+      // SHA-512 校验——文件没了校验失败即不安装，防止 smoke 结束时假包替换真应用。
+      try {
+        const fs = process.getBuiltinModule("fs");
+        const path = process.getBuiltinModule("path");
+        fs.rmSync(path.join(app.getPath("userData"), "updates"), { recursive: true, force: true });
+      } catch { /* 清理失败不阻塞 restore */ }
+    };
     globalThis.fetch = async (input, options) => {
       if (input === "https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/latest-desktop.json") return new Response(JSON.stringify(manifest));
       if (input === `https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/${path}`) return new Response(bytes);
@@ -332,16 +341,19 @@ try {
   });
   try {
     const update = await window.evaluate(() => window.lecternNative.updateCheck());
-    assert.equal(update.status, "available");
+    // 自动更新（缺省开启）：检查到新版即静默后台下载——updateCheck 的返回值
+    // 可能已推进到 downloading（available→downloading 是同拍竞速，两者皆合法）。
+    assert.ok(["available", "downloading"].includes(update.status), `unexpected update status ${update.status}`);
     assert.equal(update.version, nextVersion);
-    await window.locator(".account-block > button").click();
-    await window.getByRole("button", { name: `下载 v${nextVersion}`, exact: true }).click();
+    // 不再手动点「下载」：等待自动下载完成（fixture 包 28 字节，瞬时）。
     await window.waitForFunction(async () => (await window.lecternNative.updateState()).status === "ready");
-    const label = process.platform === "darwin" ? "查看更新包并手动替换" : `安装 v${nextVersion}`;
-    await window.getByRole("button", { name: label, exact: true }).waitFor();
+    // 打开账户菜单：ready 后菜单直接提供「重启更新 vN」（任务空闲时可点）。
+    await window.locator(".account-block > button").click();
+    await window.getByRole("button", { name: `重启更新 v${nextVersion}`, exact: true }).waitFor();
+    // 确认对话框被 mock 为取消 → install 返回 false，状态保持 ready。
     assert.equal(await window.evaluate(() => window.lecternNative.updateInstall()), false);
     assert.equal(await window.evaluate(() => window.lecternNative.updateState()).then((s) => s.status), "ready");
-    results.push("packaged updater IPC, account-menu download, SHA-512 verification and cancelled install");
+    results.push("packaged updater IPC, auto-download, SHA-512 verification and cancelled install");
   } finally {
     await desktop.evaluate(() => globalThis.__restoreUpdateSmoke());
   }

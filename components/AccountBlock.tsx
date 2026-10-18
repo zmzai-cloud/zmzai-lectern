@@ -19,6 +19,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const [themePref, setThemePref] = useState<"system" | "light" | "dark">("system");
   const [busy, setBusy] = useState(false);
   const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [taskRunning, setTaskRunning] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const onChangeRef = useRef(onChange);
@@ -61,6 +62,14 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     if (!bridge?.updateState) return;
     void bridge.updateState().then(setUpdate).catch(() => undefined);
     return bridge.onUpdateStatus?.(setUpdate);
+  }, []);
+
+  // 任务运行状态（工作台 page 广播）：运行中不允许「重启并更新」——自动更新
+  // 的下载不打扰任务，重启才会中止任务。设置页无广播源时按空闲处理。
+  useEffect(() => {
+    const sync = (e: Event) => setTaskRunning((e as CustomEvent<{ running: boolean }>).detail?.running === true);
+    window.addEventListener("lectern:task-state", sync);
+    return () => window.removeEventListener("lectern:task-state", sync);
   }, []);
 
   const updateAction = () => {
@@ -136,10 +145,11 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
               <button
                 type="button"
                 onClick={updateAction}
-                disabled={update?.status === "checking" || update?.status === "downloading"}
+                disabled={update?.status === "checking" || update?.status === "downloading" || (update?.status === "ready" && taskRunning)}
+                title={update?.status === "ready" && taskRunning ? "任务运行中，完成后即可重启更新" : undefined}
                 className="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-50"
               >
-                <span>{update?.status === "ready" ? (window.lecternNative?.platform === "darwin" ? "查看更新包并手动替换" : `安装 v${update.version}`) : update?.status === "available" ? `下载 v${update.version}` : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
+                <span>{update?.status === "ready" ? (taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`) : update?.status === "available" ? (taskRunning ? `v${update.version} 自动下载中…` : `下载 v${update.version}`) : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
                 {update?.status === "current" && <span className="text-[0.625rem] text-ink-3">已是最新</span>}
               </button>
             )}

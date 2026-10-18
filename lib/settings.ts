@@ -35,6 +35,8 @@ export type HarnessSettings = {
   memoryPatRevoked?: boolean;
   /** 用户主动撤销本设备凭据后暂停自动接通，直到显式重新启用。 */
   memoryAutoDisabled?: boolean;
+  /** 应用内自动更新（检查+后台下载+退出时安装），缺省开启。 */
+  autoUpdate?: boolean;
 };
 
 /** 降级端点（设置页可增删改，持久化在 settings.json）。apiKey 属敏感凭据，落盘前加密。 */
@@ -73,7 +75,7 @@ function decrypt(encoded: string): string | null {
 
 /** ---- settings.json 读写（明文自动迁移为密文） ---- */
 
-type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[]; memoryPatEnc?: string; memoryPatPrefix?: string; memoryDeviceId?: string; memoryInstallNonce?: string; memoryAccountUserId?: string; memoryPatRevoked?: boolean; memoryAutoDisabled?: boolean };
+type StoredSettings = { personalKeyEnc?: string; personalKey?: string; personalKeyPrefix?: string; relayUrl?: string; ollamaUrl?: string; permissions?: Partial<Record<PermissionDomain, PermissionAction>>; failoverEndpoints?: StoredFailoverEndpoint[]; memoryPatEnc?: string; memoryPatPrefix?: string; memoryDeviceId?: string; memoryInstallNonce?: string; memoryAccountUserId?: string; memoryPatRevoked?: boolean; memoryAutoDisabled?: boolean; autoUpdate?: boolean };
 
 type StoredFailoverEndpoint = { baseUrl: string; apiKeyEnc?: string; apiKey?: string; modelId?: string };
 
@@ -320,4 +322,16 @@ export function ensureMemoryInstallNonce(): string {
   stored.memoryInstallNonce = nonce;
   write(stored);
   return nonce;
+}
+
+/** ---- 应用内自动更新：settings.json autoUpdate（缺省开启，electron main 侧同口径读取） ---- */
+
+export function getAutoUpdate(): boolean {
+  return readStored().autoUpdate !== false;
+}
+
+export function saveAutoUpdate(enabled: boolean): void {
+  const stored = readStored();
+  stored.autoUpdate = enabled === true;
+  write(stored);
 }

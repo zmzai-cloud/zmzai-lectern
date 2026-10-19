@@ -31,6 +31,10 @@ const nextConfig = {
       "**/*.db-shm",
       "**/*.db-wal",
       "**/.workspace/**",
+      // 编辑器/助手工作区配置（如 Qoder 的 .qoder/settings.json）：不是运行时
+      // 依赖，但路由里的目录扫描会被 Next 追踪进 standalone，禁止随包发布。
+      ".qoder/**",
+      "**/.qoder/**",
     ],
   },
   // 私有 TS 包，需显式转译

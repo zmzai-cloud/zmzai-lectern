@@ -61,7 +61,7 @@ async function launch() {
   // Windows 渲染器首帧 body 可能尚未就绪（waitForLoadState 在初始空文档上就返回）；
   // predicate 必须 null 安全：null 时返回 false 持续重试，渲染失败则走正常超时。
   await window.waitForFunction(() => (document.body?.innerText ?? "").trim().length > 20);
-  await window.locator(".account-block > button").waitFor();
+  await window.locator('.account-block button[aria-controls="account-options"]').waitFor();
   assert.equal(await window.evaluate(() => window.lecternNative.platform), process.platform);
   return window;
 }
@@ -348,7 +348,7 @@ try {
     // 不再手动点「下载」：等待自动下载完成（fixture 包 28 字节，瞬时）。
     await window.waitForFunction(async () => (await window.lecternNative.updateState()).status === "ready");
     // 打开账户菜单：ready 后菜单直接提供「重启更新 vN」（任务空闲时可点）。
-    await window.locator(".account-block > button").click();
+    await window.locator('.account-block button[aria-controls="account-options"]').click();
     await window.getByRole("button", { name: `重启更新 v${nextVersion}`, exact: true }).waitFor();
     // 确认对话框被 mock 为取消 → install 返回 false，状态保持 ready。
     assert.equal(await window.evaluate(() => window.lecternNative.updateInstall()), false);

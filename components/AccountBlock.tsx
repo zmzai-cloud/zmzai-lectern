@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { UserRound, ChevronUp } from "lucide-react";
+import { UserRound, ChevronUp, Download } from "lucide-react";
 
 import { client } from "@/lib/client";
 import type { AuthStatus, UpdateState } from "@/lib/types";
@@ -19,7 +19,8 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const [themePref, setThemePref] = useState<"system" | "light" | "dark">("system");
   const [busy, setBusy] = useState(false);
   const [update, setUpdate] = useState<UpdateState | null>(null);
-  const [taskRunning, setTaskRunning] = useState(false);
+  const [taskRunningBroadcast, setTaskRunningBroadcast] = useState(false);
+  const [taskRunningPolled, setTaskRunningPolled] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const onChangeRef = useRef(onChange);
@@ -65,12 +66,26 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   }, []);
 
   // 任务运行状态（工作台 page 广播）：运行中不允许「重启并更新」——自动更新
-  // 的下载不打扰任务，重启才会中止任务。设置页无广播源时按空闲处理。
+  // 的下载不打扰任务，重启才会中止任务。设置页没有广播源，靠下方轮询兜底。
   useEffect(() => {
-    const sync = (e: Event) => setTaskRunning((e as CustomEvent<{ running: boolean }>).detail?.running === true);
+    const sync = (e: Event) => setTaskRunningBroadcast((e as CustomEvent<{ running: boolean }>).detail?.running === true);
     window.addEventListener("lectern:task-state", sync);
     return () => window.removeEventListener("lectern:task-state", sync);
   }, []);
+
+  // 设置页没有工作台的任务态广播：更新就绪时以会话列表兜底（含后台会话与待授权）。
+  useEffect(() => {
+    if (update?.status !== "ready") return;
+    let cancelled = false;
+    const sync = () => void client.listSessions()
+      .then((list) => {
+        if (!cancelled) setTaskRunningPolled(list.some((s) => s.running === true || s.awaitingPermission === true));
+      })
+      .catch(() => undefined);
+    sync();
+    const timer = window.setInterval(sync, 10_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [update?.status]);
 
   const updateAction = () => {
     const bridge = window.lecternNative;
@@ -79,6 +94,19 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     else if (update?.status === "ready") void bridge.updateInstall?.();
     else void bridge.updateCheck?.();
   };
+
+  const taskRunning = taskRunningBroadcast || taskRunningPolled;
+  // 有新版本时在账户区常显小图标（不等用户展开菜单）。downloading 时禁用，
+  // ready 时点击走一次确认后重启安装；任务运行中不提供重启。
+  const updatePending = update?.status === "available" || update?.status === "downloading" || update?.status === "ready";
+  const updateIconBusy = update?.status === "downloading" || (update?.status === "ready" && taskRunning);
+  const updateTitle = update?.status === "ready"
+    ? (taskRunning ? `v${update.version} 已下载；任务运行中，完成后可重启更新` : `v${update.version} 已下载，点击重启更新`)
+    : update?.status === "downloading"
+      ? `正在下载更新 v${update.version}（${update.percent}%）`
+      : update?.status === "available"
+        ? `发现新版本 v${update.version}，点击下载`
+        : "账户与更多";
 
   // 外点关闭菜单
   useEffect(() => {
@@ -149,7 +177,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
                 title={update?.status === "ready" && taskRunning ? "任务运行中，完成后即可重启更新" : undefined}
                 className="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-50"
               >
-                <span>{update?.status === "ready" ? (taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`) : update?.status === "available" ? (taskRunning ? `v${update.version} 自动下载中…` : `下载 v${update.version}`) : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
+                <span>{update?.status === "ready" ? (taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`) : update?.status === "available" ? `下载 v${update.version}` : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
                 {update?.status === "current" && <span className="text-[0.625rem] text-ink-3">已是最新</span>}
               </button>
             )}
@@ -195,22 +223,39 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
           </div>
         </div>
       )}
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-expanded={menu}
-        aria-controls="account-options"
-        onClick={() => setMenu((v) => !v)}
-        title="账户与更多"
-        className="flex w-full items-center gap-2 rounded-sm px-2.5 py-2 text-left transition-colors hover:bg-surface-2"
-      >
-        <UserRound size={17} strokeWidth={1.5} className="shrink-0 text-ink-2" aria-hidden />
-        <span className="min-w-0 flex-1 leading-tight">
-          <span className="block truncate text-[0.6875rem] font-medium text-ink">{auth?.user?.name ?? "未登录"}</span>
-          <span className="block truncate text-[0.625rem] text-ink-3">{auth?.loggedIn ? "个人账户" : "登录或连接模型"}</span>
-        </span>
-        <ChevronUp size={14} className="text-ink-3" aria-hidden />
-      </button>
+      <div className="flex items-center">
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-expanded={menu}
+          aria-controls="account-options"
+          onClick={() => setMenu((v) => !v)}
+          title="账户与更多"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-sm px-2.5 py-2 text-left transition-colors hover:bg-surface-2"
+        >
+          <UserRound size={17} strokeWidth={1.5} className="shrink-0 text-ink-2" aria-hidden />
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-[0.6875rem] font-medium text-ink">{auth?.user?.name ?? "未登录"}</span>
+            <span className="block truncate text-[0.625rem] text-ink-3">{auth?.loggedIn ? "个人账户" : "登录或连接模型"}</span>
+          </span>
+          <ChevronUp size={14} className="text-ink-3" aria-hidden />
+        </button>
+        {updatePending && (
+          <button
+            type="button"
+            onClick={updateAction}
+            disabled={updateIconBusy}
+            title={updateTitle}
+            aria-label={updateTitle}
+            className="mr-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-accent transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="relative inline-flex">
+              <Download size={15} strokeWidth={1.8} className={update?.status === "downloading" ? "animate-pulse" : undefined} aria-hidden />
+              {update?.status === "ready" && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />}
+            </span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }

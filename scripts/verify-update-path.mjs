@@ -20,7 +20,7 @@
 // 连接抖动，重试即可）；与大流量下载并行会显著提高失败率，别同时跑。
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -110,6 +110,11 @@ const { _electron } = require("playwright");
 const root = mkdtempSync(join(tmpdir(), "lectern-update-path-"));
 const userData = join(root, "profile");
 mkdirSync(join(root, "workspace"), { recursive: true });
+// 隔离配置里关掉自动更新：脚本只验证「旧版能看到新版」，绝不能在 desktop.close()
+// 时触发退出安装去替换本机真实的 /Applications/Lectern.app。
+const dataDir = join(userData, "data");
+mkdirSync(dataDir, { recursive: true });
+writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ autoUpdate: false }) + "\n", { mode: 0o600 });
 const portServer = createServer();
 await new Promise((r) => portServer.listen(0, "127.0.0.1", r));
 const port = portServer.address().port;

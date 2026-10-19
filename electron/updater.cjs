@@ -11,6 +11,10 @@ let state = { status: "idle", version: null, percent: 0, error: null };
 let release = null;
 let downloaded = null;
 let installing = false;
+/** 手动确认过「重启并更新」：退出收尾后必须安装（不受 autoUpdate 开关限制）。 */
+let installRequested = false;
+/** 本次进程已拉起替换脚本：防止手动安装与退出安装各拉一次（双脚本互相 rm/mv）。 */
+let installStarted = false;
 let dataDir = null;
 function publish(next) {
   state = { ...state, ...next };
@@ -71,11 +75,12 @@ async function download() {
   if (state.status !== "available") return state;
   publish({ status: "downloading", percent: 0, error: null });
   let partial;
+  let downloadDir = null;
   try {
     const root = join(app.getPath("userData"), "updates");
     await mkdir(root, { recursive: true });
-    const dir = await mkdtemp(join(root, "download-"));
-    partial = join(dir, "download.partial");
+    downloadDir = await mkdtemp(join(root, "download-"));
+    partial = join(downloadDir, "download.partial");
     const result = await response(`${RELEASE_HOST}/${release.path}`, 30 * 60 * 1000);
     const file = await open(partial, "wx", 0o600);
     let size = 0;
@@ -89,40 +94,50 @@ async function download() {
       }
     } finally { await file.close(); }
     await verify(partial, release);
-    downloaded = join(dir, release.name);
+    downloaded = join(downloadDir, release.name);
     await rename(partial, downloaded);
     return publish({ status: "ready", percent: 100 });
   } catch (error) {
     if (partial) await unlink(partial).catch(() => {});
+    if (downloadDir) await rm(downloadDir, { recursive: true, force: true }).catch(() => {});
     return fail(error);
   }
 }
 
-/** mac 的 .app 安装根（execPath = Lectern.app/Contents/MacOS/Lectern）。 */
-function macAppRoot() {
-  return resolve(process.execPath, "..", "..");
+/** mac 的 .app 安装根（execPath = Lectern.app/Contents/MacOS/Lectern，需退三级）。 */
+function macAppRoot(execPath = process.execPath) {
+  return resolve(execPath, "..", "..", "..");
 }
 
-/** mac 启动时清理上次替换留下的备份——能运行到这里即新版确认成功。
- *  新版起不来的极端情况下，备份目录可手动改回原名恢复。 */
-function cleanupStaleBackup() {
-  if (process.platform !== "darwin" || !app.isPackaged) return;
+/** 启动清理：
+ *  - mac 旧版备份：能运行到这里即新版确认成功；新版起不来时备份仍在，可手动改回原名。
+ *  - 下载目录：进程内状态不跨启动，残留包（含下载中断的半成品）只会占空间。 */
+function cleanupOnStartup() {
+  if (!app.isPackaged) return;
+  if (process.platform === "darwin") {
+    try {
+      const backup = `${macAppRoot()}.old`;
+      if (existsSync(backup)) rmSync(backup, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[updater] 清理旧版备份失败（不影响使用）：${error?.message ?? error}`);
+    }
+  }
   try {
-    const backup = `${macAppRoot()}.old`;
-    if (existsSync(backup)) rmSync(backup, { recursive: true, force: true });
+    rmSync(join(app.getPath("userData"), "updates"), { recursive: true, force: true });
   } catch (error) {
-    console.warn(`[updater] 清理旧版备份失败（不影响使用）：${error?.message ?? error}`);
+    console.warn(`[updater] 清理旧更新包失败（不影响使用）：${error?.message ?? error}`);
   }
 }
 
-/** 执行替换并重启（detached，宿主进程随后退出）。
+/** 执行替换（detached，宿主进程随后退出）。relaunch=true 仅用于用户确认过的
+ *  「重启并更新」；用户主动退出触发的后台安装不重启应用，下次打开即新版。
  *  - mac：解压 ZIP → 核验解压产物 → 旧 .app rename 为 .old 备份 → 新 .app 就位
- *    （失败回滚）→ open 启动。set -e 保证任何一步失败立即中止——**解压核验
+ *    （失败回滚）→ 按需 open。set -e 保证任何一步失败立即中止——**解压核验
  *    通过之前绝不动旧 app**（smoke 实测教训：假包解压失败若已 mv 旧 app，
  *    用户应用就没了）。安装包由 Node fetch 下载（无 quarantine 标记），替换后
  *    Gatekeeper 不拦。
- *  - win：安装器 /S 静默装回原路径 → 完成后启动新 exe（同样无 Mark-of-the-Web）。 */
-function performInstall() {
+ *  - win：安装器 /S 静默装回原路径 → 按需启动新 exe（同样无 Mark-of-the-Web）。 */
+function performInstall({ relaunch = false } = {}) {
   if (process.platform === "darwin") {
     const root = macAppRoot();
     const script = [
@@ -134,20 +149,27 @@ function performInstall() {
       `test -d "${downloaded}.extract/Lectern.app"`,
       `rm -rf "${root}.old"`,
       `mv "${root}" "${root}.old"`,
-      `mv "${downloaded}.extract/Lectern.app" "${root}" || mv "${root}.old" "${root}"`,
-      `open "${root}"`,
+      `if ! mv "${downloaded}.extract/Lectern.app" "${root}"; then mv "${root}.old" "${root}"; exit 1; fi`,
+      ...(relaunch ? [`open "${root}"`] : []),
     ].join("\n");
     const child = spawn("/bin/sh", ["-c", script], { detached: true, stdio: "ignore" });
     child.unref();
     return;
   }
   const scriptPath = `${downloaded}.install.cmd`;
-  writeFileSync(scriptPath, `@echo off\r\nstart /wait "" "${downloaded}" /S\r\nstart "" "${process.execPath}"\r\n`, { mode: 0o600 });
+  writeFileSync(scriptPath, [
+    "@echo off",
+    "ping -n 3 127.0.0.1 >nul",
+    `start /wait "" "${downloaded}" /S --updated`,
+    ...(relaunch ? [`start "" "${process.execPath}"`] : []),
+  ].join("\r\n") + "\r\n", { mode: 0o600 });
   const child = spawn("cmd.exe", ["/d", "/s", "/c", scriptPath], { detached: true, stdio: "ignore" });
   child.unref();
 }
 
-/** 手动「重启并更新」入口：一次确认（会退出应用、中止运行中任务），随后全自动。 */
+/** 手动「重启并更新」入口：一次确认（会退出应用、中止运行中任务），随后全自动。
+ *  真正替换统一放到 before-quit 收尾链末尾执行：此时内嵌服务与任务已停，
+ *  替换脚本不会和退出中的进程抢应用目录，也能被 installStarted 防重。 */
 async function install() {
   if (state.status !== "ready" || !downloaded || installing) return false;
   installing = true;
@@ -161,22 +183,25 @@ async function install() {
         : "确认后运行安装器静默升级并重启。运行中的任务会被中止，请先保存工作。",
     });
     if (answer.response !== 1) return false;
-    performInstall();
+    installRequested = true;
     app.quit();
     return true;
   } catch (error) { fail(error); return false; }
   finally { installing = false; }
 }
 
-/** 退出时自动安装（第二级，无对话框）：用户主动退出即视为同意就绪的更新。
- *  由 main 的收尾链在子进程全部停止后调用；失败不阻塞退出。 */
+/** 退出时安装（第二级，无对话框）：手动确认过，或用户开启了自动更新且主动退出。
+ *  由 main 的收尾链在子进程全部停止后调用；失败不阻塞退出。
+ *  只拉起一次替换脚本；手动更新时脚本负责重启，自动更新不重启（下次打开即新版）。 */
 async function installOnQuitIfReady() {
+  if (installStarted) return false;
   if (state.status !== "ready" || !downloaded || installing) return false;
-  if (!autoUpdateEnabled()) return false;
+  if (!installRequested && !autoUpdateEnabled()) return false;
   installing = true;
   try {
     await verify(downloaded, release);
-    performInstall();
+    installStarted = true;
+    performInstall({ relaunch: installRequested });
     return true;
   } catch (error) {
     console.warn(`[updater] 退出时安装未执行：${error?.message ?? error}`);
@@ -186,4 +211,4 @@ async function installOnQuitIfReady() {
 }
 
 function getState() { return state; }
-module.exports = { configure, check, download, install, installOnQuitIfReady, cleanupStaleBackup, setDataDir, getState, RELEASE_HOST };
+module.exports = { configure, check, download, install, installOnQuitIfReady, cleanupOnStartup, macAppRoot, setDataDir, getState, RELEASE_HOST };

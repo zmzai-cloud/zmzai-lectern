@@ -28,6 +28,7 @@ const AUTH_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "muzhi_session";
 let webProcess = null;
 let tray = null;
 let pollTimer = null;
+let updateTimer = null;
 let authWin = null;
 let gracefulDone = false;
 let webLogStream = null;
@@ -606,11 +607,16 @@ app.whenReady().then(async () => {
   startTrayPolling();
   registerGlobalShortcut();
   startCookieWatch();
-  if (updater.configure()) setTimeout(() => void updater.check(), 10_000);
-  // 自动更新：启动即清理上次替换留下的旧版备份（能启动=新版确认成功），
-  // 并把数据目录注入 updater（读 settings.json 的 autoUpdate 偏好）。
-  updater.cleanupStaleBackup();
+  // 自动更新：数据目录注入 updater（读 settings.json 的 autoUpdate 偏好），
+  // 启动清理旧版备份与上次残留的安装包（能启动=新版确认成功）。
   updater.setDataDir(resolveDataDir(app.getPath("userData")));
+  updater.cleanupOnStartup();
+  if (updater.configure()) {
+    setTimeout(() => void updater.check(), 10_000);
+    // 长驻应用也要能发现新版本：启动检查之外每 4 小时复查一次。
+    updateTimer = setInterval(() => void updater.check(), 4 * 60 * 60 * 1000);
+    updateTimer.unref?.();
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -620,6 +626,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", (event) => {
   app.isQuitting = true;
   clearInterval(pollTimer);
+  clearInterval(updateTimer);
   globalShortcut.unregisterAll();
   // 优雅收尾（会话稳定性 P2）：先经 HTTP 让内嵌 server 中止 running 会话
   // （正常收尾链：tool parts 归 error、事件落库、lease 清除）+ checkpoint，

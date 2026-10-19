@@ -8,8 +8,9 @@ export const runtime = "nodejs";
 /**
  * 应用内自动更新偏好（electron main 读同一份 settings.json）：
  * - GET  { enabled }
- * - POST { enabled } 保存即生效——检查/后台下载/退出时安装共用这一个开关；
- *   关闭后仍可从账户菜单手动检查/下载/重启更新。
+ * - POST { enabled } 保存即生效——控制后台下载与退出时安装；版本检查始终进行
+ *   （否则界面无法提示新版本）。关闭后仍可从更新图标/账户菜单手动下载、
+ *   重启安装。
  */
 export async function GET() {
   return NextResponse.json({ enabled: getAutoUpdate() });

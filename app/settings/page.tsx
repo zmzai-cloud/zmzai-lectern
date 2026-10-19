@@ -853,12 +853,12 @@ export default function SettingsPage() {
                     <ThemeToggle />
                   </div>
                 </Card>
-                <Card title="自动更新" desc="启动时自动检查新版本并后台静默下载；下载完成后在你退出 Lectern 时自动安装，下次打开即新版。任务运行中的退出照常由你控制；关闭后仍可从左下角账户菜单手动检查更新。">
+                <Card title="自动更新" desc="启动时及每 4 小时检查新版本；发现后左下角账户区会显示更新图标。开启时后台静默下载，并在你退出 Lectern 时自动安装，下次打开即新版；关闭后只提示新版本，下载和重启安装需手动操作。任务运行中的退出照常由你控制。">
                   <div className="flex items-center gap-4">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-ink">自动检查、下载并安装更新</div>
+                      <div className="text-sm font-medium text-ink">自动下载并安装更新</div>
                       <div className="mt-0.5 text-xs leading-5 text-ink-3">
-                        {autoUpdate ? "开启——新版本就绪后退出时自动升级（旧版保留一份备份）" : "关闭——仅手动检查更新"}
+                        {autoUpdate ? "开启——新版本就绪后退出时自动升级（旧版保留一份备份）" : "关闭——只提示新版本，需手动下载和安装"}
                       </div>
                     </div>
                     <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-ink-3">

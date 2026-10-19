@@ -253,11 +253,13 @@ export default function App() {
     sessionId?: string;
   } | null>(null);
   const [status, setStatus] = useState<string>("idle");
-  // 任务运行态广播（AccountBlock 消费）：运行中禁用「重启并更新」——
+  // 任务运行态广播（AccountBlock 消费）：非 idle（running / waiting_permission /
+  // waiting_input）以及其它会话在跑都算任务未结束——此时禁用「重启并更新」。
   // 自动下载不打扰任务，重启才会中止任务。
+  const taskActive = status !== "idle" || sessions.some((s) => s.running === true);
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent("lectern:task-state", { detail: { running: status === "running" } }));
-  }, [status]);
+    window.dispatchEvent(new CustomEvent("lectern:task-state", { detail: { running: taskActive } }));
+  }, [taskActive]);
   // 发送被 RECOVERY_REQUIRED 挡下（上一任务外部副作用未确认）：输入区上方挂
   // 可操作横幅直到任务被放行。存 sessionId，切会话自动失效。
   const [recoveryGate, setRecoveryGate] = useState<string | null>(null);

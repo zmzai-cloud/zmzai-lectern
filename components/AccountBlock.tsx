@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { UserRound, ChevronUp, Download } from "lucide-react";
+import { UserRound, ChevronUp } from "lucide-react";
 
 import { client } from "@/lib/client";
+import { UpdateConfirmDialog, UpdateIndicator } from "@/components/UpdateIndicator";
 import type { AuthStatus, UpdateState } from "@/lib/types";
 
 /**
@@ -19,6 +20,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const [themePref, setThemePref] = useState<"system" | "light" | "dark">("system");
   const [busy, setBusy] = useState(false);
   const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [taskRunningBroadcast, setTaskRunningBroadcast] = useState(false);
   const [taskRunningPolled, setTaskRunningPolled] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -62,7 +64,11 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     const bridge = window.lecternNative;
     if (!bridge?.updateState) return;
     void bridge.updateState().then(setUpdate).catch(() => undefined);
-    return bridge.onUpdateStatus?.(setUpdate);
+    return bridge.onUpdateStatus?.((next) => {
+      setUpdate(next);
+      // 状态离开 ready（校验失败/重新下载）时收起确认框，避免下次就绪时意外弹出。
+      if (next.status !== "ready") setConfirmOpen(false);
+    });
   }, []);
 
   // 任务运行状态（工作台 page 广播）：运行中不允许「重启并更新」——自动更新
@@ -91,22 +97,13 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
     const bridge = window.lecternNative;
     if (!bridge) return;
     if (update?.status === "available") void bridge.updateDownload?.();
-    else if (update?.status === "ready") void bridge.updateInstall?.();
-    else void bridge.updateCheck?.();
+    else if (update?.status === "ready") {
+      setMenu(false);
+      setConfirmOpen(true);
+    } else void bridge.updateCheck?.();
   };
 
   const taskRunning = taskRunningBroadcast || taskRunningPolled;
-  // 有新版本时在账户区常显小图标（不等用户展开菜单）。downloading 时禁用，
-  // ready 时点击走一次确认后重启安装；任务运行中不提供重启。
-  const updatePending = update?.status === "available" || update?.status === "downloading" || update?.status === "ready";
-  const updateIconBusy = update?.status === "downloading" || (update?.status === "ready" && taskRunning);
-  const updateTitle = update?.status === "ready"
-    ? (taskRunning ? `v${update.version} 已下载；任务运行中，完成后可重启更新` : `v${update.version} 已下载，点击重启更新`)
-    : update?.status === "downloading"
-      ? `正在下载更新 v${update.version}（${update.percent}%）`
-      : update?.status === "available"
-        ? `发现新版本 v${update.version}，点击下载`
-        : "账户与更多";
 
   // 外点关闭菜单
   useEffect(() => {
@@ -173,8 +170,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
               <button
                 type="button"
                 onClick={updateAction}
-                disabled={update?.status === "checking" || update?.status === "downloading" || (update?.status === "ready" && taskRunning)}
-                title={update?.status === "ready" && taskRunning ? "任务运行中，完成后即可重启更新" : undefined}
+                disabled={update?.status === "checking" || update?.status === "downloading"}
                 className="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-50"
               >
                 <span>{update?.status === "ready" ? (taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`) : update?.status === "available" ? `下载 v${update.version}` : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
@@ -240,22 +236,20 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
           </span>
           <ChevronUp size={14} className="text-ink-3" aria-hidden />
         </button>
-        {updatePending && (
-          <button
-            type="button"
-            onClick={updateAction}
-            disabled={updateIconBusy}
-            title={updateTitle}
-            aria-label={updateTitle}
-            className="mr-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-accent transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span className="relative inline-flex">
-              <Download size={15} strokeWidth={1.8} className={update?.status === "downloading" ? "animate-pulse" : undefined} aria-hidden />
-              {update?.status === "ready" && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />}
-            </span>
-          </button>
-        )}
+        <UpdateIndicator
+          update={update}
+          taskRunning={taskRunning}
+          onDownload={() => void window.lecternNative?.updateDownload?.()}
+          onConfirm={() => setConfirmOpen(true)}
+        />
       </div>
+      <UpdateConfirmDialog
+        open={confirmOpen && update?.status === "ready"}
+        update={update}
+        taskRunning={taskRunning}
+        onOpenChange={(open) => { if (!open) setConfirmOpen(false); }}
+        onInstall={() => window.lecternNative?.updateInstall?.() ?? Promise.resolve(false)}
+      />
     </div>
   );
 }

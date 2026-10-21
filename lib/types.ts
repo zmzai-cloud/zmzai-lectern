@@ -508,11 +508,18 @@ export type LecternNativeBridge = {
   onCloseFocusedPane?: (callback: () => void) => () => void;
 };
 
+export type ReleaseNotes = {
+  date: string;
+  sections: { title: string; items: string[] }[];
+};
+
 export type UpdateState = {
   status: "idle" | "checking" | "available" | "current" | "downloading" | "ready" | "error" | "unavailable";
   version: string | null;
   percent: number;
   error: string | null;
+  /** 更新清单里的发布日志；旧清单或格式损坏时为 null。 */
+  releaseNotes: ReleaseNotes | null;
 };
 
 declare global {

@@ -1,12 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { selectRelease } = require("./update-contract.cjs");
+const { selectRelease, assertReleaseNotes } = require("./update-contract.cjs");
 const { createHash } = require("node:crypto");
 const { existsSync, readFileSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const hash = createHash("sha512").update("fixture").digest("base64");
-function manifest() { return { schema: 1, version: "0.5.1", platforms: {
+const notes = { date: "2026-10-19", sections: [{ title: "新功能", items: ["本地项目支持一次选择多个文件夹"] }] };
+function manifest() { return { schema: 1, version: "0.5.1", releaseNotes: notes, platforms: {
   "darwin-arm64": { path: "v0.5.1/Lectern-0.5.1-arm64-mac.zip", size: 7, sha512: hash },
   "win32-x64": { path: "v0.5.1/Lectern-Setup-0.5.1.exe", size: 7, sha512: hash },
 } }; }
@@ -14,6 +15,28 @@ test("selects architecture-specific archive or installer", () => {
   assert.match(selectRelease(manifest(), "0.5.0", "darwin", "arm64").name, /mac.zip$/);
   assert.match(selectRelease(manifest(), "0.5.0", "win32", "x64").name, /exe$/);
   assert.throws(() => selectRelease(manifest(), "0.5.0", "darwin", "x64"));
+});
+test("carries release notes and ignores malformed ones instead of blocking updates", () => {
+  assert.deepEqual(selectRelease(manifest(), "0.5.0", "darwin", "arm64").releaseNotes, notes);
+  for (const releaseNotes of [
+    null,
+    { date: "2026-02-30", sections: [{ title: "新功能", items: ["x"] }] },
+    { date: "2026-10-19", sections: [] },
+    { date: "2026-10-19", sections: [{ title: "", items: ["x"] }] },
+    { date: "2026-10-19", sections: [{ title: "新功能", items: [""] }] },
+    { date: "2026-10-19", sections: [{ title: "新功能", items: ["x".repeat(241)] }] },
+  ]) {
+    const m = manifest(); m.releaseNotes = releaseNotes;
+    assert.equal(selectRelease(m, "0.5.0", "darwin", "arm64").releaseNotes, null);
+  }
+});
+test("release-side notes validation fails closed", () => {
+  assert.deepEqual(assertReleaseNotes(notes), notes);
+  assert.throws(() => assertReleaseNotes(null));
+  assert.throws(() => assertReleaseNotes({ date: "2026-10-19", sections: [] }));
+  assert.throws(() => assertReleaseNotes({ date: "2026-10-19", sections: [{ title: "新功能", items: [] }] }));
+  assert.throws(() => assertReleaseNotes({ date: "2026-10-19", sections: Array.from({ length: 9 }, () => ({ title: "节", items: ["x"] })) }));
+  assert.throws(() => assertReleaseNotes({ date: "2026-10-19", sections: [{ title: "节", items: Array.from({ length: 31 }, () => "x") }] }));
 });
 test("same version and downgrade never offered, versions compare numerically", () => {
   assert.equal(selectRelease(manifest(), "0.5.1", "darwin", "arm64"), null);
@@ -36,7 +59,7 @@ test("download stays explicit when auto update is off and install verifies again
   assert.match(source, /if \(state.status !== "available"\)/);
   assert.match(source, /await verify\(downloaded, release\)/);
   assert.match(source, /redirect: "error"/);
-  assert.doesNotMatch(source, /quitAndInstall|autoUpdater|execSync|xattr/);
+  assert.doesNotMatch(source, /quitAndInstall|autoUpdater|execSync|xattr|showMessageBox/);
   const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
   assert.deepEqual(pkg.build.publish, { provider: "generic", url: "https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/" });
 });
@@ -44,7 +67,7 @@ test("download stays explicit when auto update is off and install verifies again
 const vm = require("node:vm");
 const fs = require("node:fs/promises");
 const os = require("node:os");
-async function harness(platform, { body = "fixture", consent = 1, autoUpdate = false, execPath: execPathOption, manifest: manifestOption, mockSpawn = true } = {}) {
+async function harness(platform, { body = "fixture", autoUpdate = false, execPath: execPathOption, manifest: manifestOption, mockSpawn = true } = {}) {
   const root = await fs.mkdtemp(join(os.tmpdir(), "lectern-update-test-"));
   const calls = [];
   const spawnCalls = [];
@@ -54,7 +77,6 @@ async function harness(platform, { body = "fixture", consent = 1, autoUpdate = f
   const electron = {
     app: { isPackaged: true, getVersion: () => "0.5.0", getPath: () => root, quit: () => calls.push("quit") },
     BrowserWindow: { getAllWindows: () => [] },
-    dialog: { showMessageBox: async () => ({ response: consent }) },
   };
   const context = { module: { exports: {} },
     require: (name) => {
@@ -186,16 +208,24 @@ test("auto update off keeps quit from installing a ready package", async () => {
   assert.equal(h.spawnCalls.length, 0);
 });
 
-test("cancel keeps app running; corrupted or oversized packages cannot install", async () => {
-  const cancelled = await harness("win32", { consent: 0 });
-  await cancelled.updater.check(); await cancelled.updater.download();
-  assert.equal(await cancelled.updater.install(), false);
-  assert.equal(cancelled.calls.includes("quit"), false);
+test("update state exposes the release notes consumed by the hover card", async () => {
+  const h = await harness("darwin");
+  const checked = await h.updater.check();
+  // updater 跑在 vm 沙箱里，对象原型跨 realm——按 JSON 值比较。
+  assert.deepEqual(JSON.parse(JSON.stringify(checked.releaseNotes)), notes);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.updater.getState().releaseNotes)), notes);
+});
+
+test("install without a ready package or with a corrupted package cannot quit the app", async () => {
+  const notReady = await harness("win32");
+  assert.equal(await notReady.updater.install(), false);
+  assert.equal(notReady.calls.includes("quit"), false);
   for (const body of ["corrupt", "oversized fixture", "short"]) {
     const h = await harness("darwin", { body });
     await h.updater.check();
     assert.equal((await h.updater.download()).status, "error");
     assert.equal(await h.updater.install(), false);
+    assert.equal(h.calls.includes("quit"), false);
   }
 });
 test("rechecks downloaded package before quitting", async () => {

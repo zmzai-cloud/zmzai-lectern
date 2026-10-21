@@ -308,7 +308,7 @@ try {
   assert.match(output, /README\.md/);
   results.push("native terminal and real Git command");
   // Replace only the trusted update host in this isolated main process; no real installer runs.
-  const nextVersion = await desktop.evaluate(({ app, dialog }) => {
+  const nextVersion = await desktop.evaluate(({ app }) => {
     const version = app.getVersion().split(".").map(Number);
     version[2] += 1;
     const next = version.join(".");
@@ -316,13 +316,23 @@ try {
     const crypto = process.getBuiltinModule("crypto");
     const name = process.platform === "darwin" ? `Lectern-${next}-arm64-mac.zip` : `Lectern-Setup-${next}.exe`;
     const path = `v${next}/${name}`;
-    const manifest = { schema: 1, version: next, platforms: {
-      [`${process.platform}-${process.arch}`]: { path, size: bytes.length, sha512: crypto.createHash("sha512").update(bytes).digest("base64") },
-    } };
+    const manifest = {
+      schema: 1,
+      version: next,
+      releaseNotes: {
+        date: "2026-10-19",
+        sections: [
+          { title: "新功能", items: ["本地项目支持一次选择多个文件夹"] },
+          { title: "修复", items: ["修复 macOS 安装路径与重复执行"] },
+        ],
+      },
+      platforms: {
+        [`${process.platform}-${process.arch}`]: { path, size: bytes.length, sha512: crypto.createHash("sha512").update(bytes).digest("base64") },
+      },
+    };
     const originalFetch = globalThis.fetch;
-    const originalDialog = dialog.showMessageBox;
     globalThis.__restoreUpdateSmoke = () => {
-      globalThis.fetch = originalFetch; dialog.showMessageBox = originalDialog;
+      globalThis.fetch = originalFetch;
       // 清除假下载包：退出时自动安装（installOnQuitIfReady）会对 downloaded 再做
       // SHA-512 校验——文件没了校验失败即不安装，防止 smoke 结束时假包替换真应用。
       try {
@@ -336,7 +346,6 @@ try {
       if (input === `https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/${path}`) return new Response(bytes);
       return originalFetch(input, options);
     };
-    dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
     return next;
   });
   try {
@@ -345,15 +354,27 @@ try {
     // 可能已推进到 downloading（available→downloading 是同拍竞速，两者皆合法）。
     assert.ok(["available", "downloading"].includes(update.status), `unexpected update status ${update.status}`);
     assert.equal(update.version, nextVersion);
+    assert.equal(update.releaseNotes.sections[0].title, "新功能");
     // 不再手动点「下载」：等待自动下载完成（fixture 包 28 字节，瞬时）。
     await window.waitForFunction(async () => (await window.lecternNative.updateState()).status === "ready");
-    // 打开账户菜单：ready 后菜单直接提供「重启更新 vN」（任务空闲时可点）。
+    // hover 出更新日志：版本、日期与分节条目都来自清单 releaseNotes。
+    const indicator = window.locator('[data-testid="update-indicator"]');
+    await indicator.hover();
+    await window.getByText(`v${nextVersion} 更新日志`, { exact: true }).waitFor();
+    await window.getByText("2026年10月19日", { exact: true }).waitFor();
+    await window.getByText("本地项目支持一次选择多个文件夹", { exact: true }).waitFor();
+    // 点击图标进入应用内确认框；「稍后」只关弹窗，不能触发退出安装。
+    await indicator.click();
+    const dialog = window.getByRole("dialog");
+    await dialog.waitFor();
+    await window.getByText(`v${nextVersion} 已准备就绪`, { exact: true }).waitFor();
+    await window.getByRole("button", { name: "稍后", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(await window.evaluate(() => window.lecternNative.updateState()).then((s) => s.status), "ready");
+    // 账户菜单仍保留同一入口（点击同样是弹确认框，不直接安装）。
     await window.locator('.account-block button[aria-controls="account-options"]').click();
     await window.getByRole("button", { name: `重启更新 v${nextVersion}`, exact: true }).waitFor();
-    // 确认对话框被 mock 为取消 → install 返回 false，状态保持 ready。
-    assert.equal(await window.evaluate(() => window.lecternNative.updateInstall()), false);
-    assert.equal(await window.evaluate(() => window.lecternNative.updateState()).then((s) => s.status), "ready");
-    results.push("packaged updater IPC, auto-download, SHA-512 verification and cancelled install");
+    results.push("packaged updater IPC, auto-download, SHA-512 verification, changelog hover and deferred install");
   } finally {
     await desktop.evaluate(() => globalThis.__restoreUpdateSmoke());
   }

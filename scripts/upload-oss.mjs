@@ -14,9 +14,13 @@
 // 上传完成生成：dist/SHA256SUMS.txt（本地+远端各一份）与 dist/release-links.md（直链清单）。
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { digest, stableManifest, verifyRelease } from "./release-validation.mjs";
 import { checkUiE2eGate, formatGateResult } from "./ui-e2e-gate.mjs";
 import { parse, stringify } from "yaml";
+
+const require = createRequire(import.meta.url);
+const { assertReleaseNotes } = require("../electron/update-contract.cjs");
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry");
@@ -85,7 +89,21 @@ const stableManifests = files
   });
 // One atomic cross-platform feed for the unsigned, user-confirmed installer flow.
 if (platforms.includes("darwin") && platforms.includes("win32")) {
-  const desktop = { schema: 1, version, platforms: {} };
+  const notesPath = join(process.cwd(), "release-notes", `${version}.json`);
+  if (!existsSync(notesPath)) {
+    console.error(`❌ 缺少发布日志：release-notes/${version}.json`);
+    console.error('   格式：{ "date": "YYYY-MM-DD", "sections": [{ "title": "新功能", "items": ["…"] }] }');
+    process.exit(1);
+  }
+  let releaseNotes;
+  try {
+    releaseNotes = assertReleaseNotes(JSON.parse(readFileSync(notesPath, "utf8")));
+  } catch (error) {
+    console.error(`❌ release-notes/${version}.json 无效：${error.message}`);
+    process.exit(1);
+  }
+  console.log(`发布日志：release-notes/${version}.json · ${releaseNotes.sections.length} 节`);
+  const desktop = { schema: 1, version, releaseNotes, platforms: {} };
   for (const [platform, arch, filename] of [["darwin", "arm64", "latest-mac.yml"], ["win32", "x64", "latest.yml"]]) {
     const manifest = parse(readFileSync(join(distDir, filename), "utf8"));
     const artifact = manifest.files.find((file) => file.url === manifest.path);

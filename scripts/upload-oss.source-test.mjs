@@ -8,11 +8,17 @@ import { spawnSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { artifactNames, digest } from "./release-validation.mjs";
 
-async function upload(t, { fail = "", dry = false, both = false, gate = "pass" } = {}) {
+const releaseNotes = { date: "2026-10-19", sections: [{ title: "新功能", items: ["本地项目支持一次选择多个文件夹"] }] };
+
+async function upload(t, { fail = "", dry = false, both = false, gate = "pass", notes = "valid" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "lectern-upload-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "dist"));
   writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.5.1" }));
+  if (notes !== "missing") {
+    mkdirSync(join(dir, "release-notes"));
+    writeFileSync(join(dir, "release-notes", "0.5.1.json"), JSON.stringify(notes === "invalid" ? { date: "2026-02-30", sections: [] } : releaseNotes));
+  }
   const names = artifactNames("0.5.1", "win32");
   for (const name of names) writeFileSync(join(dir, "dist", name), "fixture artifact");
   const sha512 = await digest(join(dir, "dist", names[0]));
@@ -124,9 +130,20 @@ test("desktop JSON feed is published last and selects both uploaded platform art
   assert.equal(result.status, 0, result.stderr);
   assert.equal(puts.at(-1).key, "releases/harness/latest-desktop.json");
   const manifest = JSON.parse(puts.at(-1).body);
+  assert.deepEqual(manifest.releaseNotes, releaseNotes);
   const { default: contract } = await import("../electron/update-contract.cjs");
   for (const [platform, arch] of [["darwin", "arm64"], ["win32", "x64"]]) {
     const artifact = contract.selectRelease(manifest, "0.5.0", platform, arch);
+    assert.deepEqual(artifact.releaseNotes, releaseNotes);
     assert.ok(puts.some((put) => put.key === `releases/harness/${artifact.path}`));
+  }
+});
+
+test("missing or invalid release notes block the upload before any object is written", async (t) => {
+  for (const notes of ["missing", "invalid"]) {
+    const { result, puts } = await upload(t, { both: true, notes });
+    assert.equal(result.status, 1, `notes=${notes}`);
+    assert.deepEqual(puts, [], `notes=${notes} 时不该有任何上传动作`);
+    assert.match(result.stderr, notes === "missing" ? /缺少发布日志/ : /release-notes\/0\.5\.1\.json 无效/);
   }
 });

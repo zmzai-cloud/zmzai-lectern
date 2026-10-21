@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow } = require("electron");
 const { mkdir, mkdtemp, open, rename, rm, unlink } = require("node:fs/promises");
 const { existsSync, readFileSync, writeFileSync, rmSync } = require("node:fs");
 const { createReadStream } = require("node:fs");
@@ -7,7 +7,7 @@ const { spawn } = require("node:child_process");
 const { join, resolve } = require("node:path");
 const { selectRelease } = require("./update-contract.cjs");
 const RELEASE_HOST = "https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness";
-let state = { status: "idle", version: null, percent: 0, error: null };
+let state = { status: "idle", version: null, percent: 0, error: null, releaseNotes: null };
 let release = null;
 let downloaded = null;
 let installing = false;
@@ -59,7 +59,12 @@ async function check() {
       chunks.push(Buffer.from(chunk));
     }
     release = selectRelease(JSON.parse(Buffer.concat(chunks).toString("utf8")), app.getVersion(), process.platform, process.arch);
-    const next = publish({ status: release ? "available" : "current", version: release?.version ?? app.getVersion(), percent: 0 });
+    const next = publish({
+      status: release ? "available" : "current",
+      version: release?.version ?? app.getVersion(),
+      percent: 0,
+      releaseNotes: release?.releaseNotes ?? null,
+    });
     // 自动更新第一级：检查到新版即静默后台下载（不打扰；下载不中止任务，
     // 重启安装才需要用户确认/空闲）。关闭偏好时退回手动下载。
     if (release && autoUpdateEnabled()) void download();
@@ -167,7 +172,7 @@ function performInstall({ relaunch = false } = {}) {
   child.unref();
 }
 
-/** 手动「重启并更新」入口：一次确认（会退出应用、中止运行中任务），随后全自动。
+/** 手动「重启并更新」入口：确认框在渲染层（应用内 Dialog），这里只做最终校验。
  *  真正替换统一放到 before-quit 收尾链末尾执行：此时内嵌服务与任务已停，
  *  替换脚本不会和退出中的进程抢应用目录，也能被 installStarted 防重。 */
 async function install() {
@@ -175,14 +180,6 @@ async function install() {
   installing = true;
   try {
     await verify(downloaded, release);
-    const answer = await dialog.showMessageBox({
-      type: "info", buttons: ["取消", "重启并更新"], defaultId: 0, cancelId: 0,
-      message: `重启并更新到 Lectern ${state.version}？`,
-      detail: process.platform === "darwin"
-        ? "确认后自动替换应用并重启（保留一份旧版作回滚备份）。运行中的任务会被中止，请先保存工作。"
-        : "确认后运行安装器静默升级并重启。运行中的任务会被中止，请先保存工作。",
-    });
-    if (answer.response !== 1) return false;
     installRequested = true;
     app.quit();
     return true;

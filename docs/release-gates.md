@@ -122,6 +122,13 @@ notes only (`gh release create v<x> --target <full-sha> --notes-file …`), and
 paste the OSS direct links from `dist/release-links.md` into the notes. The
 updater never reads GitHub, so nothing else changes.
 
+**In-app changelog is part of the feed.** The updater hover card and restart
+dialog read `releaseNotes` from `latest-desktop.json`. Configure it in
+`release-notes/<version>.json` (`date` + `sections[]`); the uploader validates
+the file and refuses to publish the cross-platform feed when it is missing,
+malformed, or over 16 KB. The manifest schema stays `1` because the field is
+optional and older clients ignore it.
+
 ## Cross-version update path
 
 The updater is first-party (`electron/updater.cjs` + `electron/update-contract.cjs`),

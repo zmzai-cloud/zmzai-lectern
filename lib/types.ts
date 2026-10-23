@@ -492,6 +492,7 @@ export type LecternNativeBridge = {
   platform?: string;
   updateCheck?: () => Promise<UpdateState>;
   updateDownload?: () => Promise<UpdateState>;
+  updatePause?: () => Promise<UpdateState>;
   updateInstall?: () => Promise<boolean>;
   updateState?: () => Promise<UpdateState>;
   onUpdateStatus?: (callback: (state: UpdateState) => void) => () => void;
@@ -514,10 +515,12 @@ export type ReleaseNotes = {
 };
 
 export type UpdateState = {
-  status: "idle" | "checking" | "available" | "current" | "downloading" | "ready" | "error" | "unavailable";
+  status: "idle" | "checking" | "available" | "paused" | "current" | "downloading" | "ready" | "error" | "unavailable";
   version: string | null;
   percent: number;
   error: string | null;
+  /** 本次进程上一次安装/替换失败的诊断（由替换脚本留下的结果文件读出）。 */
+  installError: string | null;
   /** 更新清单里的发布日志；旧清单或格式损坏时为 null。 */
   releaseNotes: ReleaseNotes | null;
 };

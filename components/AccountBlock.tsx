@@ -96,11 +96,26 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
   const updateAction = () => {
     const bridge = window.lecternNative;
     if (!bridge) return;
-    if (update?.status === "available") void bridge.updateDownload?.();
+    if (update?.status === "downloading") void bridge.updatePause?.();
+    else if (update?.status === "available" || update?.status === "paused"
+      || (update?.status === "error" && update.version)) void bridge.updateDownload?.();
     else if (update?.status === "ready") {
       setMenu(false);
       setConfirmOpen(true);
     } else void bridge.updateCheck?.();
+  };
+
+  const updateLabel = () => {
+    switch (update?.status) {
+      case "ready":
+        return taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`;
+      case "available": return `下载 v${update.version}`;
+      case "downloading": return `下载更新 ${update.percent}% · 点击暂停`;
+      case "paused": return `继续下载 ${update.percent}%`;
+      case "checking": return "正在检查更新…";
+      case "error": return update.version ? `重试下载 v${update.version}` : "重试检查更新";
+      default: return "检查更新";
+    }
   };
 
   const taskRunning = taskRunningBroadcast || taskRunningPolled;
@@ -170,14 +185,15 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
               <button
                 type="button"
                 onClick={updateAction}
-                disabled={update?.status === "checking" || update?.status === "downloading"}
+                disabled={update?.status === "checking"}
                 className="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[0.75rem] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-50"
               >
-                <span>{update?.status === "ready" ? (taskRunning ? `v${update.version} 已就绪 · 任务运行中` : `重启更新 v${update.version}`) : update?.status === "available" ? `下载 v${update.version}` : update?.status === "downloading" ? `下载更新 ${update.percent}%` : update?.status === "checking" ? "正在检查更新…" : update?.status === "error" ? "重试检查更新" : "检查更新"}</span>
+                <span>{updateLabel()}</span>
                 {update?.status === "current" && <span className="text-[0.625rem] text-ink-3">已是最新</span>}
               </button>
             )}
             {update?.error && <p role="status" className="px-2.5 py-1 text-[0.6875rem] text-ink-3 break-words">{update.error}</p>}
+            {update?.installError && <p role="alert" className="px-2.5 py-1 text-[0.6875rem] text-danger break-words">{update.installError}</p>}
             <Link
               href="/settings"
               onClick={() => setMenu(false)}
@@ -240,6 +256,7 @@ export default function AccountBlock({ onChange }: { onChange?: (auth: AuthStatu
           update={update}
           taskRunning={taskRunning}
           onDownload={() => void window.lecternNative?.updateDownload?.()}
+          onPause={() => void window.lecternNative?.updatePause?.()}
           onConfirm={() => setConfirmOpen(true)}
         />
       </div>

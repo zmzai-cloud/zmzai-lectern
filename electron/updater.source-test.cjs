@@ -56,7 +56,7 @@ test("rejects unsafe paths, external hosts, invalid sizes and hashes", () => {
 });
 test("download stays explicit when auto update is off and install verifies again", () => {
   const source = readFileSync(join(__dirname, "updater.cjs"), "utf8");
-  assert.match(source, /if \(state.status !== "available"\)/);
+  assert.match(source, /\["available", "paused", "error"\]\.includes\(state\.status\)/);
   assert.match(source, /await verify\(downloaded, release\)/);
   assert.match(source, /redirect: "error"/);
   assert.doesNotMatch(source, /quitAndInstall|autoUpdater|execSync|xattr|showMessageBox/);
@@ -64,10 +64,30 @@ test("download stays explicit when auto update is off and install verifies again
   assert.deepEqual(pkg.build.publish, { provider: "generic", url: "https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/" });
 });
 
+test("mirror URLs are optional, validated per artifact, and never block updates", () => {
+  const name = "Lectern-0.5.1-arm64-mac.zip";
+  const mirror = `https://mirror.example/releases/harness/v0.5.1/${name}`;
+  const withMirrors = manifest();
+  withMirrors.platforms["darwin-arm64"].mirrors = [mirror, mirror, `http://insecure.example/v0.5.1/${name}`];
+  assert.deepEqual(selectRelease(withMirrors, "0.5.0", "darwin", "arm64").mirrors, [mirror]);
+  for (const mirrors of [
+    `https://mirror.example/v0.5.1/other.zip`,
+    [`https://user:pass@mirror.example/v0.5.1/${name}`],
+    [`https://mirror.example/v0.5.1/${name}?token=1`],
+    [`https://mirror.example/v0.5.1/${name}#fragment`],
+    Array.from({ length: 4 }, (_, index) => `https://m${index}.example/v0.5.1/${name}`),
+  ]) {
+    const m = manifest();
+    m.platforms["darwin-arm64"].mirrors = mirrors;
+    assert.deepEqual(selectRelease(m, "0.5.0", "darwin", "arm64").mirrors, []);
+  }
+});
+
+
 const vm = require("node:vm");
 const fs = require("node:fs/promises");
 const os = require("node:os");
-async function harness(platform, { body = "fixture", autoUpdate = false, execPath: execPathOption, manifest: manifestOption, mockSpawn = true } = {}) {
+async function harness(platform, { body = "fixture", autoUpdate = false, execPath: execPathOption, manifest: manifestOption, mockSpawn = true, fetch: fetchOption } = {}) {
   const root = await fs.mkdtemp(join(os.tmpdir(), "lectern-update-test-"));
   const calls = [];
   const spawnCalls = [];
@@ -86,9 +106,14 @@ async function harness(platform, { body = "fixture", autoUpdate = false, execPat
       }
       return require(name);
     },
-    process: { platform, arch: platform === "darwin" ? "arm64" : "x64", execPath, pid: 4242 },
-    Buffer, AbortSignal,
-    fetch: async (url, options) => { calls.push(["fetch", url, options.redirect]); return new Response(url.endsWith(".json") ? JSON.stringify(manifestOption ?? manifest()) : body); },
+    process: { platform, arch: platform === "darwin" ? "arm64" : "x64", execPath, pid: 4242,
+      env: { LECTERN_UPDATE_RETRY_MS: "1" } },
+    Buffer, AbortSignal, AbortController, setTimeout, clearTimeout,
+    fetch: async (url, options) => {
+      calls.push(["fetch", url, options?.redirect, options?.headers]);
+      if (fetchOption) return fetchOption(url, options);
+      return new Response(url.endsWith(".json") ? JSON.stringify(manifestOption ?? manifest()) : body);
+    },
   };
   vm.runInNewContext(readFileSync(join(__dirname, "updater.cjs"), "utf8"), context);
   const updater = context.module.exports;
@@ -169,11 +194,15 @@ for (const platform of ["darwin", "win32"]) {
     if (platform === "darwin") {
       const script = h.spawnCalls[0].args[1];
       assert.match(script, /ditto -x -k/);
-      assert.match(script, /mv "\/Applications\/Lectern\.app" "\/Applications\/Lectern\.app\.old"/);
-      assert.match(script, /open "\/Applications\/Lectern\.app"/);
+      assert.match(script, /mv '\/Applications\/Lectern\.app' '\/Applications\/Lectern\.app\.old'/);
+      assert.match(script, /open '\/Applications\/Lectern\.app'/);
+      assert.match(script, /update-install\.log/);
+      assert.match(script, /last-install\.txt/);
     } else {
       const script = readFileSync(h.spawnCalls[0].args[3], "utf8");
-      assert.match(script, /start \/wait "" ".*Lectern-Setup-0\.5\.1\.exe" \/S --updated/);
+      assert.match(script, /Lectern-Setup-0\.5\.1\.exe" \/S --updated/);
+      assert.match(script, /%ERRORLEVEL%/);
+      assert.match(script, /last-install\.txt/);
       assert.match(script, /start "" "C:\\Program Files\\Lectern\\Lectern\.exe"/);
     }
   });
@@ -190,8 +219,8 @@ for (const platform of ["darwin", "win32"]) {
     assert.equal(h.spawnCalls.length, 1);
     if (platform === "darwin") {
       const script = h.spawnCalls[0].args[1];
-      assert.match(script, /mv "\/Applications\/Lectern\.app" "\/Applications\/Lectern\.app\.old"/);
-      assert.doesNotMatch(script, /\nopen /);
+      assert.match(script, /mv '\/Applications\/Lectern\.app' '\/Applications\/Lectern\.app\.old'/);
+      assert.doesNotMatch(script, /\n.*open '/);
     } else {
       const script = readFileSync(h.spawnCalls[0].args[3], "utf8");
       assert.match(script, /\/S --updated/);
@@ -237,4 +266,140 @@ test("rechecks downloaded package before quitting", async () => {
   assert.equal(h.calls.includes("quit"), false);
   assert.equal(await h.updater.installOnQuitIfReady(), false);
   assert.equal(h.spawnCalls.length, 0);
+});
+
+function streamResponse(chunks, init = {}, delay = 15) {
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        for (const chunk of chunks) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          controller.enqueue(new Uint8Array(chunk));
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+  return new Response(stream, init);
+}
+
+test("manifest requests retry transient failures but fail fast on 404", async () => {
+  let manifestCalls = 0;
+  const retrying = await harness("darwin", { fetch: async (url) => {
+    if (url.endsWith(".json") && ++manifestCalls < 3) return new Response("busy", { status: 503 });
+    return new Response(url.endsWith(".json") ? JSON.stringify(manifest()) : "fixture");
+  } });
+  assert.equal((await retrying.updater.check()).status, "available");
+  assert.equal(manifestCalls, 3);
+
+  let notFoundCalls = 0;
+  const missing = await harness("darwin", { fetch: async () => {
+    notFoundCalls += 1;
+    return new Response("missing", { status: 404 });
+  } });
+  assert.equal((await missing.updater.check()).status, "error");
+  assert.equal(notFoundCalls, 1);
+});
+
+test("pause keeps the partial file and the next download resumes with Range", async () => {
+  const payload = Buffer.alloc(64 * 1024, 7);
+  const name = "Lectern-0.5.1-arm64-mac.zip";
+  const artifact = { schema: 1, version: "0.5.1", platforms: { "darwin-arm64": {
+    path: `v0.5.1/${name}`, size: payload.length,
+    sha512: createHash("sha512").update(payload).digest("base64"),
+  } } };
+  const ranges = [];
+  const h = await harness("darwin", { manifest: artifact, fetch: async (url, options) => {
+    if (url.endsWith(".json")) return new Response(JSON.stringify(artifact));
+    const range = options?.headers?.Range ?? null;
+    ranges.push(range);
+    if (!range) {
+      const chunks = Array.from({ length: 16 }, (_, index) => payload.subarray(index * 4096, (index + 1) * 4096));
+      return streamResponse(chunks);
+    }
+    const start = Number(/^bytes=(\d+)-$/.exec(range)[1]);
+    return new Response(new Uint8Array(payload.subarray(start)), {
+      status: 206,
+      headers: { "content-range": `bytes ${start}-${payload.length - 1}/${payload.length}` },
+    });
+  } });
+  await h.updater.check();
+  const job = h.updater.download();
+  await waitFor(() => h.updater.getState().status === "downloading" && h.updater.getState().percent > 0);
+  h.updater.pause();
+  const paused = await job;
+  assert.equal(paused.status, "paused");
+  assert.ok(paused.percent > 0, "paused percent reflects bytes already on disk");
+  assert.equal(existsSync(join(h.root, "updates", "v0.5.1", `${name}.partial`)), true);
+
+  const ready = await h.updater.download();
+  assert.equal(ready.status, "ready");
+  assert.equal(ranges[0], null);
+  assert.match(ranges.at(-1), /^bytes=[1-9]\d*-$/);
+  assert.equal(readFileSync(join(h.root, "updates", "v0.5.1", name)).length, payload.length);
+});
+
+test("a hash mismatch discards the partial file and downloads again", async () => {
+  let artifactCalls = 0;
+  const h = await harness("darwin", { fetch: async (url) => {
+    if (url.endsWith(".json")) return new Response(JSON.stringify(manifest()));
+    artifactCalls += 1;
+    return new Response(artifactCalls === 1 ? "corrupt" : "fixture");
+  } });
+  await h.updater.check();
+  const state = await h.updater.download();
+  assert.equal(state.status, "ready");
+  assert.equal(artifactCalls, 2);
+  assert.equal(existsSync(join(h.root, "updates", "v0.5.1", "Lectern-0.5.1-arm64-mac.zip")), true);
+});
+
+test("falls back to a mirror when the primary download source fails", async () => {
+  const name = "Lectern-0.5.1-arm64-mac.zip";
+  const mirrored = manifest();
+  mirrored.platforms["darwin-arm64"].mirrors = [`https://mirror.example/v0.5.1/${name}`];
+  const urls = [];
+  const h = await harness("darwin", { manifest: mirrored, fetch: async (url) => {
+    urls.push(url);
+    if (url.endsWith(".json")) return new Response(JSON.stringify(mirrored));
+    if (url.includes("mirror.example")) return new Response("fixture");
+    return new Response("unavailable", { status: 503 });
+  } });
+  await h.updater.check();
+  assert.equal((await h.updater.download()).status, "ready");
+  assert.equal(urls.filter((url) => url.includes("mirror.example")).length, 1);
+});
+
+test("install failures are recorded on disk and surfaced on the next launch", async () => {
+  const failed = await harness("win32");
+  await fs.mkdir(join(failed.root, "updates"), { recursive: true });
+  await fs.writeFile(join(failed.root, "updates", "last-install.txt"), "fail 0.5.1 32\n");
+  failed.updater.cleanupOnStartup();
+  assert.match(failed.updater.getState().installError, /安装目录被占用/);
+  assert.match(failed.updater.getState().installError, /update-install\.log/);
+  assert.equal(existsSync(join(failed.root, "updates", "last-install.txt")), false);
+
+  const stale = await harness("win32");
+  await fs.mkdir(join(stale.root, "updates"), { recursive: true });
+  await fs.writeFile(join(stale.root, "updates", "last-install.txt"), "ok 0.5.1\n");
+  stale.updater.cleanupOnStartup();
+  assert.match(stale.updater.getState().installError, /仍运行 v0\.5\.0/);
+
+  const current = await harness("win32");
+  await fs.mkdir(join(current.root, "updates"), { recursive: true });
+  await fs.writeFile(join(current.root, "updates", "last-install.txt"), "ok 0.5.0\n");
+  current.updater.cleanupOnStartup();
+  assert.equal(current.updater.getState().installError, null);
+});
+
+test("startup cleanup keeps fresh partial downloads for resume", async () => {
+  const h = await harness("win32");
+  const dir = join(h.root, "updates", "v0.5.1");
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(join(dir, "Lectern-Setup-0.5.1.exe.partial"), "part");
+  await fs.writeFile(join(dir, "Lectern-Setup-0.5.1.exe"), "full");
+  h.updater.cleanupOnStartup();
+  assert.equal(existsSync(join(dir, "Lectern-Setup-0.5.1.exe.partial")), true);
+  assert.equal(existsSync(join(dir, "Lectern-Setup-0.5.1.exe")), false);
 });

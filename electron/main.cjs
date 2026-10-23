@@ -570,6 +570,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("update:state", () => updater.getState());
   ipcMain.handle("update:check", () => updater.check());
   ipcMain.handle("update:download", () => updater.download());
+  ipcMain.handle("update:pause", () => updater.pause());
   ipcMain.handle("update:install", () => updater.install());
 
   // SSO 登录桥：打开 auth 子窗口；若默认 session 已有共享会话 cookie 直接返回（免再登）

@@ -8,6 +8,8 @@
 // 配置来源（优先级）：环境变量 > harness/.env.release。
 // 必填：OSS_REGION（如 oss-cn-hangzhou）、OSS_BUCKET、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
 // 可选：OSS_ENDPOINT、OSS_PATH_PREFIX（默认 releases/harness）、OSS_PUBLIC_ACL（默认 true → 对象公共读）
+// 可选：LECTERN_UPDATE_MIRRORS（逗号分隔的 https 基址，最多 3 个）——备用下载源。
+//   每个基址下必须镜像同样的 v<version>/<artifact> 路径；客户端主源失败时按序回退。
 //
 // 对象级 ACL：bucket 可保持私有，上传时对单个对象设置 public-read，
 // landing 的常驻直链才不会过期（muzhi 的材料下载是私有+签名 URL，两者用途不同）。
@@ -54,6 +56,26 @@ const prefix = (prefixOverride ?? env.OSS_PATH_PREFIX ?? "releases/harness").rep
 const keyBase = `${prefix}/v${version}`;
 const usePublicAcl = (env.OSS_PUBLIC_ACL ?? "true") !== "false";
 const distDir = resolve(process.cwd(), "dist");
+
+// 备用源是发布配置，坏值必须在上传前失败（客户端的 normalizer 只会静默丢弃）。
+function parseMirrorBases(raw) {
+  const bases = (raw ?? "").split(",").map((value) => value.trim().replace(/\/+$/, "")).filter(Boolean);
+  if (bases.length > 3) throw new Error("最多 3 个备用源");
+  for (const base of bases) {
+    const url = new URL(base);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+      throw new Error(`备用源必须是干净的 https 基址：${base}`);
+    }
+  }
+  return [...new Set(bases)];
+}
+let mirrorBases;
+try {
+  mirrorBases = parseMirrorBases(env.LECTERN_UPDATE_MIRRORS);
+} catch (error) {
+  console.error(`❌ LECTERN_UPDATE_MIRRORS 无效：${error.message}`);
+  process.exit(1);
+}
 
 // ── 产物清单 ──
 // latest(-mac).yml 是 electron-updater 自动更新的配置（指向真实产物名），必须一并上传；
@@ -103,11 +125,14 @@ if (platforms.includes("darwin") && platforms.includes("win32")) {
     process.exit(1);
   }
   console.log(`发布日志：release-notes/${version}.json · ${releaseNotes.sections.length} 节`);
+  if (mirrorBases.length) console.log(`备用下载源：${mirrorBases.join("、")}`);
   const desktop = { schema: 1, version, releaseNotes, platforms: {} };
   for (const [platform, arch, filename] of [["darwin", "arm64", "latest-mac.yml"], ["win32", "x64", "latest.yml"]]) {
     const manifest = parse(readFileSync(join(distDir, filename), "utf8"));
     const artifact = manifest.files.find((file) => file.url === manifest.path);
-    desktop.platforms[`${platform}-${arch}`] = { path: `v${version}/${artifact.url}`, size: artifact.size, sha512: artifact.sha512 };
+    const entry = { path: `v${version}/${artifact.url}`, size: artifact.size, sha512: artifact.sha512 };
+    if (mirrorBases.length) entry.mirrors = mirrorBases.map((base) => `${base}/v${version}/${artifact.url}`);
+    desktop.platforms[`${platform}-${arch}`] = entry;
   }
   stableManifests.push({ name: "latest-desktop.json", body: JSON.stringify(desktop, null, 2) + "\n" });
 }

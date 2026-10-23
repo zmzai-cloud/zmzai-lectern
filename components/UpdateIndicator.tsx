@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, Download } from "lucide-react";
+import { CalendarDays, Download, Pause, Play, RotateCcw } from "lucide-react";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@zmzai/theme";
 
 import type { UpdateState } from "@/lib/types";
@@ -12,15 +12,18 @@ function formatReleaseDate(value: string) {
 }
 
 function isPending(update: UpdateState | null): update is UpdateState {
-  return update?.status === "available" || update?.status === "downloading" || update?.status === "ready";
+  if (!update?.version) return false;
+  return update.status === "available" || update.status === "downloading"
+    || update.status === "paused" || update.status === "ready" || update.status === "error";
 }
 
-/** 账户区常显的更新入口：hover 看发布日志，download 完成前点击直接下载，
+/** 账户区常显的更新入口：hover 看发布日志，download 完成前点击直接下载/暂停，
  *  ready 后点击由父组件打开应用内确认框。 */
-export function UpdateIndicator({ update, taskRunning, onDownload, onConfirm }: {
+export function UpdateIndicator({ update, taskRunning, onDownload, onPause, onConfirm }: {
   update: UpdateState | null;
   taskRunning: boolean;
   onDownload: () => void;
+  onPause: () => void;
   onConfirm: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -35,13 +38,27 @@ export function UpdateIndicator({ update, taskRunning, onDownload, onConfirm }: 
 
   if (!isPending(update)) return null;
   const downloading = update.status === "downloading";
+  const paused = update.status === "paused";
+  const failed = update.status === "error";
   const notes = update.releaseNotes;
   const statusText = downloading
-    ? `正在下载 ${update.percent}%`
-    : update.status === "ready"
-      ? taskRunning ? "任务运行中，完成后可重启更新" : "已下载，点击重启更新"
-      : "点击下载更新";
-  const actionText = update.status === "ready" ? "重启以更新" : downloading ? "正在下载更新" : "下载更新";
+    ? `正在下载 ${update.percent}% · 点击暂停`
+    : paused
+      ? `已暂停 ${update.percent}% · 点击继续`
+      : failed
+        ? `下载失败：${update.error ?? "网络异常"} · 点击重试`
+        : update.status === "ready"
+          ? taskRunning ? "任务运行中，完成后可重启更新" : "已下载，点击重启更新"
+          : "点击下载更新";
+  const actionText = update.status === "ready"
+    ? "重启以更新"
+    : downloading
+      ? `暂停下载（${update.percent}%）`
+      : paused
+        ? `继续下载（${update.percent}%）`
+        : failed ? "重试下载" : "下载更新";
+  const Icon = update.status === "ready" ? RotateCcw : downloading ? Pause : paused ? Play : Download;
+  const tone = failed ? "bg-danger" : paused ? "bg-warning" : "bg-success";
 
   const open = () => {
     clear();
@@ -93,18 +110,17 @@ export function UpdateIndicator({ update, taskRunning, onDownload, onConfirm }: 
         data-testid="update-indicator"
         aria-label={`更新 v${update.version}：${actionText}`}
         aria-describedby={hovered ? "update-changelog" : undefined}
-        aria-disabled={downloading}
         onClick={() => {
-          if (downloading) return;
           close();
           if (update.status === "ready") onConfirm();
+          else if (downloading) onPause();
           else onDownload();
         }}
         onFocus={open}
         onBlur={close}
-        className={`flex h-7 w-7 items-center justify-center rounded-full bg-success text-bg transition-opacity hover:opacity-85 ${downloading ? "cursor-not-allowed opacity-60" : ""}`}
+        className={`flex h-7 w-7 items-center justify-center rounded-full ${tone} text-bg transition-opacity hover:opacity-85`}
       >
-        <Download size={14} strokeWidth={2} className={downloading ? "animate-pulse" : undefined} aria-hidden />
+        <Icon size={14} strokeWidth={2} className={downloading ? "animate-pulse" : undefined} aria-hidden />
       </button>
     </div>
   );
@@ -145,6 +161,11 @@ export function UpdateConfirmDialog({ open, update, taskRunning, onOpenChange, o
         {taskRunning && (
           <p role="status" className="mt-4 rounded-md bg-surface-2 px-3 py-2 text-[0.6875rem] leading-relaxed text-ink-2">
             任务运行中，完成后才能重启更新；现在重启会中止正在运行的任务。
+          </p>
+        )}
+        {update?.installError && (
+          <p role="alert" className="mt-4 rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.6875rem] leading-relaxed text-danger break-words">
+            {update.installError}
           </p>
         )}
         <DialogFooter className="mt-5">

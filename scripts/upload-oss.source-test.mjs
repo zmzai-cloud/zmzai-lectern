@@ -10,7 +10,7 @@ import { artifactNames, digest } from "./release-validation.mjs";
 
 const releaseNotes = { date: "2026-10-19", sections: [{ title: "新功能", items: ["本地项目支持一次选择多个文件夹"] }] };
 
-async function upload(t, { fail = "", dry = false, both = false, gate = "pass", notes = "valid" } = {}) {
+async function upload(t, { fail = "", dry = false, both = false, gate = "pass", notes = "valid", mirrors = "" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "lectern-upload-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "dist"));
@@ -67,7 +67,7 @@ async function upload(t, { fail = "", dry = false, both = false, gate = "pass", 
     cwd: dir, encoding: "utf8", timeout: 15000,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
       OSS_REGION: "oss-cn-beijing", OSS_BUCKET: "fixture-bucket", OSS_ACCESS_KEY_ID: "test-key", OSS_ACCESS_KEY_SECRET: "test-secret",
-      LECTERN_TEST_PUT_LOG: log, LECTERN_TEST_FAIL: fail, LECTERN_TEST_GATE: gate },
+      LECTERN_TEST_PUT_LOG: log, LECTERN_TEST_FAIL: fail, LECTERN_TEST_GATE: gate, LECTERN_UPDATE_MIRRORS: mirrors },
   });
   const puts = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map(JSON.parse) : [];
   return { result, puts, dir, names };
@@ -145,5 +145,29 @@ test("missing or invalid release notes block the upload before any object is wri
     assert.equal(result.status, 1, `notes=${notes}`);
     assert.deepEqual(puts, [], `notes=${notes} 时不该有任何上传动作`);
     assert.match(result.stderr, notes === "missing" ? /缺少发布日志/ : /release-notes\/0\.5\.1\.json 无效/);
+  }
+});
+
+test("mirror bases are emitted per platform artifact for the desktop feed", async (t) => {
+  const { result, puts } = await upload(t, { both: true, mirrors: "https://mirror.example/releases/harness/" });
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(puts.at(-1).body);
+  const { default: contract } = await import("../electron/update-contract.cjs");
+  for (const [platform, arch] of [["darwin", "arm64"], ["win32", "x64"]]) {
+    const artifact = contract.selectRelease(manifest, "0.5.0", platform, arch);
+    assert.deepEqual(artifact.mirrors, [`https://mirror.example/releases/harness/v0.5.1/${artifact.name}`]);
+  }
+});
+
+test("invalid mirror configuration blocks the upload before any object is written", async (t) => {
+  for (const mirrors of [
+    "http://mirror.example/releases/harness",
+    "https://mirror.example/releases/harness?token=1",
+    "https://a.example/harness,https://b.example/harness,https://c.example/harness,https://d.example/harness",
+  ]) {
+    const { result, puts } = await upload(t, { both: true, mirrors });
+    assert.equal(result.status, 1, mirrors);
+    assert.deepEqual(puts, [], mirrors);
+    assert.match(result.stderr, /LECTERN_UPDATE_MIRRORS 无效/);
   }
 });

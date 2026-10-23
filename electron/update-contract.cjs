@@ -43,6 +43,24 @@ function assertReleaseNotes(value) {
   return notes;
 }
 
+// 备用下载源只做加速/容灾：格式不对时客户端忽略即可，主源仍然可用。
+// 发布侧会生成合法值；这里保持宽松，避免一个坏镜像挡住整次更新。
+function normalizeMirrors(value, name) {
+  if (!Array.isArray(value) || value.length > 3) return [];
+  const urls = value.flatMap((raw) => {
+    try {
+      if (typeof raw !== "string" || raw.length > 2048) return [];
+      const url = new URL(raw);
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return [];
+      if (!url.pathname.endsWith(`/${name}`)) return [];
+      return [url.toString()];
+    } catch {
+      return [];
+    }
+  });
+  return [...new Set(urls)];
+}
+
 function selectRelease(manifest, current, platform, arch) {
   if (manifest?.schema !== 1) throw new Error("不支持的更新清单版本");
   const latest = versionParts(manifest.version), installed = versionParts(current);
@@ -53,7 +71,15 @@ function selectRelease(manifest, current, platform, arch) {
   const file = manifest.platforms?.[`${platform}-${arch}`];
   if (!name || file?.path !== `v${manifest.version}/${name}` || !Number.isSafeInteger(file.size) || file.size <= 0 || file.size > 2 ** 31
     || typeof file.sha512 !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(file.sha512)) throw new Error("更新清单中的安装包无效");
-  return { version: manifest.version, name, path: file.path, size: file.size, sha512: file.sha512, releaseNotes: normalizeReleaseNotes(manifest.releaseNotes) };
+  return {
+    version: manifest.version,
+    name,
+    path: file.path,
+    size: file.size,
+    sha512: file.sha512,
+    mirrors: normalizeMirrors(file.mirrors, name),
+    releaseNotes: normalizeReleaseNotes(manifest.releaseNotes),
+  };
 }
 
 module.exports = { selectRelease, normalizeReleaseNotes, assertReleaseNotes };

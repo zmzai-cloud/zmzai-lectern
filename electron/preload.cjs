@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("lecternNative", {
   platform: process.platform,
   updateCheck: () => ipcRenderer.invoke("update:check"),
   updateDownload: () => ipcRenderer.invoke("update:download"),
+  updatePause: () => ipcRenderer.invoke("update:pause"),
   updateInstall: () => ipcRenderer.invoke("update:install"),
   updateState: () => ipcRenderer.invoke("update:state"),
   onUpdateStatus: (callback) => {

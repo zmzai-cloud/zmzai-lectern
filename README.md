@@ -45,12 +45,14 @@ corepack pnpm build:mac      # 打包 macOS dmg + zip（arm64，产物在 dist/�
 
 `.env` 默认连正式环境（用户只有一个环境，dev 即用生产）：`OPENAI_BASE_URL=https://relay.zmzai.cloud/api/v1`（relay 推理/模型目录）+ `MUZHI_URL=https://muzhi.zmzai.cloud`（登录）。本地调试可切回 `http://127.0.0.1:3003` / `http://127.0.0.1:3000`（需自起 mongod 27017 / muzhi / relay）。会话持久化 `ZMZAI_DATA_DIR`（默认 `./.harness-data`）、Agent 工作区 `ZMZAI_WORKSPACE`（默认 `./.workspace`）；打包应用内两者自动重定向到系统用户数据目录。
 
-### 发布（构建 → OSS 上传 → 直链）
+### 发布（双平台一条命令）
 
-1. `cp scripts/.env.release.example .env.release` 并填写 OSS 配置（bucket 保持私有，脚本按**对象级 public-read** 上传，直链不过期；KEY/SECRET 可复用 muzhi 的）
-2. macOS：`bash scripts/release.sh`（构建 + 上传 + 生成 SHA256SUMS 与直链清单）；Windows：`powershell -File scripts\build-win.ps1 -Upload`
-3. 上传完成后 `dist/release-links.md` 里有全部直链（`releases/harness/v<version>/…`），更新到 landing page 下载区
-4. 辅助：`node scripts/upload-oss.mjs --dry` 只列清单不上传；`--skip-build` 补传现有产物
+1. 升 `package.json` 版本号、写 `release-notes/<version>.json`，提交并推送（渲染层 E2E 门禁认的是待发布 commit）。
+2. `cp scripts/.env.release.example .env.release` 并填写 OSS 配置（bucket 保持私有，脚本按**对象级 public-read** 上传，直链不过期；KEY/SECRET 可复用 muzhi 的）。
+3. `corepack pnpm release --version <x.y.z>` 先预检并打印计划；加 `--yes` 执行：测试 → mac 构建 + smoke → win 交叉构建（自动保留/恢复 mac 产物）→ 双平台校验 → OSS 上传 → 线上回读 → 升级通道 → lectern-site 同步推送 → GitHub Release（仅说明 + OSS 直链）。
+   - `--dry-run` 只预演；`--skip-build` 复用 dist；`--skip-site` / `--skip-github` / `--skip-update-path` 按需跳过。
+   - 固定 mac → win 顺序；单独重跑 win 用 `bash scripts/build-win-cross.sh`，它会把 mac 产物寄存后恢复。
+4. 上传完成后 `dist/release-links.md` 有全部直链；辅助命令 `node scripts/upload-oss.mjs --dry` 只列清单不上传。
 
 ### macOS / Windows 打包
 

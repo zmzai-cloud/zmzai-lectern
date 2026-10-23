@@ -33,17 +33,21 @@ guard_mv() {
   done
 }
 
-echo "==> [0/5] 清理历史打包产物（dist/、.package-build）"
+echo "==> [0/6] 清理历史打包产物（dist/、.package-build；macOS 产物先寄存）"
+# mac → win 是固定发版顺序。清理 dist 前把已构建好的 mac 产物挪进
+# .release-preserve/<version>/，win 打包验证完再挪回；失败退出也由 trap 恢复。
+node scripts/platform-artifacts.mjs preserve win32
+trap 'node scripts/platform-artifacts.mjs restore win32 >/dev/null 2>&1 || true' EXIT
 guard_mv dist .package-build
 
 # web 产物（host bundle + next build + standalone 组装）对两平台完全相同，经
 # scripts/build-web.sh 统一构建并按 {version, sha, 工作区脏哈希} 标记复用——
 # 双平台发版按 mac → win 顺序跑时，这里直接复用 mac 刚构建的 .next，跳过
 # next build（省 ~12 分钟）；标记失效（有提交/改动）时自动重建。
-echo "==> [1/5] web 构建（host + next build + standalone，详见 scripts/build-web.sh）"
+echo "==> [1/6] web 构建（host + next build + standalone，详见 scripts/build-web.sh）"
 bash scripts/build-web.sh || { echo "❌ web 构建失败，中止打包" >&2; exit 1; }
 
-echo "==> [3/5] 组装实体 node_modules（pnpm symlink / file: 依赖实体化）"
+echo "==> [3/6] 组装实体 node_modules（pnpm symlink / file: 依赖实体化）"
 # pnpm 下 next standalone 的 trace 产出的 node_modules 只含指向 .pnpm 的断链
 # symlink；electron-builder 复制 pnpm node_modules 也不完整（file: 依赖丢失）。
 # 这里用 npm 从 tarball 安装一份完全实体的生产依赖整体替换。
@@ -73,7 +77,7 @@ node scripts/shrink-native.mjs .next/standalone/node_modules --platform=win32 --
 node scripts/patch-standalone-for-asar.mjs .next/standalone --strict
 guard_mv .package-build
 
-echo "==> [4/5] electron-builder 打包 Windows（nsis 安装器 + zip，x64）"
+echo "==> [4/6] electron-builder 打包 Windows（nsis 安装器 + zip，x64）"
 # 无代码签名证书：SmartScreen 首次运行提示属预期（自分发场景可直接运行）
 # 双镜像必需：ELECTRON_MIRROR（Electron 本体）+ ELECTRON_BUILDER_BINARIES_MIRROR
 # （nsis/nsis-resources 等工具链二进制）——漏后者会直连 GitHub 下载 502/超时。
@@ -86,7 +90,7 @@ ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}" \
 ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}" \
 pnpm exec electron-builder "${BUILD_ARGS[@]}"
 
-echo "==> [5/5] 产物体检"
+echo "==> [5/6] 产物体检"
 # fail-fast 补刀：① 不得混入 darwin 原生依赖（--os/--cpu 没生效的典型症状，
 # 打出来能装但起不来）② 文件数回归——asar:false 下文件数直接决定 NSIS 安装
 # 时长（Windows Defender 逐文件扫描），超阈值就是又胖回去了。
@@ -112,6 +116,12 @@ echo "文件数：${FILE_COUNT}（阈值 300，host-runtime 另计）"
 [ "$FILE_COUNT" -le 300 ] || { echo "❌ 文件数超标：asar 未生效或 files 排除规则失效" >&2; exit 1; }
 node scripts/release-validation.mjs package dist/win-unpacked/resources/app.asar win32
 node scripts/release-validation.mjs release dist win32
+
+# 只校验 win32 时 dist 里还没有 mac 产物；校验完再恢复，避免被跨平台
+# 校验规则误判。恢复后 dist 同时具备双平台产物，upload-oss 会再全量校验一遍。
+echo "==> 恢复寄存的 macOS 产物"
+node scripts/platform-artifacts.mjs restore win32
+
 ls -lh dist/*.exe dist/*.zip
 echo "完成。Windows 安装：双击 dist/*Setup*.exe（NSIS 安装器）；或解压 zip 直接运行 Lectern.exe"
 

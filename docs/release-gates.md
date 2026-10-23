@@ -9,6 +9,25 @@ working-directory change, prune target-native dependencies, and verify packages.
 Do not run the development server against the same `.next` directory during a
 release build.
 
+The whole ordering is available as one command:
+
+```
+pnpm release --version 0.17.0            # preflight + printed plan, no writes
+pnpm release --version 0.17.0 --dry-run  # same, explicit
+pnpm release --version 0.17.0 --yes      # tests → builds → upload → site → GitHub
+```
+
+It fails unless `package.json` and `release-notes/<version>.json` match the
+requested version, the tracked worktree is clean, the release notes are
+committed, the live feed does not already contain this (or a newer) version,
+and the rendering-layer gate passes on the exact commit. `--force` is required
+to republish the same version. The fixed build order is macOS → Windows:
+`build-win-cross.sh` stashes macOS artifacts in `.release-preserve/<version>/`
+before wiping `dist/`, restores them after the Windows-only validation (and via
+an exit trap if the build fails), so the dual-platform upload no longer needs
+manual file copies. `--skip-build` reuses `dist/` but still runs the full
+dual-platform validator.
+
 `pnpm test:packaged` launches the actual packaged executable in an isolated
 profile. It verifies page rendering and the platform bridge, creates a project
 whose path contains spaces, persists a session, reads/writes a file, runs Git in
@@ -128,6 +147,24 @@ dialog read `releaseNotes` from `latest-desktop.json`. Configure it in
 the file and refuses to publish the cross-platform feed when it is missing,
 malformed, or over 16 KB. The manifest schema stays `1` because the field is
 optional and older clients ignore it.
+
+**Optional mirrors.** Set `LECTERN_UPDATE_MIRRORS` to up to three clean HTTPS
+base URLs (comma-separated) before uploading; each base must mirror the same
+`v<version>/<artifact>` paths. The uploader validates them and writes a
+`mirrors` array into each platform entry. Clients try the primary source first,
+then mirrors in order, and ignore malformed mirror entries rather than refusing
+the update. Without the variable the field is omitted and the feed is unchanged.
+
+**Download and install resilience.** Clients keep `.partial` files under
+`<userData>/updates/v<version>/`, resume with HTTP `Range` after pause, restart,
+or a dropped connection, retry 408/429/5xx and network errors (404 fails fast),
+and discard/re-download a package whose SHA-512 does not match. A pause only
+aborts the current request; the partial survives for seven days. Install
+scripts run after the app quits and write `updates/last-install.txt` plus
+`logs/update-install.log`; the next launch surfaces the exit code in the
+account menu and restart dialog (macOS step failure, Windows exit codes 5/32/
+112/1223). A stale `ok` record also reports when the running version did not
+actually change.
 
 ## Cross-version update path
 

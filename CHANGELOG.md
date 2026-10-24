@@ -1,5 +1,20 @@
 # Lectern 变更记录
 
+## 0.17.0 —— 消息流真流式（framework 0.18.0）+ 更新器断点续传
+
+### 消息流
+
+- **升级 vendored framework 0.17.2 → 0.18.0**：文本 delta 从「攒满 2KB 才发、结束时整段弹出」改为 64B/80ms 步进——回复逐字流出，而非一卡一卡；携带全量文本的 part 快照降频为 2KB/1.5s checkpoint，事件日志写放大不再随消息长度平方增长。会话投影器本就处理 `message.part.delta`，无需界面改动。
+- 顺带吸收 0.17.3：`createServer` 不再静默丢弃 `agentResolver` / `memoryContextFor` 等 RunnerDeps 字段（F02 修复）。
+
+### 更新器（自 0.16.0 后累积）
+
+- 下载断点续传、失败重试、镜像回退与安装失败诊断（91967be）。
+
+### 工程
+
+- 双平台一条命令发布流水线（release-desktop.mjs：预检 → mac → win → OSS → site → GitHub Release，b7c14bd）。
+
 ## 0.13.0 —— 交互全流程走查修复：运行态可排队发送 + 状态视觉分层 + 自绘确认框
 
 **两轮 21+12 步 GUI 黑盒走查**（逐张截图视觉审 + 代码回查双证）定位并修复的交互问题。

@@ -1,10 +1,26 @@
 # Vendored framework package
 
-`zmzai-agent-framework-0.17.2.tgz` is the immutable tarball of
-`@zmzai/agent-framework@0.17.2`, vendored here so desktop builds and clean
+`zmzai-agent-framework-0.18.0.tgz` is the immutable tarball of
+`@zmzai/agent-framework@0.18.0`, vendored here so desktop builds and clean
 installs resolve the framework without depending on registry access. The
 framework repository is the source of truth; the version number is unique to
 these bytes and never re-packed under the same name (spec 2026-09-28 §8).
+
+What 0.18.0 changed (true streaming + checkpoint throttling):
+
+- The part projector buffered text deltas until 2KB before emitting anything,
+  so typical replies produced zero `message.part.delta` during generation and
+  the whole message popped in at assistant-end. Flushes now step at 64B or
+  80ms (whichever first), which the chat projector already folds via its
+  delta branch — no UI change needed for token-level streaming.
+- The paired full-text `message.part.updated` is now throttled to a 2KB/1.5s
+  checkpoint (tool switches and assistant-end always force one), keeping the
+  durable log's write amplification flat as messages grow.
+
+What 0.17.3 also brings (jumped from 0.17.2):
+
+- `createServer` now forwards RunnerDeps fields it used to silently drop
+  (`agentResolver` / `memoryContextFor`, F02) — a fix, no Lectern action.
 
 What 0.17.2 changed (subagent activity replay):
 

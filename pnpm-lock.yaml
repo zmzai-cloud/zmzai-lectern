@@ -48,8 +48,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       '@zmzai/agent-framework':
-        specifier: file:vendor/zmzai-agent-framework-0.17.2.tgz
-        version: file:vendor/zmzai-agent-framework-0.17.2.tgz(ws@8.21.3)
+        specifier: file:vendor/zmzai-agent-framework-0.18.0.tgz
+        version: file:vendor/zmzai-agent-framework-0.18.0.tgz(ws@8.21.3)
       '@zmzai/theme':
         specifier: ^0.9.16
         version: 0.9.16(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
@@ -1727,9 +1727,9 @@ packages:
   '@xterm/xterm@6.0.0':
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
-  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.17.2.tgz':
-    resolution: {integrity: sha512-q5yxkJRyXIp0W1VbSje2sEF7qJAz0syQS6G+EP5OfCcE92Lv8okpZKsqJS8PjEncMs1D41/VJCoofV1aINSqOw==, tarball: file:vendor/zmzai-agent-framework-0.17.2.tgz}
-    version: 0.17.2
+  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.18.0.tgz':
+    resolution: {integrity: sha512-2+Pylen5WHhYsgXeFyeJw1jitYdq//xMEtQQtGv433+/kQ7X1VYvHij7EYfFcci3fnqX3syyYfMcbbDgAADXIA==, tarball: file:vendor/zmzai-agent-framework-0.18.0.tgz}
+    version: 0.18.0
     hasBin: true
 
   '@zmzai/theme@0.9.16':
@@ -5674,7 +5674,7 @@ snapshots:
 
   '@xterm/xterm@6.0.0': {}
 
-  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.17.2.tgz(ws@8.21.3)':
+  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.18.0.tgz(ws@8.21.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.84.1(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.84.1(ws@8.21.3)(zod@4.4.3)

@@ -119,8 +119,11 @@ try {
     const stream = window.__streams.at(-1);
     const frame = (seq, type, data) => stream.onmessage({ data: JSON.stringify({ sessionId: "b", seq, type, data }) });
     frame(1, "message.updated", { message: { id: "live", role: "assistant" } });
-    frame(2, "message.part.delta", { messageId: "live", partId: "live-text", delta: "Unique live text" });
-    frame(2, "message.part.delta", { messageId: "live", partId: "live-text", delta: "Unique live text" });
+    // 真实事件序：part.updated 建档先于任何 delta（pi-bridge 0.18 保证）；
+    // 未建档的增量会被投影器丢弃等权威快照。
+    frame(2, "message.part.updated", { part: { id: "live-text", messageId: "live", sessionId: "b", type: "text", text: "" } });
+    frame(3, "message.part.delta", { messageId: "live", partId: "live-text", delta: "Unique live text" });
+    frame(3, "message.part.delta", { messageId: "live", partId: "live-text", delta: "Unique live text" });
   });
   await page.getByText("Unique live text", { exact: true }).waitFor();
   assert.equal(await page.getByText("A late history", { exact: true }).count(), 0);

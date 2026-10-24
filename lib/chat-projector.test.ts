@@ -42,6 +42,35 @@ function summaryEvent(kind: "completed" | "aborted" | "error" = "completed"): { 
   };
 }
 
+describe("ChatProjector 文本增量按 part 类型归位（framework 0.18 流式）", () => {
+  it("reasoning 的 delta 累加进思考行，不会被造成正文 part", () => {
+    const p = new ChatProjector();
+    p.ingest({ type: "message.updated", data: { message: { id: "m1", role: "assistant" } } } as never);
+    p.ingest({ type: "message.part.updated", data: { part: { id: "r1", messageId: "m1", sessionId: "s", type: "reasoning", text: "" } } } as never);
+    p.ingest({ type: "message.part.updated", data: { part: { id: "t1", messageId: "m1", sessionId: "s", type: "text", text: "" } } } as never);
+    // 0.18 节奏：reasoning 与 text 的增量共用 message.part.delta 且高频交错
+    p.ingest({ type: "message.part.delta", data: { messageId: "m1", partId: "r1", delta: "Check git log." } } as never);
+    p.ingest({ type: "message.part.delta", data: { messageId: "m1", partId: "t1", delta: "你好" } } as never);
+    p.ingest({ type: "message.part.delta", data: { messageId: "m1", partId: "r1", delta: " Read IDEAS.md." } } as never);
+    const parts = p.data().messages.find((m) => m.id === "m1")!.parts as Array<{ part: { id: string; type: string; text: string } }>;
+    const reasoning = parts.find((x) => x.part.id === "r1")!;
+    const text = parts.find((x) => x.part.id === "t1")!;
+    expect(reasoning.part.type).toBe("reasoning");
+    expect(reasoning.part.text).toBe("Check git log. Read IDEAS.md.");
+    expect(text.part.type).toBe("text");
+    expect(text.part.text).toBe("你好");
+    expect(parts.filter((x) => x.part.type === "text")).toHaveLength(1);
+  });
+
+  it("未建档 partId 的 delta 直接丢弃，不凭空造正文 part", () => {
+    const p = new ChatProjector();
+    p.ingest({ type: "message.updated", data: { message: { id: "m1", role: "assistant" } } } as never);
+    p.ingest({ type: "message.part.delta", data: { messageId: "m1", partId: "ghost", delta: "orphan" } } as never);
+    const parts = p.data().messages.find((m) => m.id === "m1")!.parts as unknown[];
+    expect(parts).toHaveLength(0);
+  });
+});
+
 describe("ChatProjector 产物按 run 归集", () => {
   it("artifact.created 累积进当前 run 的 artifacts", () => {
     const p = new ChatProjector();

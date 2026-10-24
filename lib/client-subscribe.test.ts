@@ -35,14 +35,16 @@ describe("session event subscriptions", () => {
     const projector = new ChatProjector();
     const stop = client.subscribe("a", event => projector.ingest(event));
     latest().emit(1, "message.updated", { message: { id: "m", role: "assistant" } });
+    // 真实事件序：part.updated 建档（seq 2）先于任何 delta（pi-bridge 0.18 保证）
+    latest().emit(2, "message.part.updated", { part: { id: "p", messageId: "m", sessionId: "s", type: "text", text: "" } });
     const delta = { messageId: "m", partId: "p", delta: "hello" };
-    latest().emit(2, "message.part.delta", delta);
-    latest().emit(2, "message.part.delta", delta);
+    latest().emit(3, "message.part.delta", delta);
+    latest().emit(3, "message.part.delta", delta);
     latest().onerror?.();
     vi.advanceTimersByTime(1000);
-    expect(latest().url).toContain("?since=2");
-    latest().emit(2, "message.part.delta", delta);
-    latest().emit(3, "message.part.delta", { ...delta, delta: " world" });
+    expect(latest().url).toContain("?since=3");
+    latest().emit(3, "message.part.delta", delta);
+    latest().emit(4, "message.part.delta", { ...delta, delta: " world" });
     expect(projector.data().messages[0]!.parts[0]!.part).toMatchObject({ text: "hello world" });
     stop();
   });

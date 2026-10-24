@@ -394,10 +394,15 @@ export class ChatProjector {
       const m = this.messages.get(d.messageId);
       if (!m) return;
       const existing = m.parts.get(d.partId);
-      if (existing && existing.part.type === "text") {
+      // delta 事件不区分 text/reasoning（framework 两种增量共用同一事件类型），
+      // 必须按已有 part 的实际类型归位：framework 0.18 起 reasoning 增量也是
+      // 64B/80ms 高频流，走「凭 partId 造 text part」的老兜底会把思考内容当正文
+      // 渲染、把真正的正文顶掉（0.17.0 实测：正文位置滚出英文思考清单）。
+      // 未建档的 partId 直接丢弃——pi-bridge 保证 part.updated 先于任何 delta，
+      // 后续快照会带全量补齐；凭空造 part 才是本次错位根源。
+      if (!existing) return;
+      if (existing.part.type === "text" || existing.part.type === "reasoning") {
         m.parts.set(d.partId, { part: { ...existing.part, text: existing.part.text + d.delta } });
-      } else {
-        m.parts.set(d.partId, { part: { id: d.partId, type: "text", text: d.delta, messageId: d.messageId, sessionId: "" } });
       }
     } else if (ev.type === "file.edited") {
       const d = ev.data as { path: string; diff: string };

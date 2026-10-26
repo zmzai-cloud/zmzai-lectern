@@ -30,6 +30,7 @@ async function runCase(name, { promptDelay, promptStatus, promptBody }) {
     localStorage.removeItem("lectern:task-layout");
     window.EventSource = class { close() {} };
   });
+  await page.route("https://cdn.jsdelivr.net/**", route => route.abort());
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/sessions")

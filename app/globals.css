@@ -280,8 +280,15 @@ html[data-theme="dark"] {
 .task-sidebar { container-type: inline-size; }
 @container (max-width: 240px) { .task-new-shortcut { display: none; } }
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
-/* 工作流程组（Zcode 式收起）：与工具过程行同款弱化裸行；展开后纯缩进子行，
-   无背景无连线——层级仍由颜色深浅承担。 */
+.chat-workflow-group { margin-block: 12px; border-block: 1px solid var(--color-line); padding-block: 5px; }
+.chat-workflow-group.running { border-block-color: color-mix(in oklab, var(--color-live) 24%, var(--color-line)); }
+.chat-turn-closure { margin-top: 16px; border-top: 1px solid var(--color-line); }
+.chat-turn-closure:empty { display: none; }
+.chat-turn-closure .chat-task-delivery { border-radius: 0; background: transparent; padding: 14px 0; }
+.chat-turn-closure .chat-task-summary { border-block: 0; padding: 0; }
+.chat-turn-artifacts { display: grid; gap: 6px; padding-bottom: 14px; }
+.chat-dock-todos { width: 100%; max-width: calc(var(--conversation-content-max) + 3rem); max-height: 180px; margin-inline: auto; padding-inline: 24px; overflow-y: auto; }
+.chat-dock-todos .chat-task-plan { padding: 8px 0 0; border-bottom: 0; }
 /* 乐观回显（走查 F2）：发送瞬间的气泡半透明，真实 message.updated 落地后
    换成实体消息转实——“到底发没发出去”的不确定感靠这一档透明度表达。 */
 .chat-echo-pending { opacity: 0.55; }
@@ -359,7 +366,7 @@ html[data-theme="dark"] {
   .composer-root { padding-inline: 12px; }
   .chat-composer { width: 100%; margin-inline: 0; }
   .composer-controls button:first-child span { max-width: 95px; }
-  .messages { padding-inline: 16px; }
+  .messages, .chat-dock-todos { padding-inline: 16px; }
 }
 @media (max-width: 700px) {
   .settings-sidebar { width: 168px; padding: 10px; }

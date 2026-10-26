@@ -21,6 +21,7 @@ import { client, type ConnectionState } from "@/lib/client";
 import { canvasKindOf } from "@/lib/canvas-kind";
 import { detectPermissionMode, PERMISSION_MODES, type PermissionMode } from "@/lib/permission-mode";
 import { ChatProjector, EMPTY_CHAT_VIEW, transcriptToEvents, type ChatViewData } from "@/lib/chat-projector";
+import type { OptimisticEcho } from "@/lib/chat-view-model";
 import { SessionHistory, EMPTY_HISTORY_STATE, type HistoryState } from "@/lib/session-history";
 import { readPref, writePref, clearPref } from "@/lib/prefs";
 import { deriveTaskPresentation, isTaskActive, presentTask, previewableOf, sessionStatusFor, taskNotice, type SessionStatus, type TaskActionId } from "@/lib/task-presentation";
@@ -244,14 +245,7 @@ export default function App() {
   // 乐观回显：send 时暂存本条用户消息，切会话后作废。
   // attachments 走描述符（规格 2 §12「optimistic echo 必须包含 attachment receipt」）：
   // 卡片立刻画出文件名/类型/大小，不必等 SSE。
-  const [echo, setEcho] = useState<{
-    text: string;
-    images: { url: string; mediaType: string }[];
-    skill?: { id: string; name: string };
-    references?: string[];
-    attachments?: InputAttachmentRef[];
-    sessionId?: string;
-  } | null>(null);
+  const [echo, setEcho] = useState<OptimisticEcho | null>(null);
   const [status, setStatus] = useState<string>("idle");
   // 任务运行态广播（AccountBlock 消费）：非 idle（running / waiting_permission /
   // waiting_input）以及其它会话在跑都算任务未结束——此时禁用「重启并更新」。
@@ -1054,8 +1048,12 @@ export default function App() {
         setActiveIsolation(s.isolation ?? { enabled: false });
         sid = s.id;
       }
-      // 乐观回显：发送瞬间显示用户气泡，真实 message.updated 到达后按 attachment id
-      // 对齐替换（规格 §12）。带上 sid——附件卡片要靠它取元数据与原始文件。
+      const fingerprint = JSON.stringify({ sid,text,activeAgent,model: selectedModel,effort,skillId: skill?.id,references,attachmentIds });
+      const retained = sendIdentityRef.current;
+      const requestId = retained?.fingerprint === fingerprint
+        ? retained.requestId
+        : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sendIdentityRef.current = { fingerprint,requestId };
       setEcho({
         text,
         images: [],
@@ -1063,18 +1061,13 @@ export default function App() {
         ...(references?.length ? { references } : {}),
         ...(refs.length ? { attachments: refs } : {}),
         sessionId: sid,
+        requestId,
       });
       // P1-9 任务前自动快照（git 仓库且有变更时才落 commit；失败不阻塞发送）
       void client.checkpointCreate(`任务前快照 · ${text.trim().slice(0, 30) || "附件任务"}`, sid).catch(() => undefined);
       // per-prompt 模型/推理力度覆盖：composer 选了则随本条消息下发，否则跟随代理默认
       try {
-        const fingerprint = JSON.stringify({ sid,text,activeAgent,model: selectedModel,effort,skillId: skill?.id,references,attachmentIds });
-        const retained = sendIdentityRef.current;
-        const requestId = retained?.fingerprint === fingerprint
-          ? retained.requestId
-          : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        sendIdentityRef.current = { fingerprint,requestId };
-        await client.prompt(sid, {
+        const receipt = await client.prompt(sid, {
           text,
           agent: activeAgent,
           model: selectedModel ?? undefined,
@@ -1084,9 +1077,10 @@ export default function App() {
           attachmentIds,
           requestId,
         });
+        setEcho((current) => current?.requestId === requestId ? { ...current, userMessageId: receipt.userMessageId } : current);
         if (sendIdentityRef.current?.requestId === requestId) sendIdentityRef.current = null;
       } catch (error) {
-        setEcho(null); // 发送失败：撤回乐观气泡；文字与附件由 Composer 保留，重试不重复上传
+        setEcho((current) => current?.requestId === requestId ? null : current);
         // RECOVERY_REQUIRED：上一任务的外部副作用未确认，新消息一律被 409 挡下。
         // 只给一句 4s 消失的文案等于死胡同（用户反馈「继续也发不出去」）——挂上
         // 可操作横幅，按钮直接放行任务（resume），比让用户重打一遍「继续」更短。

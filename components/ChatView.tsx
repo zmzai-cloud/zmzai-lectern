@@ -6,15 +6,16 @@ import { Icon } from "@zmzai/theme/components/icon";
 import { toolGlyph, toolLabel } from "@zmzai/theme/components/tool-card";
 import { TaskDeliveryCard, TaskProgressCard } from "./TaskStatus";
 import type { TaskActionId, TaskPresentationView } from "@/lib/task-presentation";
-import { ArrowDown, LoaderCircle, RotateCw, Search } from "lucide-react";
+import { ArrowDown, File, FileImage, FileText, Globe2, LoaderCircle, Paperclip, RotateCw, Search, Video } from "lucide-react";
 
 import type { ConnectionState } from "@/lib/client";
 import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import { summarizeFlowTools, type ChatViewData, type TodoItem } from "@/lib/chat-projector";
+import { buildMessageSlots, mergeOptimisticMessage, type OptimisticEcho } from "@/lib/chat-view-model";
 type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
-import type { InputAttachmentRef, ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
+import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
 import { MessageAttachmentCard } from "./AttachmentCards";
 import DiffView, { diffStat } from "./DiffView";
@@ -22,7 +23,6 @@ import SessionMessageSearch from "./SessionMessageSearch";
 
 type SubagentActivity = import("@/lib/chat-projector").SubagentActivity;
 type UiPart = import("@/lib/chat-projector").UiPart;
-type UiMessage = import("@/lib/chat-projector").UiMessage;
 
 /** N5 失败自动诊断：把已知错误名/错误消息关键词映射成「可能原因 + 建议动作」，
  *  让错误卡不再只报干巴巴的 name+message，而是一眼能懂「为什么断、该怎么办」。 */
@@ -163,13 +163,9 @@ function SubtaskCard({ part, activity, onOpen }: { part: Extract<Part, { type: "
   );
 }
 
-/** 工作流程组（ZCode 式收起）：一轮运行结束后，该条消息的全部过程 parts
- *  （思考块 + 工具调用，含被正文隔开的）收进一个组——行是「⚙ 工作流程 ·
- *  N 个步骤 · 时长」，点击展开逐行过程（子行各自可再展开）。按相邻分段会把
- *  中断-恢复的长会话切成十几个小组，已按轮次合并。运行中的活跃消息不折叠
- *  （调用方逐行实时渲染）。 */
-function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
-  const [open, setOpen] = useState(false);
+function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiPart[]; running: boolean; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+  const open = openOverride ?? running;
   const tools = parts.flatMap((p) => (p.part.type === "tool" ? [p.part] : []));
   // 失败计数含失败子代理（ZCode 式：收起态就能看到这轮有没有出事）
   const failed = tools.filter((t) => t.state.status === "error").length
@@ -198,10 +194,10 @@ function WorkflowGroup({ parts, onOpenFile, onOpenChild }: { parts: UiPart[]; on
     return `${m}m${Math.round(s % 60)}s`;
   }, [tools]);
   return (
-    <div className={cn("chat-workflow-group", open && "open")}>
-      <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <Icon name="settings" size={13} strokeWidth={1.4} />
-        <span>工作流程</span>
+    <div className={cn("chat-workflow-group", open && "open", running && "running")}>
+      <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
+        <Icon name="settings" size={13} strokeWidth={1.4} className={cn(running && "animate-pulse")} />
+        <span>执行过程</span>
         <span className="chat-workflow-sep" aria-hidden>·</span>
         <span>{parts.length} 个步骤</span>
         {overview && (
@@ -480,19 +476,7 @@ type Props = {
   onLoadNewer: () => void;
   onLoadLatest: () => void;
   onReadingHistory: (reading: boolean) => void;
-  /**
-   * 乐观回显：发送瞬间的用户消息（真实 message.updated 到达后自动让位）。
-   * `attachments` 与 `images` 是两种历史来源——图片是旧链路的内联 data URL，
-   * 附件是新链路的描述符（只有 id 与元数据）。
-   */
-  echo: {
-    text: string;
-    images: { url: string; mediaType: string }[];
-    skill?: { id: string; name: string };
-    references?: string[];
-    attachments?: InputAttachmentRef[];
-    sessionId?: string;
-  } | null;
+  echo: OptimisticEcho | null;
   /** 隔离操作结果横幅（page.tsx 持有，8s 自动消退）。 */
   wtNotice?: { kind: "ok" | "error"; text: string } | null;
   /** K1 记忆召回痕迹（弱化过程行：命中数 + 来源 bank，点击展开逐条）。 */
@@ -643,7 +627,7 @@ function ArtifactCard({ artifact, onOpenFile, onOpenPreview }: { artifact: Artif
   const isImage = contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/i.test(base);
   const isHtml = contentType.includes("html") || /\.html?$/i.test(base);
   const isPdf = contentType === "application/pdf" || /\.pdf$/i.test(base);
-  const icon = isImage ? "🖼" : isHtml ? "🌐" : isPdf ? "📕" : contentType.startsWith("video/") ? "🎬" : "📄";
+  const ArtifactIcon = isImage ? FileImage : isHtml ? Globe2 : isPdf ? FileText : contentType.startsWith("video/") ? Video : File;
   const human = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
   const open = () => {
     const url = previewUrl || downloadUrl;
@@ -660,7 +644,7 @@ function ArtifactCard({ artifact, onOpenFile, onOpenPreview }: { artifact: Artif
       className="flex w-full items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-2 text-left transition-colors hover:bg-surface-2"
       title={`${path} · 点击打开`}
     >
-      <span className="text-[0.9375rem] leading-none">{icon}</span>
+      <ArtifactIcon size={15} strokeWidth={1.5} className="shrink-0 text-ink-3" />
       <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-ink-2" title={path}>{base}</span>
       <span className="shrink-0 font-mono text-[0.625rem] text-ink-3">{human}</span>
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0 text-ink-3">
@@ -690,54 +674,7 @@ const TOOL_ACTIVITY_PHRASE: Record<string, string> = {
 
 export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, memoryTrace, onRewind, permissionMode, onCyclePermissionMode, recoveryBlocked, onResolveRecovery, onOpenChildSession }: Props) {
   const { messages, todos, reads, summary, summaryArtifacts, editedPaths, checkpoint, task, taskAttempts } = data;
-  // 乐观回显：runLoop 首事件前有装配开销（workspace agents/记忆/历史重建），
-  // 用户气泡不等 SSE，发送瞬间就显示；真实同文本 user 消息到达后不重复追加
-  const visible = useMemo(() => {
-    if (!echo) return messages;
-    const echoIds = new Set((echo.attachments ?? []).map((ref) => ref.id));
-    // 有附件时按 attachment id 对齐：file-only 消息的文本是空的，按文本匹配会撞上
-    // 更早的无文本消息，把回显误判成「已到达」而整条消失（规格 §12）。
-    const echoed = messages.find(
-      (m) =>
-        m.role === "user" &&
-        (echoIds.size > 0
-          ? m.parts.some((p) => p.part.type === "file" && p.part.attachmentId && echoIds.has(p.part.attachmentId))
-          : Boolean(echo.text) && m.parts.map((p) => (p.part.type === "text" ? p.part.text : "")).join("") === echo.text),
-    );
-    // SSE 的真实消息抵达会取代乐观回显。若旧 runner / 短暂版本切换未带回
-    // skill 元数据，把本次发送时已知的选择合并进去，避免 skill 前缀闪现后消失。
-    if (echoed) {
-      const fallbackSkill = echo.skill;
-      if (!fallbackSkill || echoed.skill) return messages;
-      return messages.map((message) => message.id === echoed.id ? { ...message, skill: { ...fallbackSkill, digest: "" } } : message);
-    }
-    const echoMessage: UiMessage = {
-      id: "__echo__",
-      role: "user",
-      ...(echo.skill ? { skill: { ...echo.skill, digest: "" } } : {}),
-      ...(echo.references?.length ? { references: echo.references } : {}),
-      parts: [
-        ...echo.images.map((im, i) => ({ part: { id: `__echo_img_${i}`, type: "image", url: im.url, mediaType: im.mediaType, messageId: "__echo__", sessionId: "" } as Part })),
-        // 附件用描述符形状回显：卡片立刻可画（名字/大小/类型），摘要由卡片自己取。
-        ...(echo.attachments ?? []).map((ref, i) => ({
-          part: {
-            id: `__echo_att_${i}`,
-            type: "file",
-            mime: ref.mediaType,
-            filename: ref.name,
-            attachmentId: ref.id,
-            size: ref.size,
-            kind: ref.kind,
-            status: "ready",
-            messageId: "__echo__",
-            sessionId: echo.sessionId ?? "",
-          } as Part,
-        })),
-        ...(echo.text ? [{ part: { id: "__echo_text", type: "text", text: echo.text, messageId: "__echo__", sessionId: "" } as Part }] : []),
-      ],
-    };
-    return [...messages, echoMessage];
-  }, [messages, echo]);
+  const visible = useMemo(() => mergeOptimisticMessage(messages, echo), [messages, echo]);
   const running = status === "running";
   // 最新一条用户消息 id（含乐观 echo）——记忆引用行锚点：召回发生在这一轮开始。
   const lastUserMessageId = useMemo(() => {
@@ -850,10 +787,16 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     getItemKey: index => visible[index]!.id, overscan: 8, scrollMargin,
   });
   useLayoutEffect(() => {
-    const list = listRef.current; const root = messagesRef.current;
+    const list = listRef.current;
+    const root = messagesRef.current;
     if (!list || !root) return;
-    setScrollMargin(list.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop);
-  }, [historyState, todos, visible.length]);
+    const syncMargin = () => setScrollMargin(list.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop);
+    syncMargin();
+    const observer = new ResizeObserver(syncMargin);
+    observer.observe(root);
+    for (const child of root.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [historyState, todos, visible.length, connState, stalled, wtNotice, reads]);
   const readState = useSessionReadState(sessionId, messagesRef, !searchOpen && !historyState.hasNewer && !historyState.loading && !historyState.error && connState === "connected",
     [...visible].reverse().find(message => message.error || message.parts.some(item => item.part.type !== "reasoning" && (item.part.type !== "text" || item.part.text.trim().length > 0)))?.messageSeq ?? 0, 0);
   // 未读分隔线锚定「进入会话那一刻」的快照：只标记进入前就存在的未读消息
@@ -937,7 +880,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {connState !== "connected" && (
         <div
           className={cn(
-            "flex h-7 shrink-0 items-center gap-2 px-4 text-[0.6875rem]",
+            "flex min-h-7 shrink-0 items-center gap-2 py-1 leading-4 px-4 text-[0.6875rem]",
             connState === "offline" ? "border-danger/30 bg-danger-tint text-danger" : "border-line bg-warning-tint text-warning",
           )}
         >
@@ -949,7 +892,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {/* N6 卡住检测横幅：运行中超过 60s 无新事件，可能卡在长工具调用/上游无响应。
           给用户主动感知，可中止；framework 看门狗 300s 会兜底报错。 */}
       {stalled && running && (
-        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-tint px-4 text-[0.6875rem] text-warning">
+        <div className="flex min-h-7 shrink-0 items-center gap-2 py-1 leading-4 border-b border-warning/30 bg-warning-tint px-4 text-[0.6875rem] text-warning">
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-warning" />
           已超过 60s 无新进展，可能卡在长任务或上游无响应——可等待，或
           <button type="button" onClick={onAbort} className="font-medium underline underline-offset-2 hover:text-ink">
@@ -961,7 +904,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
       {wtNotice && (
         <div
           className={cn(
-            "flex h-7 shrink-0 items-center gap-2 px-4 text-[0.6875rem]",
+            "flex min-h-7 shrink-0 items-center gap-2 py-1 leading-4 px-4 text-[0.6875rem]",
             wtNotice.kind === "ok" ? "border-line bg-success-tint text-success" : "border-danger/30 bg-danger-tint text-danger",
           )}
         >
@@ -1037,8 +980,6 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           )}
         </div>
       )}
-      {todos && todos.length > 0 && <TodoCard todos={todos} />}
-      {/* N6 实时进度：运行中展示「正在执行第 N 步 · 当前工具」，取代单一状态点 */}
         {visible.length === 0 && !historyState.loading && !historyState.error && (
           <div className="chat-welcome flex-1">
             <div className="text-[1.5rem] font-semibold tracking-[-0.035em] text-ink">今天想完成什么？</div>
@@ -1127,7 +1068,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                       </div>
                     )}
                     {!m.skill && text}
-                    {m.parts.map(({ part }) => part.type === "file" ? <div key={part.id} className="mt-2 rounded-md border border-line px-3 py-2 text-xs"><a href={part.url} download={part.filename}>📎 {part.filename}</a></div> : null)}
+                    {m.parts.map(({ part }) => part.type === "file" ? <div key={part.id} className="mt-2 rounded-md border border-line px-3 py-2 text-xs"><a href={part.url} download={part.filename} className="inline-flex items-center gap-1.5"><Paperclip size={12} />{part.filename}</a></div> : null)}
                   </div>
                   <div className="mt-1 flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                     <button
@@ -1159,40 +1100,12 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               </div>
             );
           }
-          // Agent 消息：全宽开放排版（主流惯例：无头像无标签，运行指示放内容尾部）
-          // ZCode 式过程流，两种状态：
-          // · 运行中（活跃尾部消息）→ 每个过程 part 逐行实时展示（弱化折叠行，
-          //   图标 名称 · 摘要；运行中的工具保持单行折叠，呼吸图标即实时反馈）；
-          // · 本轮结束后 → **按轮次合并**（用户拍板）：同一条消息的全部过程
-          //   （思考 + 工具，含被正文隔开的）收进一个「工作流程」组，组行放在
-          //   首个过程 part 的位置（保持时间顺序：先干活后总结），正文原位。
-          //   按相邻分段会把中断-恢复的长会话切成十几个「1 个步骤」小组，碎片化
-          //   满屏（实测一个真实会话 17 组）。diff 卡、子任务卡是「结果」不进组。
-          type Slot = { kind: "part" | "live"; item: UiPart } | { kind: "flow"; items: UiPart[] };
-          const slots: Slot[] = [];
-          let flowGroup: { kind: "flow"; items: UiPart[] } | null = null;
-          for (const item of m.parts) {
-            // diff 卡（edit/write 落盘预览）是「结果」不进组；思考/工具/子任务是过程
-            const isFlow = (item.part.type === "reasoning" || item.part.type === "subtask" || (item.part.type === "tool" && !item.diff));
-            if (lastActive) {
-              slots.push({ kind: isFlow ? "live" : "part", item });
-              continue;
-            }
-            if (isFlow) {
-              if (!flowGroup) {
-                flowGroup = { kind: "flow", items: [] };
-                slots.push(flowGroup);
-              }
-              flowGroup.items.push(item);
-              continue;
-            }
-            slots.push({ kind: "part", item });
-          }
+          const slots = buildMessageSlots(m.parts);
           const blocks: React.ReactNode[] = slots.map((slot) =>
             slot.kind === "flow" ? (
-              <WorkflowGroup key={`${m.id}-flow`} parts={slot.items} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
+              <WorkflowGroup key={`${m.id}-${slot.id}`} parts={slot.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
             ) : (
-              <PartView key={`${m.id}-${slot.kind}-${slot.item.part.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} />
+              <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} />
             ),
           );
           return (
@@ -1229,17 +1142,11 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         })}
         </div>
         {historyState.hasNewer && <button type="button" disabled={historyState.loading} className="my-3 w-full text-xs text-ink-3 disabled:opacity-40" onClick={() => { captureAnchor(); onLoadNewer(); }}>加载更新消息</button>}
-        {/* 任务区（规格 3 §14.1）。分层原则（ZCode/Codex 基准）：状态不常驻会话流——
-            · 运行/排队/恢复等纯状态 → 顶部任务上下文条 + Composer 上方状态行，流里不留卡；
-            · 交付卡 —— task.delivered 后出现一次，是内容（做成了什么）不是状态；
-            · 行动卡 —— 只在任务等用户（needsUser：授权/补充/选择/外部确认）时出现，
-              带 blocker 说明与动作按钮，事情办完即消失。 */}
-        {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
         {task && taskView && !taskView.completed && taskView.status !== "failed" && taskView.status !== "cancelled" && taskView.needsUser && (
           <TaskProgressCard task={task} view={taskView} attempts={taskAttempts} onAction={(action) => onTaskAction?.(action)} />
         )}
-        {/* 结尾去重：任务已交付时不再叠加「本轮已结束」摘要卡——结论在正文，
-            完成依据/改动/剩余项在交付卡，第三块重复总结只会稀释两者。 */}
+        <div className="chat-turn-closure">
+        {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
         {summary && !running && !taskView?.completed && (
           <SummaryCard
             summary={summary}
@@ -1263,12 +1170,10 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             })()}
           />
         )}
-        {/* 本轮产物卡片：只展示 summary 对应的这一轮 run 的产物（summaryArtifacts），
-            不跨轮累积。挂在 SummaryCard 下方，与「总结陈词」一起构成收尾区。 */}
-        {summary && !running && summaryArtifacts.length > 0 && (
-          <div className="space-y-1.5">
+        {!running && summaryArtifacts.length > 0 && (
+          <div className="chat-turn-artifacts">
             <div className="flex items-center gap-2 text-xs font-medium text-ink-3">
-              <span>本轮产物</span>
+              <span>成果</span>
               <span className="font-mono text-xs text-ink-3">{summaryArtifacts.length}</span>
               {onOpenArtifact && (
                 <button type="button" onClick={onOpenArtifact} className="ml-auto rounded-md bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-ink-2 transition-colors hover:bg-line hover:text-ink">
@@ -1281,6 +1186,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             ))}
           </div>
         )}
+        </div>
         {pending && (
           // 锚点供任务动作「授权并继续」定位（规格 §14.2）。PermissionCard 来自
           // @zmzai/theme，不给它加 props——包一层就够，也避免把宿主的责任压给主题包。
@@ -1309,6 +1215,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           </button>
         </div>
       )}
+      {todos && todos.length > 0 && <div className="chat-dock-todos"><TodoCard todos={todos} /></div>}
       {/* 状态与输入器共享同一个 grid row，避免隐式第三行挤压消息区。 */}
       <div className="flex h-7 shrink-0 items-center justify-center">
         {(whisper || running) && (

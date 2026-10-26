@@ -115,9 +115,15 @@ function ensureTables(db: DatabaseSync): void {
       hitCount INTEGER NOT NULL,
       hits TEXT,
       usedTokens INTEGER,
+      source TEXT NOT NULL DEFAULT 'injection',
       at TEXT NOT NULL
     );
   `);
+  // K1 后续（主动检索）：老库补 source 列，历史记录按开头注入归类。
+  const recallColumns = db.prepare("PRAGMA table_info(memory_recall_log)").all() as Array<{ name: string }>;
+  if (!recallColumns.some((column) => column.name === "source")) {
+    db.exec("ALTER TABLE memory_recall_log ADD COLUMN source TEXT NOT NULL DEFAULT 'injection'");
+  }
 }
 
 function rowToBinding(row: Record<string, unknown>): MemoryBinding {
@@ -272,13 +278,15 @@ export function isolateMemoryAccount(): void {
   }
 }
 
+export type MemoryRecallSource = "injection" | "tool";
+
 export function recordRecall(
   projectId: string,
-  entry: { sessionId: string; goalDigest: string; hitCount: number; hits?: unknown; usedTokens?: number },
+  entry: { sessionId: string; goalDigest: string; hitCount: number; hits?: unknown; usedTokens?: number; source?: MemoryRecallSource },
 ): void {
   openMemoryDb(projectId)
     .prepare(
-      "INSERT INTO memory_recall_log (projectId, sessionId, goalDigest, hitCount, hits, usedTokens, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO memory_recall_log (projectId, sessionId, goalDigest, hitCount, hits, usedTokens, source, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .run(
       projectId,
@@ -287,6 +295,7 @@ export function recordRecall(
       entry.hitCount,
       entry.hits === undefined ? null : JSON.stringify(entry.hits),
       entry.usedTokens ?? null,
+      entry.source ?? "injection",
       new Date().toISOString(),
     );
 }

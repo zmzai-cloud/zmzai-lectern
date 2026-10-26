@@ -97,13 +97,21 @@ export function createMemoryClient(deps: MemoryClientDeps = {}) {
     recall(
       bankId: string,
       query: string,
-      opts: { maxTokens?: number; timeoutMs?: number } = {},
+      opts: { maxTokens?: number; timeoutMs?: number; source?: "web" | "tool" | "injection" | "eval" } = {},
     ): Promise<MemoryResult<{ hits: MemoryRecallHit[] }>> {
       const timeoutMs = opts.timeoutMs ?? 800;
       return call<{ results?: Array<Record<string, unknown>> }>(
         deps,
         `/api/banks/${encodeURIComponent(bankId)}/recall`,
-        { method: "POST", body: { query, ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}) }, timeoutMs },
+        {
+          method: "POST",
+          body: {
+            query,
+            ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+            ...(opts.source ? { source: opts.source } : {}),
+          },
+          timeoutMs,
+        },
       ).then((result) => {
         if (!result.ok) return result;
         const hits: MemoryRecallHit[] = (result.data.results ?? [])

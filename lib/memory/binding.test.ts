@@ -144,9 +144,28 @@ describe("syncPolicy / recall_log", () => {
     expect(getMemoryBinding(project.id)?.syncPolicy).toBe("auto");
 
     recordRecall(project.id, { sessionId: "ses_1", goalDigest: "abc", hitCount: 3, hits: [{ text: "x" }], usedTokens: 120 });
-    const row = openMemoryDb(project.id).prepare("SELECT * FROM memory_recall_log").get() as { sessionId: string; hitCount: number; hits: string };
+    const row = openMemoryDb(project.id).prepare("SELECT * FROM memory_recall_log").get() as { sessionId: string; hitCount: number; hits: string; source: string };
     expect(row.sessionId).toBe("ses_1");
     expect(row.hitCount).toBe(3);
     expect(JSON.parse(row.hits)).toEqual([{ text: "x" }]);
+    expect(row.source).toBe("injection");
+  });
+
+  it("主动检索的日志行标记 source=tool", async () => {
+    await ensureAutoBinding(project, okClient());
+    recordRecall(project.id, { sessionId: "ses_2", goalDigest: "def", hitCount: 1, source: "tool" });
+    const row = openMemoryDb(project.id).prepare("SELECT source FROM memory_recall_log WHERE sessionId = ?").get("ses_2") as { source: string };
+    expect(row.source).toBe("tool");
+  });
+
+  it("老库缺少 source 列时自动补列", async () => {
+    await ensureAutoBinding(project, okClient());
+    const db = openMemoryDb(project.id);
+    db.exec("ALTER TABLE memory_recall_log DROP COLUMN source");
+    resetMemoryDbHandlesForTest();
+
+    const reopened = openMemoryDb(project.id);
+    const columns = reopened.prepare("PRAGMA table_info(memory_recall_log)").all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === "source")).toBe(true);
   });
 });

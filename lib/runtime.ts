@@ -37,6 +37,7 @@ import { relayBase } from "./relay.js";
 import { loadMcpConfig } from "./mcp-config.js";
 import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
 import { recallSection } from "./memory/service.js";
+import { createMemorySearchTool } from "./memory/search-tool.js";
 import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
 import { startMemoryOutboxWorker } from "./memory/outbox.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
@@ -259,6 +260,7 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
   const attachmentProvider = attachmentProviderFor(dir);
   const baseLocalTools = [
     skillTool,
+    createMemorySearchTool(project),
     ...createGitTools({ cwd: wsRoot }),
     ...createTerminalTools(terminalManager(), { workspaceRoot: wsRoot }),
     // 文档解析器尚未落地时这里返回空数组（不注册只会回「未启用」的工具）；

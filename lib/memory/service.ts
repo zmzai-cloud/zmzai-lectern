@@ -10,13 +10,15 @@ import { createHash } from "node:crypto";
 
 import { memoryAccountUserId, memoryPat } from "../settings.js";
 import type { Project } from "../projects.js";
-import { ensureAutoBinding, getMemoryBinding, recordRecall } from "./binding.js";
+import { ensureAutoBinding, getMemoryBinding, recordRecall, type MemoryBinding } from "./binding.js";
 import { createMemoryClient, type MemoryRecallHit } from "./client.js";
 
 const client = createMemoryClient();
 
 const RECALL_MAX_TOKENS = 2000;
 const RECALL_MAX_FACTS = 12;
+const SEARCH_MAX_TOKENS = 2000;
+const SEARCH_TIMEOUT_MS = 1500;
 const QUERY_MAX_CHARS = 400;
 const CACHE_MAX_ENTRIES = 64;
 
@@ -34,6 +36,32 @@ export type RecallSectionDeps = {
   accountUserId?: () => string | null;
 };
 
+type ActiveBinding =
+  | { ok: true; binding: MemoryBinding; accountUserId: string }
+  | { ok: false; reason: "unauthenticated" | "unavailable" };
+
+/** 账号门禁 + 懒建库（召回与主动检索共用；失败原因只用于如实回报，不阻塞任务）。 */
+async function resolveActiveBinding(
+  project: Pick<Project, "id" | "name">,
+  deps?: RecallSectionDeps,
+): Promise<ActiveBinding> {
+  const get = deps?.getBinding ?? getMemoryBinding;
+  const accountUserId = (deps?.accountUserId ?? memoryAccountUserId)();
+  if (!accountUserId) return { ok: false, reason: "unauthenticated" };
+  let binding = get(project.id);
+
+  if (!binding || binding.accountUserId !== accountUserId) {
+    // 旧版无账号绑定必须迁移到账号隔离 bank；其他账号绑定则拒绝。
+    const pat = (deps?.pat ?? memoryPat)();
+    if (!pat) return { ok: false, reason: "unauthenticated" };
+    const ensured = await (deps?.ensureBinding ?? ensureAutoBinding)(project, client, accountUserId);
+    if (!ensured.ok) return { ok: false, reason: "unavailable" };
+    binding = ensured.binding;
+  }
+  if (!binding.enabled || binding.accountUserId !== accountUserId) return { ok: false, reason: "unavailable" };
+  return { ok: true, binding, accountUserId };
+}
+
 export async function recallSection(
   project: Pick<Project, "id" | "name">,
   sessionId: string,
@@ -43,20 +71,9 @@ export async function recallSection(
   // 子代理不注入长期记忆（spec §13.3：子结论由父归并去重）
   if (sessionId.startsWith("ses_sub_")) return undefined;
 
-  const get = deps?.getBinding ?? getMemoryBinding;
-  const accountUserId = (deps?.accountUserId ?? memoryAccountUserId)();
-  if (!accountUserId) return undefined;
-  let binding = get(project.id);
-
-  if (!binding || binding.accountUserId !== accountUserId) {
-    // 旧版无账号绑定必须迁移到账号隔离 bank；其他账号绑定则拒绝。
-    const pat = (deps?.pat ?? memoryPat)();
-    if (!pat) return undefined;
-    const ensured = await (deps?.ensureBinding ?? ensureAutoBinding)(project, client, accountUserId);
-    if (!ensured.ok) return undefined;
-    binding = ensured.binding;
-  }
-  if (!binding.enabled || binding.accountUserId !== accountUserId) return undefined;
+  const resolved = await resolveActiveBinding(project, deps);
+  if (!resolved.ok) return undefined;
+  const { binding, accountUserId } = resolved;
   const goalDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
 
   // Root-goal cache: same session + same root goal + same account/binding only.
@@ -64,7 +81,7 @@ export async function recallSection(
   if (cached && cached.bankId === binding.bankId && cached.bindingVersion === binding.bindingVersion && cached.accountUserId === accountUserId && cached.goalDigest === goalDigest) return cached.section;
 
   const recall = deps?.recall ?? client.recall;
-  const result = await recall(binding.bankId, text.slice(0, QUERY_MAX_CHARS), { maxTokens: RECALL_MAX_TOKENS });
+  const result = await recall(binding.bankId, text.slice(0, QUERY_MAX_CHARS), { maxTokens: RECALL_MAX_TOKENS, source: "injection" });
   if (!result.ok) return undefined; // 超时/401/网络——无记忆继续，不缓存失败
 
   const hits = result.data.hits.slice(0, RECALL_MAX_FACTS);
@@ -98,6 +115,63 @@ export async function recallSection(
 /** rewind / 会话回退后显式失效（下个 attempt 重召）。 */
 export function invalidateMemoryForSession(sessionId: string): void {
   cache.delete(sessionId);
+}
+
+export type MemorySearchHitResult = {
+  status: "hit" | "empty" | "deduped";
+  hits: MemoryRecallHit[];
+  deduped: number;
+  bankId: string;
+};
+export type MemorySearchOutcome = MemorySearchHitResult | { status: "unauthenticated" } | { status: "unavailable" };
+
+/**
+ * 主动检索（memory_search 工具）：复用注入链的 binding/账号门禁，独立预算。
+ * 已在本会话开头注入过的 memoryId 会被剔除，避免同一批事实重复进上下文。
+ */
+export async function searchProjectMemory(
+  project: Pick<Project, "id" | "name">,
+  sessionId: string,
+  query: string,
+  limit: number,
+  deps?: RecallSectionDeps,
+): Promise<MemorySearchOutcome> {
+  const resolved = await resolveActiveBinding(project, deps);
+  if (!resolved.ok) return resolved.reason === "unauthenticated" ? { status: "unauthenticated" } : { status: "unavailable" };
+  const { binding, accountUserId } = resolved;
+
+  const recall = deps?.recall ?? client.recall;
+  const result = await recall(binding.bankId, query.slice(0, QUERY_MAX_CHARS), {
+    maxTokens: SEARCH_MAX_TOKENS,
+    timeoutMs: SEARCH_TIMEOUT_MS,
+    source: "tool",
+  });
+  if (!result.ok) return result.kind === "unauthenticated" ? { status: "unauthenticated" } : { status: "unavailable" };
+
+  const cached = cache.get(sessionId);
+  const injected =
+    cached && cached.bankId === binding.bankId && cached.bindingVersion === binding.bindingVersion && cached.accountUserId === accountUserId
+      ? new Set(cached.hits.flatMap((hit) => (hit.memoryId ? [hit.memoryId] : [])))
+      : new Set<string>();
+  const hits = result.data.hits.slice(0, limit);
+  const fresh = hits.filter((hit) => !hit.memoryId || !injected.has(hit.memoryId));
+  const deduped = hits.length - fresh.length;
+
+  const record = deps?.record ?? recordRecall;
+  record(project.id, {
+    sessionId,
+    goalDigest: createHash("sha256").update(query).digest("hex").slice(0, 16),
+    hitCount: fresh.length,
+    hits: fresh,
+    source: "tool",
+  });
+
+  return {
+    status: fresh.length > 0 ? "hit" : deduped > 0 ? "deduped" : "empty",
+    hits: fresh,
+    deduped,
+    bankId: binding.bankId,
+  };
 }
 
 /** 测试专用。 */

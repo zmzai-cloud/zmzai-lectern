@@ -44,6 +44,8 @@ export type HostServerOptions = {
   /** B1：真实 runtime 的只读面。缺省的方法对应端点 404；会话不存在由实现
    *  抛 SESSION_NOT_FOUND（server 映射 404）。 */
   realRuntime?: {
+    computerUse?(request: Request): Promise<Response>;
+    browserQa?(request: Request): Promise<Response>;
     /** T07（PC10）：按 requestId 查命令回执（workflow.findPrompt 的只读面）。 */
     commandReceipt?(sessionId: string, requestId: string): Promise<{ found: true; receipt: unknown; input: unknown } | { found: false }>;
     /** T08（F05/PC12）：prompt 命令面走真实 runtime（按会话归属解析项目）。
@@ -167,6 +169,19 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         return;
       }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method === "POST" && ["/v1/computer-use", "/v1/browser-qa"].includes(url.pathname)) {
+        const handler = url.pathname === "/v1/computer-use" ? options.realRuntime?.computerUse : options.realRuntime?.browserQa;
+        if (!handler) { send(res, 404, { error: "NOT_IMPLEMENTED" }); return; }
+        const body = await readJsonBody(req);
+        const credential = req.headers["x-lectern-credential"];
+        if (typeof body.sessionId === "string" && typeof credential === "string") credentialRefs.set(body.sessionId, credential);
+        const response = await handler(new Request("http://127.0.0.1/v1/computer-use", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        }));
+        res.writeHead(response.status, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(await response.text());
+        return;
+      }
       if (req.method === "GET" && url.pathname === "/health") {
         const handshake: HostHandshake = {
           protocolVersion: HOST_PROTOCOL_VERSION,

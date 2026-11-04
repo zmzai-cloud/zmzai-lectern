@@ -28,7 +28,7 @@ rtFixture.dir = path.join(base, "data");
 ownerFixture.owner.mockImplementation((sessionId: string) => ({
   sessionId, project: { id: "p", path: "/w/p" }, effectiveWorkspaceRoot: "/w/p",
 }));
-afterAll(() => { try { execSync("osascript -e 'tell application \"Calculator\" to quit'", { stdio: "ignore" }); } catch { /* 已退出 */ } });
+afterAll(() => { if (!NATIVE) return; try { execSync("osascript -e 'tell application \"Calculator\" to quit'", { stdio: "ignore", timeout: 8000 }); } catch { /* 已退出 */ } });
 
 const adapter = createMacOsCuaAdapter();
 const broker = new ComputerUseBroker();
@@ -42,7 +42,8 @@ describe("C01：权限探测真实（原生）", () => {
       expect(cap.available).toBe(false);
       expect(cap.guidance).toContain("辅助功能"); // 缺失给具体设置引导
     }
-  });
+  // 两个权限探测各有 8s adapter 超时；测试需等待诚实降级结果。
+  }, 20_000);
 });
 
 describe.skipIf(!AX_READY)("原生 Calculator 真流程（C02/C04）", () => {

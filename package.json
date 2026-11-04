@@ -7,6 +7,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "eval:contracts": "node scripts/task-contract-audit.mjs",
+    "eval:coding": "esbuild evals/harness/coding-baseline.ts --bundle --platform=node --format=esm --packages=external --outfile=test-results/p0-evals/coding-baseline.mjs && node test-results/p0-evals/coding-baseline.mjs",
     "port:free": "lsof -nP -tiTCP:3100 -sTCP:LISTEN | xargs kill -9 2>/dev/null; true",
     "dev": "pnpm run port:free && concurrently -k -n web,app -c cyan,magenta \"next dev -p 3100\" \"wait-on http://127.0.0.1:3100 && electron electron/main.cjs\"",
     "dev:web": "pnpm run port:free && next dev -p 3100",

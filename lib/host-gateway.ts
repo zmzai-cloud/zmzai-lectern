@@ -42,6 +42,8 @@ export type GatewayRoute = {
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
+  { method: "POST", stream: true, pattern: /^\/api\/deliveries\/browser-qa$/, hostPath: () => "/v1/browser-qa", rewriteBody: (_g, body) => body, withCredential: true },
+  { method: "POST", pattern: /^\/api\/deliveries\/computer-use$/, hostPath: () => "/v1/computer-use", rewriteBody: (_g, body) => body },
   // GET /api/sessions（T09 回归网关化）：0.10.1 因 Host 单 runtime 读不到多项目
   // 会话被撤下（d416ca4）；T08 起 Host 的 listSessions 全项目聚合 + 显式
   // projectId（未知项目报错），列表回归 Host——running 态在 Host 进程的

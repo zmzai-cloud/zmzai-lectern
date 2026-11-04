@@ -22,6 +22,14 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
     return project.path;
   };
   return {
+  browserQa: async (request) => {
+    const { handleBrowserQa } = await import("../../lib/browser-qa-service.js");
+    return handleBrowserQa(request);
+  },
+  computerUse: async (request) => {
+    const { handleComputerUse } = await import("../../lib/computer-use-service.js");
+    return handleComputerUse(request);
+  },
   // T07（PC10）：命令回执查询——只读 findPrompt，found=true 即已登记
   commandReceipt: async (sessionId: string, requestId: string) => {
     const prior = await storeOf(sessionId).workflow?.findPrompt(sessionId, requestId).catch(() => null);

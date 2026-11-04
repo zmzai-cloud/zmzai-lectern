@@ -6,6 +6,11 @@ armed 网关命中的路由由 Host 执行（Next 只做形状适配），未迁
 
 ## Host owner（网关化，armed 下 Host 执行）
 
+2026-11-04 增量：`POST /api/deliveries/browser-qa` 与
+`POST /api/deliveries/computer-use` 已分别接入 `/v1/browser-qa`、`/v1/computer-use`。
+对应 service 位于 `lib/browser-qa-service.ts` 与 `lib/computer-use-service.ts`。
+此项仅为控制入口迁移；其余 delivery 端点、模型工具注册和完整平台验收仍未收口。
+
 | 路由 | Host 端点 | 归属解析 | 迁移批次 |
 | --- | --- | --- | --- |
 | GET /api/sessions（?all=1 / 缺省 active） | /v1/sessions | 全项目聚合 / active projectId 注入；未知项目 404（T08/T09 回归，撤下原因已修复） | T09 |
@@ -43,7 +48,7 @@ HOST_UNAVAILABLE（带 requestId/结果未知语义），绝不回落进程内�
 | /api/fs/*、/api/git/* | 未迁移 | 文件/仓库读写；Host 化需 Host 挂 workspace 文件面 |
 | /api/deliveries/*、/api/preview | 未迁移 | 交付验证（含浏览器 QA）；T13/T14（R1）一并 |
 | /api/skills（执行/加载）、/api/plugins、/api/repomap | 未迁移 | 工具执行类；随 fs 族批次 |
-| 浏览器验证 / CUA 相关 | 明确受限 | R1（T13–T16）前不在 armed 网关暴露 |
+| 浏览器验证 / CUA 相关 | 部分迁移 | 2026-11-04 两个控制端点已 Host 化；模型工具与 PC15–PC19 全链路仍待验收 |
 
 ## 架构检查
 

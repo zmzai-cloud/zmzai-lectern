@@ -1,7 +1,7 @@
 # Lectern 对话优先视觉改版设计规格
 
 **日期：** 2026-09-17  
-**状态：** 待实施
+**状态：** 已实现并合入 `main`（[验收报告](./2026-09-17-lectern-conversation-first-visual-design.verification.md)）
 **方向：** A — 安静宽松、对话优先
 
 ## 0. 给实施模型的任务

@@ -1,6 +1,6 @@
 # Lectern 文件附件、粘贴与引用规格
 
-**状态：** 待实施
+**状态：** 已实现并合入 `main`（[验收报告](./2026-09-17-lectern-file-attachments-and-references-spec.verification.md)）
 **日期：** 2026-09-17
 **适用仓库：** `zmzai-lectern`、`zmzai-framework`
 **优先级：** P0

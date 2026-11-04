@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   active: { id: "a", name: "A", path: "/workspace/a" },
   resolve: vi.fn(), create: vi.fn(), createWorkspace: vi.fn(), existingWorktree: vi.fn(), getSession: vi.fn(), runtimeFor: vi.fn(),
 }));
-vi.mock("@/lib/projects", () => ({ getActiveProject: () => state.active }));
+vi.mock("@/lib/projects", () => ({ getActiveProject: () => state.active, registeredProjects: () => [{ id: "a", name: "A", path: "/workspace/a" }] }));
 vi.mock("@/lib/relay", () => ({ resolveModel: state.resolve, sessionCookieName: "test_session" }));
 vi.mock("@/lib/runtime", () => ({ runtimeFor: state.runtimeFor }));
 vi.mock("@/lib/worktree", () => ({ worktreeForSession: state.existingWorktree }));
@@ -28,6 +28,12 @@ beforeEach(() => {
   state.createWorkspace.mockResolvedValue({
     ok: true, record: { path: "/workspace/a/.lectern-worktrees/created_session", branch: "lectern/wt/created_session" },
   });
+});
+
+it("rejects an unknown pinned project instead of silently using the active project", async () => {
+  const response = await POST(new NextRequest("http://localhost/api/sessions?projectId=missing", { method: "POST", body: '{}' }));
+  expect(response.status).toBe(404);
+  expect(state.runtimeFor).not.toHaveBeenCalled();
 });
 
 it("pins the project through model resolution and isolated worktree creation", async () => {

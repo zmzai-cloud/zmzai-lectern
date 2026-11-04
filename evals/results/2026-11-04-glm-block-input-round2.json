@@ -1,0 +1,106 @@
+{
+  "schema": "lectern.evals.results/1",
+  "generated_at": "2026-11-04T09:14:16.327Z",
+  "suite": "real-model",
+  "system_under_test": {
+    "name": "framework-installed-consumer",
+    "kind": "lectern-after",
+    "commit": "9beb1ff9ba52bbb7e807ef1270edbf4a5273cee7",
+    "model": {
+      "id": "glm-5.3-flash",
+      "endpoint": "https://relay.zmzai.cloud",
+      "params": {
+        "maxTokens": 2048,
+        "maxAttempts": 6
+      }
+    }
+  },
+  "environment": {
+    "machine": "darwin",
+    "samples": 3,
+    "notes": "Isolated coding baseline only. Does not certify Host, worktree merge, browser, memory or competitor. Usage unavailable remains null."
+  },
+  "runs": [
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 1,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 71060,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "908c4f21d2f4c674b9c1080a112ae921f2e12ed32996a3f4ffb72b386a28c0e6",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": "TEST-APPROVAL-42\n"
+      },
+      "task_status": "delivered",
+      "initial_status": "waiting_input",
+      "blocked_correctly": true,
+      "resumed_same_task": true,
+      "tool_counts": {
+        "task_block": 1,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 2,
+      "outcome": "fail",
+      "failure_category": "assertion",
+      "duration_ms": 45525,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "908c4f21d2f4c674b9c1080a112ae921f2e12ed32996a3f4ffb72b386a28c0e6",
+      "verification": false,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": "审批码: TEST-APPROVAL-42\n"
+      },
+      "task_status": "delivered",
+      "initial_status": "waiting_input",
+      "blocked_correctly": true,
+      "resumed_same_task": true,
+      "tool_counts": {
+        "task_block": 1,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 3,
+      "outcome": "fail",
+      "failure_category": "timeout",
+      "duration_ms": 130130,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "908c4f21d2f4c674b9c1080a112ae921f2e12ed32996a3f4ffb72b386a28c0e6",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": "TEST-APPROVAL-42\n"
+      },
+      "task_status": "cancelled",
+      "initial_status": "waiting_input",
+      "blocked_correctly": true,
+      "resumed_same_task": true,
+      "tool_counts": {
+        "task_block": 1,
+        "task_deliver": 3
+      },
+      "evidence": []
+    }
+  ]
+}

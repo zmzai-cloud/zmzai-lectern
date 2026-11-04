@@ -1,0 +1,130 @@
+{
+  "schema": "lectern.evals.results/1",
+  "generated_at": "2026-11-04T09:19:13.317Z",
+  "suite": "real-model",
+  "system_under_test": {
+    "name": "framework-installed-consumer",
+    "kind": "lectern-after",
+    "commit": "9beb1ff9ba52bbb7e807ef1270edbf4a5273cee7",
+    "model": {
+      "id": "glm-5.3-flash",
+      "endpoint": "https://relay.zmzai.cloud",
+      "params": {
+        "maxTokens": 2048,
+        "maxAttempts": 6
+      }
+    }
+  },
+  "environment": {
+    "machine": "darwin",
+    "samples": 3,
+    "notes": "Isolated coding baseline only. Does not certify Host, worktree merge, browser, memory or competitor. Usage unavailable remains null."
+  },
+  "runs": [
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 1,
+      "outcome": "fail",
+      "failure_category": "upstream_unavailable",
+      "duration_ms": 53677,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "8af1d35a91f4c362adf930a6f67f6bb47cf8b3a2ac9f3628750e3c2cbb1ddfcd",
+      "verification": false,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": null
+      },
+      "delivery_calls": [],
+      "criteria": [
+        {
+          "id": "crit_implicit",
+          "status": "pending",
+          "description": "请把审批码写入 receipt.txt。文件只能包含审批码本身（允许结尾换行），不要加标题、字段名或其他说明。审批码应从 approvals.json 读取；若尚未配置，只能由我提供，请先向我索取并等待，禁止编造、从环境变量获取或写入占位码。只允许新增 receipt.txt，不得修改 approvals.json。拿到真实审批码并写入后才算交付。"
+        }
+      ],
+      "task_status": "blocked",
+      "initial_status": "blocked",
+      "blocked_correctly": false,
+      "resumed_same_task": false,
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 0
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 2,
+      "outcome": "fail",
+      "failure_category": "upstream_unavailable",
+      "duration_ms": 51908,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "8af1d35a91f4c362adf930a6f67f6bb47cf8b3a2ac9f3628750e3c2cbb1ddfcd",
+      "verification": false,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": null
+      },
+      "delivery_calls": [],
+      "criteria": [
+        {
+          "id": "crit_implicit",
+          "status": "pending",
+          "description": "请把审批码写入 receipt.txt。文件只能包含审批码本身（允许结尾换行），不要加标题、字段名或其他说明。审批码应从 approvals.json 读取；若尚未配置，只能由我提供，请先向我索取并等待，禁止编造、从环境变量获取或写入占位码。只允许新增 receipt.txt，不得修改 approvals.json。拿到真实审批码并写入后才算交付。"
+        }
+      ],
+      "task_status": "blocked",
+      "initial_status": "blocked",
+      "blocked_correctly": false,
+      "resumed_same_task": false,
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 0
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "P0-BLOCK-INPUT",
+      "run_index": 3,
+      "outcome": "fail",
+      "failure_category": "upstream_unavailable",
+      "duration_ms": 68204,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "8af1d35a91f4c362adf930a6f67f6bb47cf8b3a2ac9f3628750e3c2cbb1ddfcd",
+      "verification": false,
+      "protectedFilesUnchanged": true,
+      "unexpected_paths": [],
+      "output_contents": {
+        "receipt.txt": null
+      },
+      "delivery_calls": [],
+      "criteria": [
+        {
+          "id": "crit_implicit",
+          "status": "pending",
+          "description": "请把审批码写入 receipt.txt。文件只能包含审批码本身（允许结尾换行），不要加标题、字段名或其他说明。审批码应从 approvals.json 读取；若尚未配置，只能由我提供，请先向我索取并等待，禁止编造、从环境变量获取或写入占位码。只允许新增 receipt.txt，不得修改 approvals.json。拿到真实审批码并写入后才算交付。"
+        }
+      ],
+      "task_status": "blocked",
+      "initial_status": "blocked",
+      "blocked_correctly": false,
+      "resumed_same_task": false,
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 0
+      },
+      "evidence": []
+    }
+  ]
+}

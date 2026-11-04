@@ -1,0 +1,205 @@
+{
+  "schema": "lectern.evals.results/1",
+  "generated_at": "2026-11-04T08:36:24.947Z",
+  "suite": "real-model",
+  "system_under_test": {
+    "name": "framework-installed-consumer",
+    "kind": "lectern-after",
+    "commit": "c1a9ea3f481dac87102ab8566f892062706e10a6",
+    "model": {
+      "id": "glm-5.3-flash",
+      "endpoint": "https://relay.zmzai.cloud",
+      "params": {
+        "maxTokens": 2048,
+        "maxAttempts": 6
+      }
+    }
+  },
+  "environment": {
+    "machine": "darwin",
+    "samples": 3,
+    "notes": "Isolated coding baseline only. Does not certify Host, worktree merge, browser, memory or competitor. Usage unavailable remains null."
+  },
+  "runs": [
+    {
+      "case_id": "R02",
+      "run_index": 1,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 33309,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "47a84261e9c3f7c0eb28e899dedbbec657da954f88988a026b90bbfd0b6c9b26",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R02",
+      "run_index": 2,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 74925,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "47a84261e9c3f7c0eb28e899dedbbec657da954f88988a026b90bbfd0b6c9b26",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R02",
+      "run_index": 3,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 48156,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "47a84261e9c3f7c0eb28e899dedbbec657da954f88988a026b90bbfd0b6c9b26",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R03",
+      "run_index": 1,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 29597,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "81e54589c6ef6fd3861429bcf2a8600e48316199d61ac4c739ecb95b9681157a",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R03",
+      "run_index": 2,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 41774,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "81e54589c6ef6fd3861429bcf2a8600e48316199d61ac4c739ecb95b9681157a",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R03",
+      "run_index": 3,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 48147,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "81e54589c6ef6fd3861429bcf2a8600e48316199d61ac4c739ecb95b9681157a",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R08",
+      "run_index": 1,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 74314,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "74af494217bc4c6b8530f5f63ff73a888a2d50fdfdb431abb0707976b54947c9",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R08",
+      "run_index": 2,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 53028,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "74af494217bc4c6b8530f5f63ff73a888a2d50fdfdb431abb0707976b54947c9",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 2
+      },
+      "evidence": []
+    },
+    {
+      "case_id": "R08",
+      "run_index": 3,
+      "outcome": "pass",
+      "failure_category": null,
+      "duration_ms": 40890,
+      "manual_interventions": 0,
+      "tokens_input": null,
+      "tokens_output": null,
+      "cost": null,
+      "fixture_hash": "74af494217bc4c6b8530f5f63ff73a888a2d50fdfdb431abb0707976b54947c9",
+      "verification": true,
+      "protectedFilesUnchanged": true,
+      "task_status": "delivered",
+      "tool_counts": {
+        "task_block": 0,
+        "task_deliver": 1
+      },
+      "evidence": []
+    }
+  ]
+}

@@ -49,6 +49,7 @@ async function boot(): Promise<Booted> {
   writeFileSync(path.join(projA, "owner.txt"), "project-A\n");
   writeFileSync(path.join(projB, "owner.txt"), "project-B\n");
   writeFileSync(path.join(projA, "page.png"), PNG);
+  writeFileSync(path.join(projA, "calc.mjs"), "export function addTotals(a, b) { return a + b; }\n");
   mkdirSync(path.join(projA, ".zmzai", "skills", "alpha"), { recursive: true });
   writeFileSync(path.join(projA, ".zmzai", "skills", "alpha", "SKILL.md"), "---\nname: alpha-skill\ndescription: A 专属\n---\n正文");
   // 项目 B 是 git 仓库（检查点/回滚/diff 全流程）；仓库级身份，不依赖全局 git 配置
@@ -201,6 +202,15 @@ describe("P0 Host 直通服务族：按会话持久归属落到正确项目", ()
     expect(plugins.status).toBe(200);
     expect(await plugins.json()).toHaveProperty("plugins");
     expect((await get(`/v1/plugins?projectId=p_missing`)).status).toBe(404);
+  });
+
+  it("repomap：Host 内用核对过的 wasm 目录出图，且进程存活（错误目录曾让 emscripten 结束 Host）", async () => {
+    const res = await get(`/v1/repomap?projectId=p_a`);
+    const body = await res.json() as { ok: boolean; text?: string; error?: string };
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.text).toContain("addTotals");
+    expect((await get("/health")).status).toBe(200);
   });
 
   it("全局搜索跨项目带归属；交付概览按会话推导 owner", async () => {

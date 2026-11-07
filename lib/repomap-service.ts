@@ -1,7 +1,8 @@
 import { withWorkflowErrors } from './workflow-error.js';
-import { renderRepoMap, resolveFrameworkVendorDirs } from '@zmzai/agent-framework';
+import { renderRepoMap } from '@zmzai/agent-framework';
 
 import { workspaceRootFromProjectParam } from './project-scope.js';
+import { repoMapVendorDirs } from './repomap-vendor.js';
 
 /** 项目地图服务（R1；P0 2026-11-07 Host 迁移，route-ownership-matrix）：
  *  直接调 framework 的 renderRepoMap，返回地图文本 + 统计；与 agent 的
@@ -15,15 +16,19 @@ async function handle(request: Request): Promise<Response> {
   const tokenBudgetRaw = url.searchParams.get('tokenBudget');
   const tokenBudget = tokenBudgetRaw ? Number(tokenBudgetRaw) : undefined;
 
+  // 被 bundler 打进产物时包内相对定位 wasm 必失败，必须显式注入真实资源目录；
+  // 目录核对不到就如实不可用——绝不带着错误目录去加载（emscripten 失败会结束进程）
+  const vendorDirs = repoMapVendorDirs();
+  if (!vendorDirs) {
+    return Response.json({ ok: false, error: '仓库地图不可用：找不到 tree-sitter wasm 资源' }, { status: 503 });
+  }
   try {
-    // 被 bundler 打进产物时包内相对定位 wasm 必失败，必须显式注入真实资源目录
-    // （运行时 Node resolve，不经 bundler）
     const result = await renderRepoMap({
       root,
       focus: focus || undefined,
       paths: paths?.length ? paths : undefined,
       tokenBudget: Number.isFinite(tokenBudget) && tokenBudget! >= 256 ? tokenBudget : undefined,
-      vendorDirs: resolveFrameworkVendorDirs(),
+      vendorDirs,
     });
     return Response.json({ ok: true, text: result.text, stats: result.stats });
   } catch (error) {

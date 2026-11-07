@@ -39,6 +39,10 @@ async function handle(request: Request): Promise<Response> {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // 开流即发注释帧：Next 与 Node 都要等首个 body 块才发响应头，空闲会话的首块
+      // 原本是 15s 心跳——EventSource 要挂 15s 才 open（经网关实测 15008ms）。
+      // 注释帧不触发 onmessage。
+      controller.enqueue(encoder.encode(": connected\n\n"));
       const heartbeat = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(': ping\n\n'));

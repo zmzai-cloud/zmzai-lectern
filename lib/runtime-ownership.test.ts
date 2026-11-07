@@ -22,7 +22,10 @@ vi.mock("@zmzai/agent-framework", () => ({
   createHostTerminalBackend: vi.fn(), TerminalManager: class {},
   createAttachmentTools: () => [],
   reclaimExpiredLeases: vi.fn(), listActiveSessions: () => [],
+  setWasmDirs: vi.fn(),
 }));
+// 仓库地图 wasm 资源核对与本用例无关（框架与 node:fs 均为替身）：直接给就绪目录
+vi.mock("./repomap-vendor", () => ({ repoMapVendorDirs: () => ({ runtime: "/vendor/web-tree-sitter", grammar: "/vendor/tree-sitter-wasms/out" }) }));
 vi.mock("./projects", () => ({
   DEFAULT_PROJECT: { id: "default" },
   getActiveProject: () => fixture.active,

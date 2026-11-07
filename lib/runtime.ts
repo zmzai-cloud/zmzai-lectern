@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   createAgentRuntime,
   SubagentCoordinator,
+  setWasmDirs,
   createSubagentAdmission,
   createAttachmentTools,
   createSqliteSessionStore,
@@ -40,6 +41,7 @@ import { recallSection } from "./memory/service.js";
 import { createMemorySearchTool } from "./memory/search-tool.js";
 import { createComputerUseTool } from "./computer-use-tool.js";
 import { createBrowserVerifyTool } from "./browser-verify-tool.js";
+import { repoMapVendorDirs } from "./repomap-vendor.js";
 import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
 import { startMemoryOutboxWorker } from "./memory/outbox.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
@@ -173,6 +175,16 @@ export function terminalManager(): TerminalManager {
   process.once("exit", () => mgr.disposeAll());
   globalThis.__lecternTerminalManager = mgr;
   return mgr;
+}
+
+/** 仓库地图 wasm 资源就绪（进程内只核对一次并写入框架的进程级 wasm 目录）。 */
+let repoMapState: boolean | undefined;
+function repoMapReady(): boolean {
+  if (repoMapState !== undefined) return repoMapState;
+  const dirs = repoMapVendorDirs();
+  if (dirs) setWasmDirs(dirs);
+  repoMapState = !!dirs;
+  return repoMapState;
 }
 
 /** 当前项目的工作区路径（routes 统一从这里取，避免误用旧常量）。 */
@@ -357,7 +369,9 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     // 快照与产物回写固定到本 runtime 的工作区，不跟随 UI 项目切换。
     sandbox: { kind: "subprocess", workspaceRoot: wsRoot },
     localTools,
-    capabilities: { repoMap: { workspaceRoot: wsRoot }, subagents: 1 },
+    // repo_map 只在 wasm 资源核对存在时开启（目录写入框架进程级全局，面板与工具
+    // 共用）；找不到就关闭能力——加载失败会让 emscripten 结束整个进程
+    capabilities: { repoMap: repoMapReady() ? { workspaceRoot: wsRoot } : false, subagents: 1 },
       // T02（production-chain-closure）：子代理唯一创建入口——子会话创建走框架
       // 统一 ChildSessionFactory（默认实现：父身份从 store 解析、父权限 stamp、
       // preset/父模型继承、writePaths 圈禁、确定性子 id + creationRequestId 幂等），

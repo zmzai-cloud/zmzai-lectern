@@ -1,5 +1,8 @@
+import { createRequire } from "node:module";
 import { beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+// 读面服务传递依赖 session-owner（node:sqlite）；vitest 需显式透传内建模块
+vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
 const mocks = vi.hoisted(() => ({ get: vi.fn(), mark: vi.fn(), runtime: vi.fn() }));
 vi.mock("@/lib/runtime", () => ({ sessionRuntime: mocks.runtime }));
 import { GET, PUT } from "../app/api/sessions/[id]/read-state/route.js";
@@ -13,7 +16,7 @@ beforeEach(() => {
   mocks.get.mockResolvedValue(state); mocks.mark.mockResolvedValue(state);
 });
 it("reads and writes through the owning session store", async () => {
-  expect(await (await GET(new NextRequest("http://localhost"), ctx)).json()).toEqual(state);
+  expect(await (await GET(new NextRequest("http://localhost/api/sessions/a/read-state"), ctx)).json()).toEqual(state);
   expect(await (await PUT(request({ lastReadMessageSeq: 2, historyRevision: 1 }), ctx)).json()).toEqual(state);
   expect(mocks.runtime).toHaveBeenCalledWith("a");
   expect(mocks.mark).toHaveBeenCalledWith("a", 2, 1);

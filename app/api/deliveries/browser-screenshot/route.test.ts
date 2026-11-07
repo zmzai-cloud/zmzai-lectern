@@ -6,7 +6,8 @@ import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 vi.mock("node:sqlite", () => createRequire(import.meta.url)("node:sqlite"));
 const rtFixture = vi.hoisted(() => ({ dir: "" }));
-vi.mock("@/lib/runtime-constants", () => ({ get dataDir() { return rtFixture.dir; } }));
+// 只覆盖 dataDir；其余常量（网关依赖的 projects 需要 defaultWorkspaceRoot）用真实值
+vi.mock("@/lib/runtime-constants", async (importOriginal) => ({ ...(await importOriginal<object>()), get dataDir() { return rtFixture.dir; } }));
 // withWorkflowErrors/rethrowWorkflowError 是直通包装（workflow-error.test 钉过），route 直接 import
 const { GET } = await import("./route.js");
 

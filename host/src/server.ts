@@ -76,8 +76,65 @@ export type HostServerOptions = {
     search?(sessionId: string, query: string, limit: number): Promise<unknown>;
     readState?(sessionId: string): Promise<unknown>;
     usage?(sessionId: string): Promise<unknown>;
+    /** P0 2026-11-07（route-ownership-matrix）：Request/Response 直通服务族。
+     *  服务自解析 URL 路径参数与 body；Host 只做鉴权、透传与错误兜底。 */
+    sessionMutation?(request: Request): Promise<Response>;
+    fs?(request: Request): Promise<Response>;
+    git?(request: Request): Promise<Response>;
+    deliveryOverview?(request: Request): Promise<Response>;
+    deliveryAttempt?(request: Request): Promise<Response>;
+    browserScreenshot?(request: Request): Promise<Response>;
+    preview?(request: Request): Promise<Response>;
+    plugins?(request: Request): Promise<Response>;
+    repomap?(request: Request): Promise<Response>;
+    skills?(request: Request): Promise<Response>;
+    /** 会话读面（messages/search/usage/read-state）：与 Next 壳同一服务、同一 UI 契约。
+     *  提供时优先于上方按方法拆分的旧读面（旧读面按早期冒烟形状实现，仅保留给
+     *  fixture 拓扑）。 */
+    sessionRead?(request: Request): Promise<Response>;
+    /** 会话事件流（SSE）：按会话持久归属取事件日志；未提供时回落 fixture 日志。 */
+    sessionEvents?(request: Request): Promise<Response>;
+    sessionGlobalSearch?(request: Request): Promise<Response>;
+    /** 优雅收尾：中止本进程内 running 会话 + checkpoint（run 在 Host 执行）。 */
+    gracefulShutdown?(request: Request): Promise<Response>;
   };
 };
+
+type ServiceFace = "sessionMutation" | "fs" | "git" | "deliveryOverview" | "deliveryAttempt" | "browserScreenshot" | "preview" | "plugins" | "repomap" | "skills" | "sessionRead" | "sessionGlobalSearch" | "gracefulShutdown";
+
+/** 直通服务路由表（P0 2026-11-07）：method + 路径 → realRuntime 上的服务。
+ *  缺实现时继续向下匹配（旧读面/fixture 拓扑），最终未知路径 404。 */
+const SERVICE_ROUTES: { methods: string[]; pattern: RegExp; face: ServiceFace }[] = [
+  { methods: ["PATCH", "DELETE"], pattern: /^\/v1\/sessions\/[^/]+$/, face: "sessionMutation" },
+  { methods: ["GET"], pattern: /^\/v1\/sessions\/[^/]+\/(?:messages|search|usage|read-state)$/, face: "sessionRead" },
+  { methods: ["PUT"], pattern: /^\/v1\/sessions\/[^/]+\/read-state$/, face: "sessionRead" },
+  { methods: ["GET"], pattern: /^\/v1\/session-search$/, face: "sessionGlobalSearch" },
+  { methods: ["POST"], pattern: /^\/v1\/graceful-shutdown$/, face: "gracefulShutdown" },
+  { methods: ["GET", "PUT"], pattern: /^\/v1\/fs\/(?:file|search|tree)$/, face: "fs" },
+  { methods: ["GET", "POST", "PUT"], pattern: /^\/v1\/git\/(?:checkpoint|diff)$/, face: "git" },
+  { methods: ["GET"], pattern: /^\/v1\/delivery-overview$/, face: "deliveryOverview" },
+  { methods: ["POST"], pattern: /^\/v1\/delivery-attempt$/, face: "deliveryAttempt" },
+  { methods: ["GET"], pattern: /^\/v1\/browser-screenshot$/, face: "browserScreenshot" },
+  { methods: ["GET"], pattern: /^\/v1\/preview\/[^/]+(?:\/.*)?$/, face: "preview" },
+  { methods: ["GET", "POST"], pattern: /^\/v1\/plugins$/, face: "plugins" },
+  { methods: ["GET"], pattern: /^\/v1\/repomap$/, face: "repomap" },
+  { methods: ["GET"], pattern: /^\/v1\/skills$/, face: "skills" },
+];
+
+/** 直通响应回写的头白名单：内容类型、缓存与安全头随字节流到达（预览/截图是二进制）。 */
+const SERVICE_RESPONSE_HEADERS = ["content-type", "cache-control", "content-disposition", "x-content-type-options", "access-control-allow-origin", "cross-origin-resource-policy", "content-security-policy"];
+
+async function readRawBody(req: IncomingMessageLike): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    size += buf.length;
+    if (size > 1_000_000) throw new Error("BODY_TOO_LARGE");
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 async function readJsonBody(req: IncomingMessageLike): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
@@ -194,6 +251,31 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
         }));
         res.writeHead(response.status, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(await response.text());
+        return;
+      }
+      // P0 2026-11-07：Request/Response 直通服务族（fs/git/delivery/preview/
+      // plugins/repomap/skills/会话改删）。服务自解析路径与 body；Host 只透传。
+      const serviceHit = SERVICE_ROUTES.find((entry) => entry.methods.includes(req.method ?? "") && entry.pattern.test(url.pathname));
+      const serviceImpl = serviceHit ? options.realRuntime?.[serviceHit.face] as ((request: Request) => Promise<Response>) | undefined : undefined;
+      if (serviceImpl) {
+        try {
+          let body: string | undefined;
+          if (req.method !== "GET" && req.method !== "HEAD") body = await readRawBody(req);
+          const response = await serviceImpl(new Request(url, {
+            method: req.method,
+            ...(body ? { headers: { "content-type": "application/json" }, body } : {}),
+          }));
+          const headers: Record<string, string> = {};
+          for (const name of SERVICE_RESPONSE_HEADERS) {
+            const value = response.headers.get(name);
+            if (value) headers[name] = value;
+          }
+          if (!headers["content-type"]) headers["content-type"] = "application/json; charset=utf-8";
+          res.writeHead(response.status, headers);
+          res.end(Buffer.from(await response.arrayBuffer()));
+        } catch (error) {
+          send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+        }
         return;
       }
       if (req.method === "GET" && url.pathname === "/health") {
@@ -458,6 +540,10 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             send(res, 400, { error: "INVALID_INPUT", message: "sessionId 与 messageId 必填" });
             return;
           }
+          // 回溯会重发 prompt：与 prompt 命令同样登记凭据引用（Host 重启后首个
+          // 动作是 rewind 时，模型装配也能取到用户凭据）
+          const credentialHeader = req.headers["x-lectern-credential"];
+          if (typeof credentialHeader === "string" && credentialHeader) credentialRefs.set(sessionId, credentialHeader);
           const rewindImpl = options.realRuntime?.rewind;
           if (!rewindImpl) {
             send(res, 404, { error: "NOT_FOUND", message: "后端未提供 rewind" });
@@ -621,6 +707,45 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             send(res, 400, { error: "INVALID_INPUT", message: "sessionId 必填" });
             return;
           }
+          // P0 2026-11-07：按会话持久归属取事件日志（旧实现读 fixture runtime 的
+          // 日志——真实会话 armed 下会订阅到空日志）。fixture 拓扑无此面时走下方旧路径。
+          if (options.realRuntime?.sessionEvents) {
+            // res 的 close = 客户端断开（响应在流结束前不会 end）→ 中止订阅循环
+            const abort = new AbortController();
+            res.on("close", () => abort.abort());
+            let response: Response;
+            try {
+              response = await options.realRuntime.sessionEvents(new Request(url, { signal: abort.signal }));
+            } catch (error) {
+              send(res, 500, { error: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+              return;
+            }
+            if (response.status !== 200 || !response.body) {
+              // 归属错误（404/409/422/503）与水位失效（409）按服务的结构化契约回写
+              const text = await response.text();
+              res.writeHead(response.status, { "content-type": response.headers.get("content-type") ?? "application/json; charset=utf-8" });
+              res.end(text);
+              return;
+            }
+            res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
+            // 立即发出响应头：Node 默认等首个 body 字节才发头，空闲会话要等 15s 心跳，
+            // 客户端（经网关的 EventSource）连接会被挂起到那时
+            res.flushHeaders();
+            const reader = response.body.getReader();
+            try {
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(value);
+              }
+            } catch {
+              /* 客户端断开：结束流 */
+            } finally {
+              abort.abort();
+            }
+            res.end();
+            return;
+          }
           const sinceRaw = Number(url.searchParams.get("since") ?? "0");
           const sinceSeq = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0;
           // A08：水位失效（since 超过最新 seq，如 rewind 后游标前跳）显式 409，
@@ -631,6 +756,7 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             return;
           }
           res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
+          res.flushHeaders();
           const abort = new AbortController();
           req.on("close", () => abort.abort());
           const heartbeat = setInterval(() => {

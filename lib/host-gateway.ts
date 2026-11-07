@@ -47,6 +47,34 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   { method: "POST", captureProject: true, withCredential: true, pattern: /^\/api\/sessions$/, hostPath: () => "/v1/session-create", rewriteBody: (_g, body) => body },
   { method: "POST", stream: true, pattern: /^\/api\/deliveries\/browser-qa$/, hostPath: () => "/v1/browser-qa", rewriteBody: (_g, body) => body, withCredential: true },
   { method: "POST", pattern: /^\/api\/deliveries\/computer-use$/, hostPath: () => "/v1/computer-use", rewriteBody: (_g, body) => body },
+  // P0 2026-11-07（route-ownership-matrix）：剩余执行/读写面 Host 化。
+  // 会话改删：归属由 Host 服务按会话持久归属解析（不依赖活动项目）
+  { method: "PATCH", pattern: /^\/api\/sessions\/([^/]+)$/, hostPath: (g) => `/v1/sessions/${g[0]}`, rewriteBody: (_g, b) => b },
+  { method: "DELETE", pattern: /^\/api\/sessions\/([^/]+)$/, hostPath: (g) => `/v1/sessions/${g[0]}` },
+  // rewind 接线补缺：Host /v1/commands/rewind 早已实现，此前网关无匹配模式，
+  // armed 下一直回落进程内。回溯会重发 prompt，需凭据通道。
+  { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/rewind$/, hostPath: () => "/v1/commands/rewind", rewriteBody: (g, b) => ({ ...b, sessionId: g[0] }), withCredential: true },
+  // 工作区文件面（根目录按 sessionId 持久归属解析）。无捕获组：groups[0] 会被
+  // 当作不可达响应里的 sessionId，非会话路由不能占用它
+  { method: "GET", pattern: /^\/api\/fs\/file$/, hostPath: () => "/v1/fs/file", passQuery: true },
+  { method: "GET", pattern: /^\/api\/fs\/search$/, hostPath: () => "/v1/fs/search", passQuery: true },
+  { method: "GET", pattern: /^\/api\/fs\/tree$/, hostPath: () => "/v1/fs/tree", passQuery: true },
+  { method: "PUT", pattern: /^\/api\/fs\/file$/, hostPath: () => "/v1/fs/file", rewriteBody: (_g, b) => b },
+  // git 面（检查点/回滚/diff）
+  { method: "GET", pattern: /^\/api\/git\/checkpoint$/, hostPath: () => "/v1/git/checkpoint", passQuery: true },
+  { method: "GET", pattern: /^\/api\/git\/diff$/, hostPath: () => "/v1/git/diff", passQuery: true },
+  { method: "POST", pattern: /^\/api\/git\/checkpoint$/, hostPath: () => "/v1/git/checkpoint", rewriteBody: (_g, b) => b },
+  { method: "PUT", pattern: /^\/api\/git\/checkpoint$/, hostPath: () => "/v1/git/checkpoint", rewriteBody: (_g, b) => b },
+  // 交付概览/动作族、截图证据与成果预览（预览/截图是字节流，网关透传）
+  { method: "GET", pattern: /^\/api\/deliveries$/, hostPath: () => "/v1/delivery-overview", passQuery: true },
+  { method: "POST", pattern: /^\/api\/deliveries\/attempt$/, hostPath: () => "/v1/delivery-attempt", rewriteBody: (_g, b) => b },
+  { method: "GET", pattern: /^\/api\/deliveries\/browser-screenshot$/, hostPath: () => "/v1/browser-screenshot", passQuery: true },
+  { method: "GET", pattern: /^\/api\/preview\/([^/]+)(\/.*)?$/, hostPath: (g) => `/v1/preview/${g[0]}${g[1] ?? ""}`, passQuery: true },
+  // 项目级执行面：活动项目在网关入口固定为 projectId（异步前捕获）
+  { method: "GET", captureProject: true, pattern: /^\/api\/plugins$/, hostPath: () => "/v1/plugins" },
+  { method: "POST", captureProject: true, pattern: /^\/api\/plugins$/, hostPath: () => "/v1/plugins", rewriteBody: (_g, b) => b },
+  { method: "GET", captureProject: true, pattern: /^\/api\/repomap$/, hostPath: () => "/v1/repomap", passQuery: true },
+  { method: "GET", pattern: /^\/api\/skills$/, hostPath: () => "/v1/skills", passQuery: true },
   // GET /api/sessions（T09 回归网关化）：0.10.1 因 Host 单 runtime 读不到多项目
   // 会话被撤下（d416ca4）；T08 起 Host 的 listSessions 全项目聚合 + 显式
   // projectId（未知项目报错），列表回归 Host——running 态在 Host 进程的
@@ -91,7 +119,13 @@ export const GATEWAY_ROUTES: GatewayRoute[] = [
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/permission$/, hostPath: () => "/v1/commands/permission", rewriteBody: (g, b) => ({ ...b, sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/task$/, hostPath: () => "/v1/commands/task", rewriteBody: (g, b) => ({ action: b.action, sessionId: g[0] }) },
   { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/compact$/, hostPath: () => "/v1/commands/compact", rewriteBody: (g) => ({ sessionId: g[0] }) },
-  { method: "POST", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: () => "/v1/commands/read-state", rewriteBody: (g, b) => ({ messageSeq: b.messageSeq, revision: b.revision, sessionId: g[0] }) },
+  // 已读写入：UI 用 PUT {lastReadMessageSeq, historyRevision}（旧条目是 POST
+  // {messageSeq, revision}，方法与字段都对不上，从未命中）。经会话读面服务执行
+  { method: "PUT", pattern: /^\/api\/sessions\/([^/]+)\/read-state$/, hostPath: (g) => `/v1/sessions/${g[0]}/read-state`, rewriteBody: (_g, b) => b },
+  // 跨项目会话全文搜索（P0 2026-11-07）
+  { method: "GET", pattern: /^\/api\/sessions\/search$/, hostPath: () => "/v1/session-search", passQuery: true },
+  // 优雅收尾在 run 所在进程执行：armed 下 run 在 Host（P0 2026-11-07）
+  { method: "POST", pattern: /^\/api\/shutdown\/graceful$/, hostPath: () => "/v1/graceful-shutdown" },
   // B4：附件（下载字节流直通；Next 的 ?raw=1 转为 Host /raw 路径）
   { method: "GET", pattern: /^\/api\/sessions\/([^/]+)\/attachments\/([^/]+)$/, hostUrl: (g, url) => {
       const raw = url.searchParams.get("raw") === "1";
@@ -228,7 +262,7 @@ export async function hostGateway(request: Request): Promise<Response | null> {
   const headers = new Headers({ "content-type": res.headers.get("content-type") ?? "application/json; charset=utf-8" });
   // 透传白名单：缓存策略 + 附件安全头（spec §13：nosniff/sandbox/私有缓存
   // 必须随字节流一起到达浏览器，网关不得剥掉）
-  for (const name of ["cache-control", "content-disposition", "x-content-type-options", "cross-origin-resource-policy", "content-security-policy", "content-length"]) {
+  for (const name of ["cache-control", "content-disposition", "x-content-type-options", "cross-origin-resource-policy", "content-security-policy", "content-length", "access-control-allow-origin"]) {
     const value = res.headers.get(name);
     if (value) headers.set(name, value);
   }

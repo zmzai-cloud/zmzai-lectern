@@ -38,16 +38,30 @@ const MIGRATED = [
   "app/api/terminal/[id]/read/route.ts",
   "app/api/terminal/read-all/route.ts",
   "app/api/mcp/route.ts",
+  // P0 2026-11-07：服务化迁移（壳 = 网关 ?? 同一 lib 服务；app 层零 runtime 有状态 import，无豁免）
+  "app/api/sessions/[id]/route.ts",
+  "app/api/sessions/search/route.ts",
+  "app/api/fs/file/route.ts",
+  "app/api/fs/search/route.ts",
+  "app/api/fs/tree/route.ts",
+  "app/api/git/checkpoint/route.ts",
+  "app/api/git/diff/route.ts",
+  "app/api/deliveries/route.ts",
+  "app/api/deliveries/attempt/route.ts",
+  "app/api/deliveries/browser-screenshot/route.ts",
+  "app/api/deliveries/browser-qa/route.ts",
+  "app/api/deliveries/computer-use/route.ts",
+  "app/api/preview/[sessionId]/[...filePath]/route.ts",
+  "app/api/plugins/route.ts",
+  "app/api/repomap/route.ts",
+  "app/api/skills/route.ts",
+  "app/api/shutdown/graceful/route.ts",
 ];
 
 // 切换过渡豁免：S16 生产切换验收后清零（清零后删本表条目，门禁即收紧）
 const EXEMPT = new Set([
+  // P0 2026-11-07 清零：sessions/[id]/{messages,events,search,read-state,usage} 已服务化，壳无 runtime import
   "app/api/sessions/route.ts", // 旧列表投影（flag off 回滚路径）
-  "app/api/sessions/[id]/messages/route.ts",
-  "app/api/sessions/[id]/events/route.ts",
-  "app/api/sessions/[id]/search/route.ts",
-  "app/api/sessions/[id]/read-state/route.ts",
-  "app/api/sessions/[id]/usage/route.ts",
   "app/api/sessions/[id]/prompt/route.ts",
   "app/api/sessions/[id]/abort/route.ts",
   "app/api/sessions/[id]/permission/route.ts",

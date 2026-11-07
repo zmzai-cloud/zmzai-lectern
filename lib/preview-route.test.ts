@@ -26,8 +26,9 @@ writeFileSync(path.join(state.root, "dist", "blob.bin"), Buffer.from([1, 2, 3]))
 
 afterAll(() => rmSync(state.root, { recursive: true, force: true }));
 
+// 真实请求形状：路由壳与 Host 共用的服务从 URL 路径解析 sessionId/filePath
 const open = (segments: string[]) =>
-  GET(new Request("http://localhost"), { params: Promise.resolve({ sessionId: "_", filePath: segments }) });
+  GET(new Request(`http://localhost/api/preview/_/${segments.map(encodeURIComponent).join("/")}`), { params: Promise.resolve({ sessionId: "_", filePath: segments }) });
 
 describe("GET /api/preview：交给浏览器渲染的内容类型", () => {
   /**

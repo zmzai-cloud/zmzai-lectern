@@ -55,7 +55,10 @@ try {
   const msgHit = Array.isArray(messages) && messages.some((entry) => entry.info?.id === mid && entry.parts?.some((part) => part.text?.includes("种子文本")));
   const searchHit = Array.isArray(search?.results) ? search.results.length > 0 : search?.hits?.length > 0;
   const readOk = readState.status === 200 || readState.status === 404; // 实现可选
-  const usageHit = usage?.tokens?.input === 12;
+  // P0 2026-11-07：Host 读面与 UI 同契约（{used,contextWindow,input,output,cacheRead,steps}，
+  // 以 step-finish 事件为准；种子消息无 step-finish → steps=0）。旧断言 tokens.input
+  // 对应 Host 早期冒烟形状，与 UI 不符，已随服务化废弃
+  const usageHit = typeof usage?.contextWindow === "number" && usage.contextWindow > 0 && usage?.steps === 0 && usage?.used === 0;
   const rewindOk = rewound.ok === true;
   const truncated = Array.isArray(afterRewind) && afterRewind.every((entry) => entry.info?.id !== mid);
   const ok = health.ok !== false
@@ -69,7 +72,7 @@ try {
     && gone.status === 404
     && rewindOk
     && truncated;
-  console.log(`[m2b-real] ${ok ? "PASS" : "FAIL"}：列表/隔离/401=${listed.sessions.some((sn) => sn.id === session.id)}/${other.sessions.every((sn) => sn.id !== session.id)}/${noToken.status}；messages=${msgHit}；search=${String(searchHit)}；read-state=${readState.status}；usage(input=12)=${usageHit}；不存在会话=${gone.status}；rewind=${rewindOk}；截断=${truncated}`);
+  console.log(`[m2b-real] ${ok ? "PASS" : "FAIL"}：列表/隔离/401=${listed.sessions.some((sn) => sn.id === session.id)}/${other.sessions.every((sn) => sn.id !== session.id)}/${noToken.status}；messages=${msgHit}；search=${String(searchHit)}；read-state=${readState.status}；usage(UI 契约)=${usageHit}；不存在会话=${gone.status}；rewind=${rewindOk}；截断=${truncated}`);
   process.exitCode = ok ? 0 : 1;
 } finally {
   try { process.kill(-host.pid, "SIGKILL"); } catch { /* 已退出 */ }

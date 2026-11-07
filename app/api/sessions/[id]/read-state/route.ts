@@ -1,31 +1,15 @@
 import { hostGateway } from "@/lib/host-gateway";
-import { type NextRequest } from "next/server";
-import { sessionRuntime } from "@/lib/runtime";
-import { WorkflowError, withWorkflowErrors } from "@/lib/workflow-error";
+import { handleSessionRead } from "@/lib/session-read-service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-type Context = { params: Promise<{ id: string }> };
 
-export const GET = withWorkflowErrors(async (_request: NextRequest, ctx: Context) => {
-  const { id } = await ctx.params;
-  const store = sessionRuntime(id).store;
-  if (!store.getReadState) throw new WorkflowError("RESOURCE_UNAVAILABLE", "当前会话库不支持已读状态", 503);
-  return Response.json(await store.getReadState(id));
-});
+/** 已读状态：GET 读；PUT 写（lastReadMessageSeq + historyRevision，CAS 冲突 409）。
+ *  armed：网关代理 Host（/v1/sessions/:id/read-state）；legacy：同一服务进程内执行。 */
+export async function GET(request: Request, _context?: unknown) {
+  return (await hostGateway(request)) ?? handleSessionRead(request);
+}
 
-export const PUT = withWorkflowErrors(async (request: NextRequest, ctx: Context) => {
-  const gateway = await hostGateway(request as unknown as Request);
-  if (gateway) return gateway;
-  const { id } = await ctx.params;
-  const store = sessionRuntime(id).store;
-  const body = await request.json().catch(() => null);
-  if (!Number.isSafeInteger(body?.lastReadMessageSeq) || body.lastReadMessageSeq < 0 || !Number.isSafeInteger(body?.historyRevision) || body.historyRevision < 1) throw new WorkflowError("INVALID_INPUT", "已读序号和历史版本无效", 422);
-  if (!store.markRead) throw new WorkflowError("RESOURCE_UNAVAILABLE", "当前会话库不支持已读状态", 503);
-  try { return Response.json(await store.markRead(id, body.lastReadMessageSeq, body.historyRevision)); }
-  catch (error) {
-    if (error instanceof Error && error.message === "HISTORY_REVISION_CONFLICT") throw new WorkflowError("CONFLICT", "历史已回溯，请重新加载", 409, true);
-    if (error instanceof Error && error.message === "INVALID_READ_SEQUENCE") throw new WorkflowError("INVALID_INPUT", "已读序号超过最新消息", 422);
-    throw error;
-  }
-});
+export async function PUT(request: Request, _context?: unknown) {
+  return (await hostGateway(request)) ?? handleSessionRead(request);
+}

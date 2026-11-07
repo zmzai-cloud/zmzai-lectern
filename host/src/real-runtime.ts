@@ -34,6 +34,67 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
     const { handleComputerUse } = await import("../../lib/computer-use-service.js");
     return handleComputerUse(request);
   },
+  // P0 2026-11-07（route-ownership-matrix）：直通服务族——与 Next legacy 壳
+  // 共用同一服务模块，归属在服务内按 sessionId / 网关固定的 projectId 解析
+  sessionMutation: async (request) => {
+    const { handleSessionMutation } = await import("../../lib/session-mutation-service.js");
+    return handleSessionMutation(request);
+  },
+  fs: async (request) => {
+    const { handleFsRequest } = await import("../../lib/fs-service.js");
+    return handleFsRequest(request);
+  },
+  git: async (request) => {
+    const { handleGitRequest } = await import("../../lib/git-service.js");
+    return handleGitRequest(request);
+  },
+  deliveryOverview: async (request) => {
+    const { handleDeliveryOverview } = await import("../../lib/delivery-service.js");
+    return handleDeliveryOverview(request);
+  },
+  deliveryAttempt: async (request) => {
+    const { handleDeliveryAttempt } = await import("../../lib/delivery-service.js");
+    return handleDeliveryAttempt(request);
+  },
+  browserScreenshot: async (request) => {
+    const { handleBrowserScreenshot } = await import("../../lib/browser-screenshot-service.js");
+    return handleBrowserScreenshot(request);
+  },
+  preview: async (request) => {
+    const { handlePreview } = await import("../../lib/preview-service.js");
+    return handlePreview(request);
+  },
+  plugins: async (request) => {
+    const { handlePlugins } = await import("../../lib/plugins-service.js");
+    return handlePlugins(request);
+  },
+  repomap: async (request) => {
+    const { handleRepomap } = await import("../../lib/repomap-service.js");
+    return handleRepomap(request);
+  },
+  skills: async (request) => {
+    const { handleSkills } = await import("../../lib/skills-service.js");
+    return handleSkills(request);
+  },
+  // 会话读面/事件流/全局搜索：与 Next 壳同一服务、同一 UI 契约（旧读面按早期冒烟
+  // 形状实现，形状与 UI 不符；events 旧实现读 fixture 日志）
+  sessionRead: async (request) => {
+    const { handleSessionRead } = await import("../../lib/session-read-service.js");
+    return handleSessionRead(request);
+  },
+  sessionEvents: async (request) => {
+    const { handleSessionEvents } = await import("../../lib/session-events-service.js");
+    return handleSessionEvents(request);
+  },
+  sessionGlobalSearch: async (request) => {
+    const { handleSessionGlobalSearch } = await import("../../lib/session-search-service.js");
+    return handleSessionGlobalSearch(request);
+  },
+  // 优雅收尾在 run 所在进程执行（armed 下即 Host）
+  gracefulShutdown: async (request) => {
+    const { handleGracefulShutdown } = await import("../../lib/shutdown-service.js");
+    return handleGracefulShutdown(request);
+  },
   // T07（PC10）：命令回执查询——只读 findPrompt，found=true 即已登记
   commandReceipt: async (sessionId: string, requestId: string) => {
     const prior = await storeOf(sessionId).workflow?.findPrompt(sessionId, requestId).catch(() => null);

@@ -107,6 +107,10 @@ async function runStep(ctx, step, serviceOrigin) {
       await wc.loadURL(url);
       return { status: "passed", detail: url, consoleErrors: ctx.consoleErrors };
     }
+    // 页面从未加载（前一步导航失败停在 about:blank）：隐藏窗口的渲染进程尚未就绪，
+    // executeJavaScript 会一直挂起到通道超时——直接如实失败
+    const current = wc.getURL();
+    if (!current || current === "about:blank") return { status: "failed", detail: "页面未加载：请先 goto 被测页面", consoleErrors: ctx.consoleErrors };
     const raw = await wc.executeJavaScript(domScript(step), true);
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     return {

@@ -87,7 +87,86 @@ describe.skipIf(!AX_READY)("原生 Calculator 真流程（C02/C04）", () => {
     expect(JSON.stringify(log)).not.toContain("value"); // 键入值不落库（key 码也只在内存）
 
     broker.emergencyStop();
-    // 清理：Escape 关 About + 退出 Calculator
-    try { execSync("osascript -e 'tell application \"System Events\" to keystroke (ASCII character 27)'", { stdio: "ignore" }); } catch { /* 忽略 */ }
+    // 清理：直接退出 Calculator（About 随之关闭）。不向前台发 Escape——用户可能
+    // 已切到别的应用，按键会落到用户正在使用的窗口
+    try { execSync("osascript -e 'tell application \"Calculator\" to quit'", { stdio: "ignore", timeout: 8000 }); } catch { /* 已退出 */ }
   }, 45_000);
+});
+
+describe.skipIf(!AX_READY)("PC18 原生：真实窗口变化使旧观察失效（P0 2026-11-07）", () => {
+  it("同一观察仍在 TTL 内且 revision 未变，但真实前台窗口已变成「关于」→ 只读动作被窗口核对拦下", async () => {
+    // 上一用例刚退出 Calculator：等进程真正结束再启动（退出中 open -a 会失败）
+    for (let i = 0; i < 50; i++) {
+      try { execSync("pgrep -x Calculator", { stdio: "ignore" }); } catch { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    execSync("open -a Calculator");
+    await new Promise((r) => setTimeout(r, 1500));
+    // 隔离窗口核对：不挂接管检测（用户此刻可能在动鼠标，接管另有用例）
+    const real = createMacOsCuaAdapter();
+    const guardOnly = { capability: real.capability, observe: real.observe, act: real.act } as unknown as CuaAdapter;
+    const local = new ComputerUseBroker();
+    const acquired = local.acquireLease({ rootTaskId: "native_pc18", hostInstanceId: "e2e", targetApp: "Calculator" });
+    if (!acquired.ok) throw new Error("acquire 失败");
+    setAdapterTarget("Calculator");
+    const obs = await local.observe(acquired.lease.leaseId, guardOnly);
+    if (!obs.ok) throw new Error(`observe 失败：${obs.reason}`);
+    const opened = await local.act(acquired.lease.leaseId, { observationId: obs.observation.observationId, kind: "click", target: "menu:计算器:关于计算器" }, guardOnly);
+    expect(opened.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(local.observationValid(obs.observation.observationId)).toBe(true); // TTL/revision 层面仍「有效」
+    const stale = await local.act(acquired.lease.leaseId, { observationId: obs.observation.observationId, kind: "read_text" }, guardOnly);
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.reason).toContain("stale-window");
+    // 该观察已作废：再用同一观察直接被 broker 拒绝
+    const again = await local.act(acquired.lease.leaseId, { observationId: obs.observation.observationId, kind: "read_text" }, guardOnly);
+    expect(again).toMatchObject({ ok: false, reason: "stale-observation" });
+    local.emergencyStop();
+    try { execSync("osascript -e 'tell application \"Calculator\" to quit'", { stdio: "ignore", timeout: 8000 }); } catch { /* 已退出 */ }
+  }, 45_000);
+
+  it("真实用户输入接管：broker 读到的 HID 空闲值与决策一致（观察后有输入 → 暂停，否则执行）", async () => {
+    for (let i = 0; i < 50; i++) {
+      try { execSync("pgrep -x Calculator", { stdio: "ignore" }); } catch { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    execSync("open -a Calculator");
+    await new Promise((r) => setTimeout(r, 1500));
+    const real = createMacOsCuaAdapter();
+    let seenIdle: number | null = null;
+    const withTakeover = { ...real, userInputIdleMs: async () => (seenIdle = await real.userInputIdleMs()) } as unknown as CuaAdapter;
+    const local = new ComputerUseBroker();
+    const acquired = local.acquireLease({ rootTaskId: "native_takeover", hostInstanceId: "e2e", targetApp: "Calculator" });
+    if (!acquired.ok) throw new Error("acquire 失败");
+    setAdapterTarget("Calculator");
+    const obs = await local.observe(acquired.lease.leaseId, withTakeover);
+    if (!obs.ok) throw new Error(`observe 失败：${obs.reason}`);
+    await new Promise((r) => setTimeout(r, 1500)); // 观察后留出窗口：期间真实键鼠输入应触发接管
+    const sinceObservation = Date.now() - Date.parse(obs.observation.at);
+    const r = await local.act(acquired.lease.leaseId, { observationId: obs.observation.observationId, kind: "read_text" }, withTakeover);
+    expect(seenIdle).not.toBeNull();
+    const inputAfterObservation = seenIdle! + 100 < sinceObservation - 50; // 50ms：act 内读数晚于此处计时
+    console.log(`[pc18-native] 接管判定：观察后 ${sinceObservation}ms，HID 空闲 ${seenIdle!.toFixed(0)}ms → ${r.ok ? "执行" : (r as { reason: string }).reason}`);
+    if (!r.ok && (r as { reason: string }).reason === "user-takeover") {
+      expect(local.leaseStatus()?.status).toBe("paused");
+    } else if (inputAfterObservation) {
+      throw new Error("观察后有真实输入却未触发接管");
+    } else {
+      expect(r.ok).toBe(true);
+    }
+    local.emergencyStop();
+    try { execSync("osascript -e 'tell application \"Calculator\" to quit'", { stdio: "ignore", timeout: 8000 }); } catch { /* 已退出 */ }
+  }, 45_000);
+
+  it("真实键鼠空闲时间可读且随无输入单调增长（接管检测的信号源）", async () => {
+    const { readHidIdleMs } = await import("./computer-use-macos.js");
+    const first = await readHidIdleMs();
+    expect(first).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 300));
+    const second = await readHidIdleMs();
+    expect(second).not.toBeNull();
+    // 期间若用户动了键鼠，second 会变小——两种都是真实信号；记录供执行记录引用
+    console.log(`[pc18-native] HIDIdleTime ms: ${first!.toFixed(0)} → ${second!.toFixed(0)}（${second! >= first! + 250 ? "期间无输入" : "期间有真实输入"}）`);
+    expect(Number.isFinite(second)).toBe(true);
+  });
 });

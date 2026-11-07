@@ -155,3 +155,61 @@ Calculator（原用例向前台发 Escape，可能落到用户正在用的窗口
 - 受阻：本机无可复用模型凭据（已安装 Lectern 的 settings.json 仅有 memoryInstallNonce，
   无个人 key；环境变量未设；登录 cookie 在 Chromium 加密库中，不读取）。需用户提供。
 - 项目记忆类：无授权测试 bank，按规格不向真实记忆库写测试数据，记 blocked。
+
+## 收尾：最终构建与复验（提交 3a2d7e1）
+
+- 新发现并修复：Host 启动只回收已过期租约（10 分钟），强杀重启后会话最长约 10 分钟仍
+  显示「执行中」。`host/src/lease-takeover.ts` 在持锁后、预热前把已死前任（`node:<pid>`
+  且 pid 不存活）的未过期租约标为过期，交给框架官方扫描收尾；存活/非本机格式保守跳过。
+  回归：`host/src/lease-takeover.test.ts`（真实 SQLite store/event log）。
+- 最终生产构建：`NODE_OPTIONS=--max-old-space-size=6144 pnpm build` 退出 0，real 391s；
+  `pnpm host:build` 通过；`check-standalone-clean` 退出 0。
+- `node scripts/native/armed-e2e.mjs`（最终产物）：**28/28**。新增强杀重启阶段：运行中
+  SIGKILL Host（running=true）→ Next 未重启 216ms 接上新 Host（读新握手）→ 遗留运行 1424ms
+  收尾（中断事件 + running=false）。结果 JSON：test-results/p0-release/armed-e2e.json（本地，未入库）。
+- 全量：typecheck 0；arch 迁移 37 / 豁免 16 / 违规 0；`pnpm test` 79 文件 717 通过 5 跳过
+  （原生门控）；test:release 111；`git diff --check` 通过。
+
+## 验收总表（本轮口径）
+
+| 项 | 状态 | 依据 |
+| --- | --- | --- |
+| 上批合入 main | 已验证 | c4febfb，合并前分支全量复跑 |
+| Host 迁移：改删/fs/git/delivery/预览/plugins/repomap/skills/搜索/关停 | 已验证 | 生产装配 13 项、网关 27 项、armed 端到端 |
+| 读族归属修正（messages/search/usage/read-state/events） | 已验证 | 同上；live 推送 10–13ms |
+| PC10/PC11（不回落、单 owner、重启） | 已验证（armed 进程级） | 端到端：Host 停止 503 带 requestId；强杀重启 Next 不重启接续 |
+| PC13（组合验证失败不推进目标） | 已验证（管线级） | PC22 dry-run：空改动合并被 verification.json 拦下 |
+| PC15 | 已验证（装配级） | browser-acceptance-p0 |
+| PC16 | 已验证（原生 macOS） | browser-native：真实 Chromium 首败→修复→重验 |
+| PC17 工具接线与越权 | 已验证（装配级） | computer-use-tool；**真实模型调用未验证（缺凭据）** |
+| PC18 串行/窗口变化/接管 | 已验证（原生 macOS） | computer-use-native：窗口核对拦截、真实人工输入触发接管 |
+| PC18/PC19 紧急停止/unknown/重启对账 | 部分 | 模块级（假 adapter + 真 broker/SQLite）；原生中止在飞 osascript 未验证 |
+| PC19 Windows unavailable | 未验证 | 未在 Windows 运行，代码路径返回 unavailable |
+| PC22 六类真实模型 ×3 + 前后对照 | **受阻** | 本机无可复用模型凭据；执行器与 before/after 管线 dry-run 已就绪 |
+| P0-BLOCK-INPUT 严格格式复测 | **受阻** | 同上（并入 PC22 执行器，可直接复跑） |
+| PC23 发行物一致 | 部分 | 生产构建 + 打包 Host bundle 端到端通过；DMG/实体化依赖/asar/安装后启动未执行 |
+
+## PC22 解阻后的执行命令
+
+```sh
+# 凭据只经环境变量进入执行器进程（不落盘、不入结果）
+LECTERN_EVAL_COOKIE="muzhi_session=…" node evals/harness/pc22-host-runner.mjs --samples 3
+# 前后对照（before = 本轮开始时 main c4febfb；先在临时 worktree 构建其 Host bundle）
+git worktree add --detach /tmp/lectern-before-c4febfb c4febfb && ln -s "$PWD/node_modules" /tmp/lectern-before-c4febfb/node_modules
+(cd /tmp/lectern-before-c4febfb && node scripts/build-host.mjs)
+LECTERN_EVAL_COOKIE="…" node evals/harness/pc22-host-runner.mjs --samples 3 --label before --host-bundle /tmp/lectern-before-c4febfb/host/dist/host/src/index.js
+```
+
+## 剩余缺口（未在本轮关闭）
+
+- PC22 全部真实模型运行与失败归因（受阻：凭据）；项目记忆类另需授权测试 bank。
+- 真实模型调用 computer_use / browser_verify 的证据（随 PC22）。
+- multipart 附件上传仍在 Next 进程内；failover 日志 armed 下读 Next 空表（观测缺口）。
+- 16 条命令/终端族 legacy 豁免待按服务化模式清零（S16）。
+- 安装包（DMG）构建与安装后启动验收；Windows 全部平台项。
+- 框架侧 `resolveFrameworkVendorDirs` 的嵌套路径假设应在 framework 修正（本轮在 Lectern 侧绕开）。
+
+## 本轮提交（feat/p0-build-closure，均已本地合入 main）
+
+e685612 Host 迁移与读族修正 · 21a89db CUA · aa74dc3 浏览器 · b3d481b 记录 · 5e9a533 wasm/SSE/端到端 ·
+373dc40 PC22 执行器 · d0141eb 记录 · 3a2d7e1 租约接管

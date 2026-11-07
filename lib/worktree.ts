@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { dataDir } from "./runtime-constants.js";
 import { WorkflowError } from "./workflow-error.js";
 import { workspaceRecordForSession } from "./workspace-service.js";
+import { runtimeWorkspacePath } from "./runtime-workspace-path.js";
 
 /**
  * 会话级 git worktree 隔离（robustness-plan §9）：
@@ -117,7 +118,7 @@ export async function createWorktree(sessionId: string, projectPath: string): Pr
   const root = resolve(projectPath);
   if (!isGitRepo(root)) return { ok: false, reason: "not-a-git-repo" };
 
-  const wtPath = resolve(root, WORKTREE_DIR, sessionId);
+  const wtPath = runtimeWorkspacePath(root, WORKTREE_DIR, sessionId);
   const branch = `${BRANCH_PREFIX}${sessionId}`;
 
   // 幂等：已登记且目录在 → 直接复用

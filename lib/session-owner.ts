@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { dataDirFor, registeredProjects, type Project } from "./projects.js";
 import { worktreeForSession } from "./worktree.js";
 import { WorkflowError } from "./workflow-error.js";
+import { runtimeWorkspacePath } from "./runtime-workspace-path.js";
 
 export type SessionOwner = {
   project: Project;
@@ -50,7 +51,7 @@ export function resolveSessionOwner(sessionId: string): SessionOwner {
     }
     assertWorkspaceAvailable(worktree.path);
     // A replaced symlink must not redirect an isolated task into another root.
-    if (realpathSync(worktree.path) !== join(realpathSync(owner.path), ".lectern-worktrees", sessionId)) {
+    if (realpathSync(worktree.path) !== runtimeWorkspacePath(realpathSync(owner.path), ".lectern-worktrees", sessionId)) {
       throw new WorkflowError("RECOVERY_REQUIRED", "隔离副本路径已变化，请核对工作区后恢复任务", 409);
     }
   }

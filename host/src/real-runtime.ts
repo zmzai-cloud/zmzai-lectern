@@ -22,6 +22,10 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
     return project.path;
   };
   return {
+  createSession: async (request) => {
+    const { handleSessionCreate } = await import("../../lib/session-create-service.js");
+    return handleSessionCreate(request);
+  },
   browserQa: async (request) => {
     const { handleBrowserQa } = await import("../../lib/browser-qa-service.js");
     return handleBrowserQa(request);

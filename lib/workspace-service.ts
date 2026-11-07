@@ -130,7 +130,7 @@ export async function createWorkspace(opts: CreateOptions): Promise<CreateResult
     workspaceId, projectId: opts.projectId, repoIdentity,
     sessionId: opts.sessionId, rootTaskId: opts.rootTaskId ?? "",
     baseRef: ref, baseCommit, targetRef,
-    path: resolve(root, ".lectern-worktrees", opts.sessionId),
+    path: runtimeWorkspacePath(root, ".lectern-worktrees", opts.sessionId),
     branch: `lectern/wt/${opts.sessionId}`,
     startingState, state: "creating", revision: (prior?.revision ?? 0) + 1,
     times: { createdAt: prior?.times.createdAt ?? new Date().toISOString() },
@@ -754,7 +754,7 @@ export async function integrateWorkspace(
     const targetFull = attempt.targetRef.startsWith("refs/") ? attempt.targetRef : `refs/heads/${attempt.targetRef}`;
     const repoRoot = repoRootOfRecord(current);
     // 受管临时整合 worktree 路径（会话级稳定：上次中断残留下次先清）
-    const tmpPath = resolve(repoRoot, ".lectern-worktrees", `.integration-${current.sessionId}`);
+    const tmpPath = runtimeWorkspacePath(repoRoot, ".lectern-worktrees", `.integration-${current.sessionId}`);
 
     let pending: IntegrationJournalStep[] = [];
     const note = (step: string, ok: boolean, detail?: string) => {
@@ -1064,3 +1064,4 @@ function failAttempt(
   upsertRecord(db, updated);
   return { ok: false, reason: outcome, record: updated };
 }
+import { runtimeWorkspacePath } from "./runtime-workspace-path.js";

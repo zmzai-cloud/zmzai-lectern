@@ -14,6 +14,7 @@ armed 网关命中的路由由 Host 执行（Next 只做形状适配），未迁
 | 路由 | Host 端点 | 归属解析 | 迁移批次 |
 | --- | --- | --- | --- |
 | GET /api/sessions（?all=1 / 缺省 active） | /v1/sessions | 全项目聚合 / active projectId 注入；未知项目 404（T08/T09 回归，撤下原因已修复） | T09 |
+| POST /api/sessions | /v1/session-create | 网关入口固定 projectId；Host 解析项目并创建会话/隔离副本；完整 cookie 原样传递；未知项目 404 | P0 2026-11-04 |
 | GET /api/sessions/:id/messages | /v1/sessions/:id/messages | 会话归属（sessionRuntime） | M2b |
 | GET /api/sessions/:id/search | 同名 | 会话归属 | M2b |
 | GET/POST /api/sessions/:id/read-state | /v1/commands/read-state | 会话归属 | M2b |
@@ -43,8 +44,7 @@ HOST_UNAVAILABLE（带 requestId/结果未知语义），绝不回落进程内�
 
 | 路由族 | 状态 | 说明 |
 | --- | --- | --- |
-| POST /api/sessions（会话创建，含 worktree 隔离创建） | 未迁移 | 创建链含 resolveModel/settings 读与 workspace 创建序列；Host 化需装配侧搬家 |
-| PATCH/DELETE /api/sessions/:id | 未迁移 | 归属已按会话解析（进程内），Host 化随创建批次 |
+| PATCH/DELETE /api/sessions/:id | 未迁移 | 归属已按会话解析（进程内）；创建入口已迁移，此两项仍待后续收口 |
 | /api/fs/*、/api/git/* | 未迁移 | 文件/仓库读写；Host 化需 Host 挂 workspace 文件面 |
 | /api/deliveries/*、/api/preview | 未迁移 | 交付验证（含浏览器 QA）；T13/T14（R1）一并 |
 | /api/skills（执行/加载）、/api/plugins、/api/repomap | 未迁移 | 工具执行类；随 fs 族批次 |

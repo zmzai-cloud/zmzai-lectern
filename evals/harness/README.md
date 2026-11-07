@@ -25,3 +25,8 @@ LECTERN_EVAL_MODEL=<model-id> pnpm eval:coding
 缺连接配置时记录 not_run，不能当作模型失败或验收成功。
 这是安装后的 Framework 消费层基线；未覆盖 Host、浏览器、worktree 合并和记忆。
 生产链路 PC22 的六类任务和竞品对照仍需另跑，不能用此小套件替代。
+
+新增缺信息恢复场景：`LECTERN_EVAL_CASES=P0-BLOCK-INPUT`，仍为三次隔离运行。
+要求模型首先成功调用 task_block 并进入 waiting_input/input，执行器补充合成审批码后，
+必须保持同一 taskId、正确写入 receipt.txt、保持 approvals.json 不变并最终 delivered。
+补充输入属于测试脚本预定交互，不代表全程无需用户提供信息。

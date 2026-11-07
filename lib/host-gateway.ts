@@ -18,6 +18,8 @@ import { getActiveProject } from "./projects.js";
  *  - 路由未命中：返回 null 走进程内（静态非执行路径的合法回落）。 */
 
 export type GatewayRoute = {
+  /** Pin active project at request entry, before asynchronous body parsing. */
+  captureProject?: boolean;
   method: string;
   pattern: RegExp;
   hostPath?: (groups: string[]) => string;
@@ -42,6 +44,7 @@ export type GatewayRoute = {
 };
 
 export const GATEWAY_ROUTES: GatewayRoute[] = [
+  { method: "POST", captureProject: true, withCredential: true, pattern: /^\/api\/sessions$/, hostPath: () => "/v1/session-create", rewriteBody: (_g, body) => body },
   { method: "POST", stream: true, pattern: /^\/api\/deliveries\/browser-qa$/, hostPath: () => "/v1/browser-qa", rewriteBody: (_g, body) => body, withCredential: true },
   { method: "POST", pattern: /^\/api\/deliveries\/computer-use$/, hostPath: () => "/v1/computer-use", rewriteBody: (_g, body) => body },
   // GET /api/sessions（T09 回归网关化）：0.10.1 因 Host 单 runtime 读不到多项目
@@ -153,6 +156,7 @@ export async function hostGateway(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const hit = matchGatewayRoute(request.method, url.pathname);
   if (!hit) return null;
+  const pinnedProjectId = hit.route.captureProject ? getActiveProject().id : undefined;
   const sessionId = hit.groups[0] ?? undefined;
   // 命令类 POST 的原始 requestId：不可达响应必须带回（客户端同键重试的锚点）
   let requestId: string | undefined;
@@ -181,6 +185,7 @@ export async function hostGateway(request: Request): Promise<Response | null> {
     target.search = q.toString();
   }
   const reqHeaders: Record<string, string> = { authorization: `Bearer ${boot.token}` };
+  if (pinnedProjectId) target.searchParams.set("projectId", pinnedProjectId);
   let body: string | undefined;
   if (hit.route.rewriteBody) {
     reqHeaders["content-type"] = "application/json";

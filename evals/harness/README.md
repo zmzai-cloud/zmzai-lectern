@@ -30,3 +30,19 @@ LECTERN_EVAL_MODEL=<model-id> pnpm eval:coding
 要求模型首先成功调用 task_block 并进入 waiting_input/input，执行器补充合成审批码后，
 必须保持同一 taskId、正确写入 receipt.txt、保持 approvals.json 不变并最终 delivered。
 补充输入属于测试脚本预定交互，不代表全程无需用户提供信息。
+
+## PC22 真实产品链路评测（Host 驱动）
+
+```sh
+LECTERN_EVAL_COOKIE="muzhi_session=…" node evals/harness/pc22-host-runner.mjs [--samples 3] [--cases A,B]
+node evals/harness/pc22-host-runner.mjs --dry-run            # 不调模型，只验证管线
+node evals/harness/pc22-host-runner.mjs --label before --host-bundle <旧版 host/dist/host/src/index.js>
+```
+
+驱动**打包 Host 进程**（隔离临时数据目录），走 Lectern 真实 runtime 与全部工具
+（终端、git、子代理、browser_verify、computer_use 等）。六类：跨文件修改、失败测试修复、
+双子代理探索整合、worktree 合并后回归（合并时实跑 `.lectern/verification.json`）、
+浏览器表单验收（模型须调用 browser_verify，执行器另用真实 Chromium 独立复验）、
+项目记忆重复任务（无授权测试 bank 时记 blocked）；另含 P0-BLOCK-INPUT。
+凭据只经内存（`x-lectern-credential` 头），不落盘、不进结果。浏览器类需 Electron 驱动
+（ELECTRON_BIN 或本仓库/主 checkout 的 node_modules/electron）。

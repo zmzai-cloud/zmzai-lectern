@@ -3,7 +3,7 @@ const state = vi.hoisted(() => ({ lease: null as null | { leaseId: string }, act
 vi.mock('./runtime', () => ({ sessionRuntime: () => ({ store: { task: { getActiveTask: async () => ({ id: 'task' }) } } }) }));
 vi.mock('./delivery', () => ({ resolveOwner: () => ({}), getDeliveryForSession: () => null, getActiveAttempt: () => null, recordCommandRun: vi.fn() }));
 vi.mock('./computer-use-macos', () => ({ createMacOsCuaAdapter: () => ({}), setAdapterTarget: vi.fn() }));
-vi.mock('./computer-use', () => ({ listActionsForLease: () => [], ComputerUseBroker: class {
+vi.mock('./computer-use', () => ({ listActionsForLease: () => [], reconcileInterruptedActions: () => ({ reconciled: 0 }), ComputerUseBroker: class {
   acquireLease() { state.lease = { leaseId: 'lease' }; return { ok: true, lease: state.lease }; }
   leaseStatus() { return state.lease; }
   async act() { state.active++; state.max = Math.max(state.max, state.active); await new Promise(r => setTimeout(r, 15)); state.active--; return { ok: true }; }

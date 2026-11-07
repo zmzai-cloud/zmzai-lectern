@@ -76,7 +76,7 @@ describe("ComputerUseBroker 租约与排队（C1-S1 / C03）", () => {
     broker.acquireLease({ rootTaskId: "t2", hostInstanceId: "h", targetApp: "X" });
     broker.acquireLease({ rootTaskId: "t3", hostInstanceId: "h", targetApp: "X" });
     const stopped = broker.emergencyStop();
-    expect(stopped).toEqual({ stopped: true, queuedDropped: 2 });
+    expect(stopped).toEqual({ stopped: true, queuedDropped: 2, inflightAborted: false });
     expect(broker.leaseStatus()?.status).toBe("revoked");
     // 停止后新任务立即可取（队列已清）
     const fresh = broker.acquireLease({ rootTaskId: "t4", hostInstanceId: "h", targetApp: "X" });

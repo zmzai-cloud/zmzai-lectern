@@ -17,15 +17,35 @@ export type CuaPermissionState = {
   available: boolean;
   permissions: { accessibility: boolean; screenRecording: boolean };
   guidance?: string;
+  /** 真实用户输入可识别（HIDIdleTime 可读）。false = 接管能力受限，禁止无人值守控制。 */
+  userTakeover?: boolean;
 };
 
-async function osa(script: string, timeoutMs = 10_000): Promise<{ ok: boolean; out: string; err: string }> {
+/** 中止标记：紧急停止杀掉进行中的 osascript 时由 osa 返回，act 映射为结果未知。 */
+const ABORTED = "LECTERN_ABORTED";
+/** 动作前窗口核对失败标记（AppleScript 内 error 抛出，classifyAppleError 识别）。 */
+const STALE_WINDOW = "LECTERN_STALE_WINDOW";
+
+async function osa(script: string, timeoutMs = 10_000, signal?: AbortSignal): Promise<{ ok: boolean; out: string; err: string }> {
   try {
-    const { stdout, stderr } = await p_execFile("osascript", ["-e", script], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout, stderr } = await p_execFile("osascript", ["-e", script], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, ...(signal ? { signal } : {}) });
     return { ok: true, out: stdout.toString(), err: stderr.toString() };
   } catch (error) {
-    const e = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+    const e = error as { name?: string; code?: string; stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+    if (e.name === "AbortError" || e.code === "ABORT_ERR") return { ok: false, out: "", err: ABORTED };
     return { ok: false, out: e.stdout?.toString() ?? "", err: (e.stderr?.toString() || e.message || "osascript 失败") };
+  }
+}
+
+/** 距最近一次真实键鼠输入的毫秒数（IOHIDSystem HIDIdleTime，纳秒）。不可读 → null。 */
+export async function readHidIdleMs(): Promise<number | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    const { stdout } = await p_execFile("ioreg", ["-c", "IOHIDSystem", "-d", "4"], { timeout: 3000, maxBuffer: 8 * 1024 * 1024 });
+    const m = /"HIDIdleTime"\s*=\s*(\d+)/.exec(stdout.toString());
+    return m ? Number(m[1]) / 1_000_000 : null;
+  } catch {
+    return null;
   }
 }
 
@@ -96,14 +116,17 @@ export function createMacOsCuaAdapter(opts: { screenshotEvidence?: boolean } = {
   /** 实际权限探测（C01：缺失给具体设置引导，不假报）。 */
   const probeCapability = async (): Promise<CuaPermissionState> => {
     if (process.platform !== "darwin") return capability();
-    const [ax, sr] = await Promise.all([probeAccessibility(), probeScreenRecording()]);
+    const [ax, sr, idle] = await Promise.all([probeAccessibility(), probeScreenRecording(), readHidIdleMs()]);
     const missing: string[] = [];
     if (!ax) missing.push("辅助功能（系统设置 → 隐私与安全性 → 辅助功能，勾选运行 Lectern 的应用/终端）");
     if (!sr) missing.push("屏幕录制（系统设置 → 隐私与安全性 → 屏幕录制）");
+    const userTakeover = idle !== null;
+    if (!userTakeover) missing.push("无法读取键鼠空闲时间：用户接管不可识别，已禁止无人值守控制");
     return {
       platform: "darwin",
       available: ax, // AX 是动作的硬前提；截图缺失只影响截图证据
       permissions: { accessibility: ax, screenRecording: sr },
+      userTakeover,
       guidance: missing.length > 0 ? `缺少授权：${missing.join("；")}` : undefined,
     };
   };
@@ -111,6 +134,7 @@ export function createMacOsCuaAdapter(opts: { screenshotEvidence?: boolean } = {
   return {
     capability,
     probeCapability,
+    userInputIdleMs: readHidIdleMs,
 
     /** 观察：目标 app 前台窗口身份 + 少量 AX 摘要（不整树，R-1）。 */
     observe: async (input: { targetApp: string }): Promise<{ ok: boolean; observation?: unknown; reason?: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" }> => {
@@ -156,20 +180,30 @@ export function createMacOsCuaAdapter(opts: { screenshotEvidence?: boolean } = {
 
     /** 动作：AX 结构化定位点击/键入/按键/滚动/读文本。
      *  value（真实键入）只经内存参数；动作日志由 broker 层脱敏（valueMasked）。 */
-    act: async (input: { action: { kind: string; target?: string; observationId: string }; value?: string }): Promise<{ ok: boolean; detail?: string; text?: string; reason?: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" }> => {
+    act: async (input: { action: { kind: string; target?: string; observationId: string }; value?: string; expect?: { app: string; windowTitle: string }; signal?: AbortSignal }): Promise<{ ok: boolean; detail?: string; text?: string; reason?: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" | "stale" }> => {
       const { kind, target } = input.action;
       const value = input.value; // 内存穿透，绝不落库
       const leaseTargetApp = currentTargetApp;
       const procName = await resolveProcessName(leaseTargetApp);
       if (!procName) return { ok: false, reason: "目标应用未运行", fatal: "app-exit" };
+      // PC18：动作前在同一段脚本里核对真实前台窗口与观察时一致（激活之后、输入
+      // 之前）；不一致抛 STALE_WINDOW，动作不执行。激活与输入之间仍有极短竞态，
+      // 由用户接管检测（HIDIdleTime）兜底。
+      const windowGuard = input.expect?.windowTitle !== undefined
+        ? [`if (name of front window) is not "${escapeApple(input.expect.windowTitle)}" then error "${STALE_WINDOW}"`]
+        : [];
       const base = (inner: string[]) => osa(apple([
         'tell application "System Events"',
         `tell process "${procName}"`,
         "set frontmost to true",
+        ...windowGuard,
         ...inner,
         "end tell",
         "end tell",
-      ]));
+      ]), 10_000, input.signal);
+      // 紧急停止中止了进行中的 osascript：输入可能已部分到达 OS，结果无法确认
+      const settle = (r: { ok: boolean; out: string; err: string }, ok: () => { ok: true; detail?: string; text?: string }) =>
+        r.ok ? ok() : r.err === ABORTED ? { ok: false as const, reason: "动作已被紧急停止中止：结果无法确认（unknown）" } : classifyAppleError(r.err);
 
       switch (kind) {
         case "click": {
@@ -177,20 +211,15 @@ export function createMacOsCuaAdapter(opts: { screenshotEvidence?: boolean } = {
           // 器等 App 的按钮 AX 无名，菜单是稳定结构化入口）；或窗口内按钮 by name
           if (target?.startsWith("menu:")) {
             const [, barItem, menuItem] = target.split(":");
-            const r = await osa(apple([
-              'tell application "System Events"',
-              `tell process "${procName}"`,
-              "set frontmost to true",
+            const r = await base([
               `click (first menu item of menu of menu bar item "${escapeApple(barItem ?? "")}" of menu bar 1 whose name is "${escapeApple(menuItem ?? "")}")`,
-              "end tell",
-              "end tell",
-            ]));
-            return r.ok ? { ok: true, detail: `clicked menu ${barItem}→${menuItem}` } : classifyAppleError(r.err);
+            ]);
+            return settle(r, () => ({ ok: true, detail: `clicked menu ${barItem}→${menuItem}` }));
           }
           const r = await base([
             `click (first button of front window whose name is "${escapeApple(target ?? "")}")`,
           ]);
-          return r.ok ? { ok: true, detail: `clicked ${target}` } : classifyAppleError(r.err);
+          return settle(r, () => ({ ok: true, detail: `clicked ${target}` }));
         }
         case "type": {
           if (value === undefined) return { ok: false, reason: "type 动作缺 value（内存参数）" };
@@ -198,23 +227,23 @@ export function createMacOsCuaAdapter(opts: { screenshotEvidence?: boolean } = {
             `set focused to true`,
             `keystroke ${JSON.stringify(value)}`,
           ]);
-          return r.ok ? { ok: true, detail: `typed ${value!.length} chars` } : classifyAppleError(r.err);
+          return settle(r, () => ({ ok: true, detail: `typed ${value!.length} chars` }));
         }
         case "key": {
           if (value === undefined) return { ok: false, reason: "key 动作缺 key 名（内存参数）" };
           const r = await base([`key code ${Number(value) || 0}`]);
-          return r.ok ? { ok: true, detail: `keycode ${value}` } : classifyAppleError(r.err);
+          return settle(r, () => ({ ok: true, detail: `keycode ${value}` }));
         }
         case "scroll": {
           const r = await base([`scroll area 1 of front window by 3`]);
-          return r.ok ? { ok: true, detail: "scrolled" } : classifyAppleError(r.err);
+          return settle(r, () => ({ ok: true, detail: "scrolled" }));
         }
         case "read_text": {
           // target 缺省 = 前台窗口第一个 static text（如 Calculator 显示区无名）
           const r = await base(target
             ? [`set txt to value of (first static text of front window whose name is "${escapeApple(target)}")`, "return txt"]
             : ["set txt to value of static text 1 of front window", "return txt"]);
-          return r.ok ? { ok: true, text: r.out.trim(), detail: `read ${target ?? "(first static text)"}` } : classifyAppleError(r.err);
+          return settle(r, () => ({ ok: true, text: r.out.trim(), detail: `read ${target ?? "(first static text)"}` }));
         }
         default:
           return { ok: false, reason: `未知动作类型：${kind}` };
@@ -249,7 +278,11 @@ function escapeApple(s: string): string {
 }
 
 /** osascript 错误分类（fatal 语义决定 broker 是否撤租约，C04）。 */
-function classifyAppleError(err: string): { ok: false; reason: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" } {
+function classifyAppleError(err: string): { ok: false; reason: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" | "stale" } {
+  // 动作前窗口核对失败（必须先于 "can't get" 判定：同一脚本里的 error 文本）
+  if (err.includes(STALE_WINDOW)) {
+    return { ok: false, reason: "stale-window：前台窗口已与观察时不同，动作未执行，请重新观察", fatal: "stale" };
+  }
   const e = err.toLowerCase();
   if (e.includes("not authorized") || e.includes("-25211")) {
     return { ok: false, reason: "accessibility 授权被撤销", fatal: "permission-revoked" };

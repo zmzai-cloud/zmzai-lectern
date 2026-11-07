@@ -38,6 +38,7 @@ import { loadMcpConfig } from "./mcp-config.js";
 import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJECT } from "./projects.js";
 import { recallSection } from "./memory/service.js";
 import { createMemorySearchTool } from "./memory/search-tool.js";
+import { createComputerUseTool } from "./computer-use-tool.js";
 import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
 import { startMemoryOutboxWorker } from "./memory/outbox.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
@@ -267,6 +268,9 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     // 适配器接入后 `provider.extract` 存在，read_attachment / search_attachments
     // 自动出现在工具列表里，无需再改这里。
     ...createAttachmentTools(attachmentProvider),
+    // PC17：桌面控制模型工具（经 ToolExecutor 权限/trace 调用本进程持有的 broker；
+    // Windows 不注册——平台能力明确 unavailable，spec §5.2）
+    ...(process.platform === "darwin" ? [createComputerUseTool()] : []),
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。

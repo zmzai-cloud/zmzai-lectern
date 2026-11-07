@@ -73,15 +73,26 @@ export type CuaActResult =
   | { ok: false; reason: string; fatal?: "app-exit" | "permission-revoked" | "screen-locked" | "stale" };
 
 /** 平台 adapter（S2 macOS 实现；探测失败/Windows → 不可用能力如实报）。
- *  value（type/key 的真实输入）只经内存参数穿透，动作日志只落 valueMasked。 */
+ *  value（type/key 的真实输入）只经内存参数穿透，动作日志只落 valueMasked。
+ *
+ *  P0 2026-11-07（PC18/PC19）：
+ *  - act 收到 expect（观察时的窗口身份）：adapter 在动作前核对真实前台窗口，
+ *    不符返回 fatal:"stale"——5s TTL 不能代替 OS 状态验证（spec §5.2）；
+ *  - act 收到 signal：紧急停止中止进行中的平台调用，结果按 unknown 处理；
+ *  - userInputIdleMs：距最近一次真实键鼠输入的毫秒数（macOS HIDIdleTime）。
+ *    观察之后出现过输入 = 用户接管 → 租约暂停，需用户显式恢复。不可读时
+ *    能力受限：禁止无人值守控制（unattended acquire 拒绝）。 */
 export type CuaAdapter = {
   capability(): { platform: string; available: boolean; permissions: { accessibility: boolean; screenRecording: boolean }; guidance?: string };
-  probeCapability?(): Promise<{ platform: string; available: boolean; permissions: { accessibility: boolean; screenRecording: boolean }; guidance?: string }>;
+  probeCapability?(): Promise<{ platform: string; available: boolean; permissions: { accessibility: boolean; screenRecording: boolean }; guidance?: string; userTakeover?: boolean }>;
   observe(input: { targetApp: string; windowTitle?: string }): Promise<CuaAdapterResult>;
-  act(input: { action: Omit<CuaAction, "id" | "status" | "at">; value?: string }): Promise<CuaActResult>;
+  act(input: { action: Omit<CuaAction, "id" | "status" | "at">; value?: string; expect?: { app: string; windowTitle: string }; signal?: AbortSignal }): Promise<CuaActResult>;
+  userInputIdleMs?(): Promise<number | null>;
 };
 
 const OBSERVATION_TTL_MS = 5_000;
+/** 观察之后的输入判定余量：HIDIdleTime 与时钟读数的粒度误差。 */
+const TAKEOVER_GRACE_MS = 100;
 const CAPABILITY_WHITELIST = new Set(["observe", "click", "type", "key", "scroll", "read_text"]);
 
 function newId(prefix: string): string {
@@ -114,12 +125,31 @@ export function listActionsForLease(leaseId: string): CuaAction[] {
   return rows.map((r) => JSON.parse(r.json) as CuaAction);
 }
 
+/** 重启对账（PC19）：上一个进程退出时仍处于 accepted/executing 的动作——平台
+ *  调用可能已发出，也可能没有——一律标 unknown，绝不当作未执行而重放。
+ *  租约是进程内存态，重启后旧 lease/observation 全部失效，任何后续动作都要
+ *  新租约、新观察。只应在拥有 broker 的进程（armed 下为 Host）首次使用时调用。 */
+export function reconcileInterruptedActions(): { reconciled: number } {
+  ensureTables();
+  const rows = getDb().prepare("SELECT json FROM cua_actions").all() as { json: string }[];
+  let reconciled = 0;
+  for (const row of rows) {
+    const action = JSON.parse(row.json) as CuaAction;
+    if (action.status !== "accepted" && action.status !== "executing") continue;
+    persistAction({ ...action, status: "unknown", detail: "进程重启时动作未完成：结果无法确认，不会自动重发" });
+    reconciled += 1;
+  }
+  return { reconciled };
+}
+
 // ===== Broker =====
 
 export class ComputerUseBroker {
   #lease: ControlSession | null = null;
   #queue: { rootTaskId: string }[] = [];
   #observations = new Map<string, { observation: Observation; revision: number }>();
+  /** 进行中动作的中止器（紧急停止用；同一时刻至多一个——服务层串行化动作）。 */
+  #inflight: AbortController | null = null;
   /** Observation TTL（spec 默认 5s；测试收紧用）。 */
   readonly #ttlMs: number;
 
@@ -223,6 +253,18 @@ export class ComputerUseBroker {
     // 权限范围检查（lease capabilities 白名单）
     if (!lease.capabilities.includes(input.kind)) return { ok: false, reason: "capability-not-granted" };
 
+    // PC18 用户接管：观察之后出现过真实键鼠输入 → 屏幕状态可能已被用户改变，
+    // 且用户正在使用电脑——暂停租约（恢复须用户显式 resume），本动作不执行
+    const observed = this.#observations.get(input.observationId)!.observation;
+    if (adapter.userInputIdleMs) {
+      const idleMs = await adapter.userInputIdleMs();
+      const sinceObservation = Date.now() - Date.parse(observed.at);
+      if (idleMs !== null && idleMs + TAKEOVER_GRACE_MS < sinceObservation) {
+        lease.status = "paused";
+        return { ok: false, reason: "user-takeover" };
+      }
+    }
+
     const action: CuaAction = {
       id: newId("act"),
       leaseId, observationId: input.observationId,
@@ -234,11 +276,26 @@ export class ComputerUseBroker {
     };
     persistAction(action);
 
-    // value 只穿内存（日志里只有 valueMasked）；brokers 不缓存 value
-    const result = await adapter.act({ action: { ...action }, ...(input.value !== undefined ? { value: input.value } : {}) });
+    // value 只穿内存（日志里只有 valueMasked）；brokers 不缓存 value。
+    // expect = 观察时的窗口身份（adapter 动作前核对真实前台窗口）；
+    // signal 供紧急停止中止进行中的平台调用
+    const controller = new AbortController();
+    this.#inflight = controller;
+    let result: CuaActResult;
+    try {
+      result = await adapter.act({
+        action: { ...action },
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        expect: { app: observed.windowIdentity.app, windowTitle: observed.windowIdentity.windowTitle },
+        signal: controller.signal,
+      });
+    } finally {
+      if (this.#inflight === controller) this.#inflight = null;
+    }
     let finalStatus: CuaActionStatus = result.ok ? "succeeded" : "failed";
-    // C04：结果无法确认 → unknown（绝不登记成 succeeded/failed 冒充已确认）
-    if (!result.ok && /(unknown|无法确认|结果未知)/i.test((result as { reason: string }).reason)) finalStatus = "unknown";
+    // C04：结果无法确认 → unknown（绝不登记成 succeeded/failed 冒充已确认）。
+    // 被紧急停止中止的进行中动作同样 unknown——输入可能已部分到达 OS
+    if (!result.ok && (controller.signal.aborted || /(unknown|无法确认|结果未知)/i.test((result as { reason: string }).reason))) finalStatus = "unknown";
     const finished: CuaAction = {
       ...action,
       status: finalStatus,
@@ -247,18 +304,26 @@ export class ComputerUseBroker {
         : { detail: `${(result as { reason: string }).reason}`.slice(0, 240) }),
     };
     persistAction(finished);
-    if (!result.ok) this.#revokeOnFatal((result as { fatal?: "app-exit" | "permission-revoked" | "screen-locked" }).fatal);
+    if (!result.ok) {
+      const fatal = (result as { fatal?: "app-exit" | "permission-revoked" | "screen-locked" | "stale" }).fatal;
+      // 真实窗口与观察不符：该观察作废（不能再拿它重试），须重新观察
+      if (fatal === "stale") this.#observations.delete(input.observationId);
+      else this.#revokeOnFatal(fatal);
+    }
     return result.ok
       ? { ok: true, action: finished, ...(result.text ? { text: result.text } : {}) }
       : { ok: false, reason: (result as { reason: string }).reason, action: finished };
   }
 
-  /** 紧急停止（C03）：撤销 lease、清空队列——排队旧动作不执行。 */
-  emergencyStop(): { stopped: boolean; queuedDropped: number } {
+  /** 紧急停止（C03/PC19）：撤销 lease、清空队列——排队旧动作不执行；进行中的
+   *  平台调用收到中止信号（已发到 OS 的输入无法撤回，结果记 unknown）。 */
+  emergencyStop(): { stopped: boolean; queuedDropped: number; inflightAborted: boolean } {
     const dropped = this.#queue.length;
     this.#queue = [];
     if (this.#lease && this.#lease.status !== "revoked") this.#lease.status = "revoked";
-    return { stopped: true, queuedDropped: dropped };
+    const inflight = this.#inflight;
+    if (inflight) inflight.abort();
+    return { stopped: true, queuedDropped: dropped, inflightAborted: !!inflight };
   }
 
   /** 用户接管（C03）：lease → paused；恢复需显式 resume（新观察）。 */

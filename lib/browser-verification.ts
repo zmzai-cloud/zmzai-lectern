@@ -30,14 +30,31 @@ export type VerificationStep = {
 
 export type Viewport = { width: number; height: number };
 
+/** 验证层级（PC15，spec §5.1）：smoke = 页面可访问（goto + body 渲染这类最低检查），
+ *  acceptance = 用户任务验收（含 required 的业务交互或业务断言）。smoke 通过不能把
+ *  需要业务交互的任务标为已验收。 */
+export type VerificationLevel = "smoke" | "acceptance";
+
 export type VerificationPlan = {
   id: string;
   attemptId: string;
   version: number;
+  /** 旧记录无此字段：读取时按步骤推导（planLevelOf）。 */
+  level: VerificationLevel;
   steps: VerificationStep[];
   /** V05：多视口（每视口执行整组步骤，分项证据带 viewport 可追溯）。 */
   viewports: Viewport[];
 };
+
+/** 步骤够不够「业务验收」：至少一个 required 的交互（click/type）或业务断言
+ *  （body 存在之外的 DOM 断言、视觉、网络断言）。只有 goto/wait/body 存在 = smoke。 */
+export function planLevelOf(steps: VerificationStep[]): VerificationLevel {
+  const business = steps.some((s) => s.requirement === "required" && (
+    s.kind === "click" || s.kind === "type" || s.kind === "assert_visual" || s.kind === "assert_network"
+    || (s.kind === "assert_dom" && (s.target ?? "").trim() !== "" && (s.target ?? "").trim().toLowerCase() !== "body")
+  ));
+  return business ? "acceptance" : "smoke";
+}
 
 export type RunStepRecord = {
   index: number;
@@ -128,16 +145,25 @@ function stepSignature(step: VerificationStep): string {
   return `${step.kind}|${step.target ?? ""}|${step.value ?? ""}`;
 }
 
-export type SavePlanResult = { ok: true; plan: VerificationPlan } | { ok: false; reason: "downgrade-rejected" | "invalid-steps"; detail?: string };
+export type SavePlanResult = { ok: true; plan: VerificationPlan } | { ok: false; reason: "downgrade-rejected" | "invalid-steps" | "acceptance-too-weak"; detail?: string };
 
 /** 保存新版本 Plan。降级守卫（spec §11.2.1）：AI/重试可以增改步骤，
  *  但既有版本的 required 步骤在新版本中不得消失或降为 advisory——
  *  失败后自行把 required 降级是服务端拒绝的写操作。 */
-export function saveVerificationPlan(attemptId: string, input: { steps: VerificationStep[]; viewports: Viewport[] }): SavePlanResult {
+export function saveVerificationPlan(attemptId: string, input: { steps: VerificationStep[]; viewports: Viewport[]; level?: VerificationLevel }): SavePlanResult {
   if (!Array.isArray(input.steps) || input.steps.length === 0) return { ok: false, reason: "invalid-steps" };
+  const derived = planLevelOf(input.steps);
+  // 声称 acceptance 却只有可访问性检查：拒绝（不能用 smoke 冒充业务验收）
+  if (input.level === "acceptance" && derived === "smoke") {
+    return { ok: false, reason: "acceptance-too-weak", detail: "acceptance 计划至少需要一个 required 的业务交互（click/type）或业务断言（非 body 的 DOM、视觉、网络断言）" };
+  }
+  const level: VerificationLevel = input.level ?? derived;
   const db = getDb();
   ensureTables(db);
   const prior = getLatestPlan(attemptId);
+  if (prior?.level === "acceptance" && level === "smoke") {
+    return { ok: false, reason: "downgrade-rejected", detail: "已有 acceptance 计划，不得降为 smoke" };
+  }
   if (prior) {
     const priorRequired = new Set(prior.steps.filter((s) => s.requirement === "required").map(stepSignature));
     const nextRequired = new Set(input.steps.filter((s) => s.requirement === "required").map(stepSignature));
@@ -152,6 +178,7 @@ export function saveVerificationPlan(attemptId: string, input: { steps: Verifica
     id: newId("vplan"),
     attemptId,
     version: (prior?.version ?? 0) + 1,
+    level,
     steps: input.steps,
     viewports: input.viewports,
   };
@@ -166,9 +193,9 @@ export function getLatestPlan(attemptId: string): VerificationPlan | null {
   const row = db.prepare("SELECT json FROM verification_plans WHERE attempt_id = ? ORDER BY version DESC LIMIT 1").get(attemptId) as { json: string } | undefined;
   if (!row) return null;
   const parsed = JSON.parse(row.json) as VerificationPlan & { viewport?: Viewport };
-  // 旧记录（S4 前单视口）兼容：viewport 单数包成数组
-  if (!parsed.viewports && parsed.viewport) return { ...parsed, viewports: [parsed.viewport] };
-  return parsed;
+  // 旧记录兼容：viewport 单数包成数组；无 level 按步骤推导（旧默认 goto+body → smoke）
+  const viewports = parsed.viewports ?? (parsed.viewport ? [parsed.viewport] : []);
+  return { ...parsed, viewports, level: parsed.level ?? planLevelOf(parsed.steps) };
 }
 
 // ===== Run 状态机 =====
@@ -215,6 +242,8 @@ export async function startBrowserVerificationRun(input: {
   attemptId: string;
   snapshotFingerprint: string;
   serviceId?: string;
+  /** 被测服务 origin（相对路由 goto 的基址；缺失时相对 goto 只能 unavailable）。 */
+  serviceOrigin?: string;
   verifier?: BrowserVerifierAdapter;
   /** context 隔离键（默认按 attempt 隔离；登录态按账号+项目隔离由调用方扩展）。 */
   contextKey?: string;
@@ -264,14 +293,22 @@ export async function startBrowserVerificationRun(input: {
     writeRun(db, { ...run, status: "running", steps: [...stepRecords], evidenceRefs: [...evidenceRefs] });
 
     let viewportFailed = false;
+    // required 步骤不可用（如导航没打开页面）后，本视口剩余步骤不再执行：页面不在
+    // 预期状态，继续只会级联失败或挂到通道超时；如实记为未执行
+    let blockedBy: string | null = null;
     for (let i = 0; i < plan.steps.length; i += 1) {
       const step = plan.steps[i]!;
       const t0 = Date.now();
       let result: VerifierStepResult;
-      try {
-        result = await input.verifier.runStep({ browserContextId: opened.browserContextId, step });
-      } catch (error) {
-        result = { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+      if (blockedBy) {
+        result = { status: "unavailable", detail: `前置 required 步骤不可用，未执行（${blockedBy}）`.slice(0, 240) };
+      } else {
+        try {
+          result = await input.verifier.runStep({ browserContextId: opened.browserContextId, step, ...(input.serviceOrigin ? { serviceOrigin: input.serviceOrigin } : {}) });
+        } catch (error) {
+          result = { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+        }
+        if (result.status === "unavailable" && step.requirement === "required") blockedBy = `${step.kind}${step.target ? ` ${step.target}` : ""}`;
       }
       const record: RunStepRecord = {
         index: stepRecords.length,

@@ -40,8 +40,9 @@ export async function runBrowserVerificationForSession(input: {
   const manifest = loadSetupManifest(ws.path);
   const devServer = manifest.devServer;
   // Plan 产生方：显式保存的 plan 优先；无 plan 但 devServer 已声明 → 合成
-  // 默认 plan（goto 根路由 + body 渲染存在断言，required）——项目声明即最低
-  // 验收，AI/用户可用 plan API 增补更严断言（降级守卫保证只增不减）
+  // 默认 plan（goto 根路由 + body 渲染存在断言，required）。它只是 smoke
+  // （页面可访问），通过不代表业务验收（PC15）——AI/用户用 plan API 或
+  // browser_verify 工具提交 acceptance 计划（降级守卫保证只增不减）
   let plan = getLatestPlan(attempt.id);
   if (!plan) {
     if (!devServer) return { ok: false, reason: "no-plan", detail: "无 VerificationPlan 且 manifest 未声明 devServer" };
@@ -51,6 +52,7 @@ export async function runBrowserVerificationForSession(input: {
         { kind: "assert_dom", target: "body", requirement: "required" },
       ],
       viewports: [{ width: 1280, height: 800 }],
+      level: "smoke",
     });
     if (!synthesized.ok) return { ok: false, reason: "no-plan", detail: `默认 plan 保存失败：${synthesized.detail ?? synthesized.reason}` };
     plan = synthesized.plan;
@@ -79,6 +81,8 @@ export async function runBrowserVerificationForSession(input: {
     attemptId: attempt.id,
     snapshotFingerprint: snap.worktreeFingerprint,
     serviceId: service.id,
+    // 相对路由 goto 的基址：此前未传，真实驱动下 goto "/" 恒为 unavailable
+    ...(service.actualOrigin ? { serviceOrigin: service.actualOrigin } : {}),
     verifier,
   });
 
@@ -92,6 +96,8 @@ export async function runBrowserVerificationForSession(input: {
 
 export type BrowserQaOutcome =
   | { outcome: "passed"; run: BrowserVerificationRun }
+  /** PC15：smoke 计划通过只说明页面可访问，不落业务验收终态（attempt 保持待验收）。 */
+  | { outcome: "smoke-only"; run: BrowserVerificationRun; detail: string }
   | { outcome: "verification-failed"; run: BrowserVerificationRun; repairedOnce: boolean }
   | { outcome: "unavailable"; run: BrowserVerificationRun }
   | { outcome: "stale"; detail: string };
@@ -120,6 +126,9 @@ export async function runBrowserQaWithOneRetry(input: {
     return { kind: "run" as const, run: out.run };
   };
 
+  const SMOKE_ONLY = "仅完成页面可访问性检查（smoke），未执行业务验收：请提交含业务交互或业务断言的 acceptance 计划后重验";
+  const isSmokePlan = (attemptId: string | undefined) => (getLatestPlan(attemptId ?? "")?.level ?? "smoke") === "smoke";
+
   const first = await runOnce();
   if (first.kind === "orchestration-failed") {
     // 无 plan/无 workspace/服务起不来等编排前置失败：不进修复循环，如实返回
@@ -132,6 +141,7 @@ export async function runBrowserQaWithOneRetry(input: {
       if (!(await delivery.isSnapshotStillValid(attempt))) {
         return { outcome: "stale", detail: "验证过程中源码已变化（快照失效），需重新验证" };
       }
+      if (isSmokePlan(attempt.id)) return { outcome: "smoke-only", run: first.run, detail: SMOKE_ONLY };
       delivery.finishWithBrowserQa(attempt.id, true);
     }
     return { outcome: "passed", run: first.run };
@@ -156,7 +166,7 @@ export async function runBrowserQaWithOneRetry(input: {
   await delivery.transitionToVerifying(newAttempt.id);
   const priorPlan = getLatestPlan(oldAttempt?.id ?? "");
   if (priorPlan) {
-    const saved = saveVerificationPlanPublic(newAttempt.id, { steps: priorPlan.steps, viewports: priorPlan.viewports });
+    const saved = saveVerificationPlanPublic(newAttempt.id, { steps: priorPlan.steps, viewports: priorPlan.viewports, level: priorPlan.level });
     if (!saved.ok) {
       return { outcome: "stale", detail: `重试 plan 保存被拒（${saved.reason}）：修复不得降低验收标准` };
     }
@@ -172,6 +182,7 @@ export async function runBrowserQaWithOneRetry(input: {
     if (!(await delivery.isSnapshotStillValid(attempt2))) {
       return { outcome: "stale", detail: "重验过程中源码已变化（快照失效），需重新验证" };
     }
+    if (isSmokePlan(attempt2.id)) return { outcome: "smoke-only", run: second.run, detail: SMOKE_ONLY };
     delivery.finishWithBrowserQa(attempt2.id, true);
     return { outcome: "passed", run: second.run };
   }

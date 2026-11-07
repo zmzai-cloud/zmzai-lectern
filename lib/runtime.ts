@@ -39,6 +39,7 @@ import { dataDirFor, getActiveProject, listProjects, projectStore, DEFAULT_PROJE
 import { recallSection } from "./memory/service.js";
 import { createMemorySearchTool } from "./memory/search-tool.js";
 import { createComputerUseTool } from "./computer-use-tool.js";
+import { createBrowserVerifyTool } from "./browser-verify-tool.js";
 import { memoryCandidateHooks } from "./memory/candidates-runtime.js";
 import { startMemoryOutboxWorker } from "./memory/outbox.js";
 import { resolveSessionOwner, assertWorkspaceAvailable } from "./session-owner.js";
@@ -271,6 +272,8 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
     // PC17：桌面控制模型工具（经 ToolExecutor 权限/trace 调用本进程持有的 broker；
     // Windows 不注册——平台能力明确 unavailable，spec §5.2）
     ...(process.platform === "darwin" ? [createComputerUseTool()] : []),
+    // PC15/PC16：浏览器业务验收工具（acceptance 计划 + 真实浏览器证据 + 有界修复）
+    createBrowserVerifyTool(),
   ];
   // MCP 装配采用就地重置：数组引用稳定（runner 每次 run 重读 deps.localTools），
   // MCP server 连接完成后替换内容，下一次 prompt 即带上 mcp__server__tool。

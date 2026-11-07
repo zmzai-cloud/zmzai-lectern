@@ -48,7 +48,8 @@ async function handlePOST(request: Request) {
       const viewports = Array.isArray(body.viewports) ? body.viewports : null;
       if (!active) return Response.json({ error: "无 active attempt" }, { status: 409 });
       if (!steps || !viewports) return Response.json({ error: "steps/viewports 必填" }, { status: 400 });
-      const saved = saveVerificationPlan(active.id, { steps: steps as never, viewports: viewports as never });
+      const level = body.level === "smoke" || body.level === "acceptance" ? body.level : undefined;
+      const saved = saveVerificationPlan(active.id, { steps: steps as never, viewports: viewports as never, ...(level ? { level } : {}) });
       if (!saved.ok) return Response.json({ ok: false, error: saved.reason, detail: saved.detail }, { status: 409 });
       return Response.json({ ok: true, plan: saved.plan });
     }

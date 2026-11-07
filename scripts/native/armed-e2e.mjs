@@ -39,7 +39,12 @@ writeFileSync(path.join(project, "src", "math.mjs"), "export const add = (a, b) 
 execSync("git init -q -b main && git config user.email e2e@test.invalid && git config user.name e2e && git add -A && git commit -qm init", { cwd: project, shell: "/bin/bash" });
 writeFileSync(path.join(dataDir, "projects.json"), JSON.stringify({ activeId: "p_e2e", projects: [{ id: "p_e2e", name: "E2E", path: project, createdAt: new Date().toISOString() }] }));
 
-const deadRelay = `http://127.0.0.1:${await freePort()}/api/v1`; // 关闭端口：模型调用立即失败，零外部流量
+// 挂起的本地假 relay：接受连接但永不响应——运行稳定停在进行中（强杀重启场景需要
+// 真实的在途运行），且零外部流量、零模型调用
+const sockets = new Set();
+const hangingRelay = createServer((sock) => { sockets.add(sock); sock.on("close", () => sockets.delete(sock)); });
+await new Promise((resolve) => hangingRelay.listen(0, "127.0.0.1", resolve));
+const deadRelay = `http://127.0.0.1:${hangingRelay.address().port}/api/v1`;
 const commonEnv = { ...process.env, LECTERN_DATA_DIR: dataDir, LECTERN_WORKSPACE: defaultWs, RELAY_URL: deadRelay, OPENAI_BASE_URL: deadRelay, OPENAI_MODEL: "glm-5.3-flash" };
 let hostErr = "";
 let hostExit = null;
@@ -48,14 +53,19 @@ const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok: !!ok, detail: String(detail).slice(0, 300) }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${String(detail).slice(0, 160)}` : ""}`); };
 
 try {
-  const host = spawn(process.execPath, [hostBundle], { env: { ...commonEnv, LECTERN_HOST_DATA: hostData, LECTERN_HOST_WORKSPACE: defaultWs }, stdio: ["ignore", "pipe", "pipe"] });
-  procs.push(host);
-  host.stderr.on("data", (d) => { hostErr += String(d); });
-  host.stdout.on("data", (d) => { hostErr += String(d); });
-  host.on("exit", (code, signal) => { hostExit = { code, signal, at: Date.now() }; });
   const hostJson = path.join(hostData, "host.json");
-  for (let i = 0; i < 200 && !existsSync(hostJson); i++) await new Promise((r) => setTimeout(r, 50));
-  if (!existsSync(hostJson)) throw new Error(`Host 未就绪：${hostErr.slice(0, 300)}`);
+  const startHost = async () => {
+    rmSync(hostJson, { force: true });
+    const h = spawn(process.execPath, [hostBundle], { env: { ...commonEnv, LECTERN_HOST_DATA: hostData, LECTERN_HOST_WORKSPACE: defaultWs }, stdio: ["ignore", "pipe", "pipe"] });
+    procs.push(h);
+    h.stderr.on("data", (d) => { hostErr += String(d); });
+    h.stdout.on("data", (d) => { hostErr += String(d); });
+    h.on("exit", (code, signal) => { hostExit = { code, signal, at: Date.now() }; });
+    for (let i = 0; i < 200 && !existsSync(hostJson); i++) await new Promise((r) => setTimeout(r, 50));
+    if (!existsSync(hostJson)) throw new Error(`Host 未就绪：${hostErr.slice(0, 300)}`);
+    return h;
+  };
+  let host = await startHost();
 
   const port = await freePort();
   const next = spawn(process.execPath, [nextBin, "start", "-p", String(port), "-H", "127.0.0.1"], { cwd: root, env: { ...commonEnv, NODE_ENV: "production", LECTERN_HOST_GATEWAY: hostJson, LECTERN_HOST_BOOTSTRAP: hostJson }, stdio: "ignore" });
@@ -133,6 +143,33 @@ try {
   check("会话删除经 Host", (await api(`/api/sessions/${sid}`, { method: "DELETE" })).status === 200
     && !(await api("/api/sessions")).body.some((s) => s.id === sid));
 
+  // PC11：运行中强杀 Host（无优雅收尾）→ Next 不重启 → 重启 Host（新端口/token）→
+  // Next 每请求重读握手继续服务；前任遗留的运行租约被立即接管收尾，不挂「执行中」
+  const b = await api("/api/sessions", { method: "POST", body: JSON.stringify({ requestId: "e2e_create_0002", model: { providerId: "openai", modelId: "glm-5.3-flash" } }) });
+  const sidB = b.body?.id;
+  await api(`/api/sessions/${sidB}/prompt`, { method: "POST", body: JSON.stringify({ text: "将被强杀的运行", requestId: "e2e_prompt_0003" }) });
+  await new Promise((r) => setTimeout(r, 600));
+  const runningBefore = (await api("/api/sessions")).body?.find((s) => s.id === sidB)?.running;
+  host.kill("SIGKILL");
+  await new Promise((r) => setTimeout(r, 500));
+  check("Host 被强杀期间命中路由 503（Next 不代执行）", (await api("/api/sessions")).status === 503);
+  const restartAt = Date.now();
+  host = await startHost();
+  const relisted = await api("/api/sessions");
+  check("Next 未重启即接上重启后的 Host（读新握手）", relisted.status === 200 && relisted.body.some((s) => s.id === sidB), `${Date.now() - restartAt}ms`);
+  let recovered = false; let recoveredMs = null;
+  for (let i = 0; i < 40 && !recovered; i++) {
+    const evs = await fetch(`${web}/api/sessions/${sidB}/events?since=0`, { signal: AbortSignal.timeout(1500) }).then((r) => r.body.getReader()).then(async (reader) => {
+      let txt = ""; const end = Date.now() + 1200;
+      while (Date.now() < end) { const r = await Promise.race([reader.read(), new Promise((res) => setTimeout(() => res({ done: true }), end - Date.now()))]); if (r.done) break; txt += new TextDecoder().decode(r.value); }
+      reader.cancel().catch(() => undefined); return txt;
+    }).catch(() => "");
+    if (evs.includes("服务重启中断")) { recovered = true; recoveredMs = Date.now() - restartAt; break; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const runningAfter = (await api("/api/sessions")).body?.find((s) => s.id === sidB)?.running;
+  check("强杀前运行中的会话：重启后立即收尾（中断事件 + 不再显示执行中）", recovered && runningAfter === false, `强杀前 running=${runningBefore}；收尾用时 ${recoveredMs}ms`);
+
   // Host 停止后：命中路由一律 503 HOST_UNAVAILABLE（不回落 Next 进程内）
   host.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 800));
@@ -144,6 +181,8 @@ try {
   check("执行异常", false, error instanceof Error ? error.message : String(error));
 } finally {
   for (const p of procs) { try { p.kill("SIGTERM"); } catch { /* 已退出 */ } }
+  for (const sock of sockets) sock.destroy();
+  hangingRelay.close();
   await new Promise((r) => setTimeout(r, 300));
   rmSync(base, { recursive: true, force: true });
 }

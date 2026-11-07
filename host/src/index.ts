@@ -77,6 +77,14 @@ try {
   // 快照的「执行中」，只能等 UI 的 10s 轮询兜底）。MCP 仍是懒启动，
   // 预热只建 store/装配。
   try {
+    // PC11：持锁后先把已死前任实例遗留的租约标为过期，随后预热触发的官方扫描
+    // 立即收尾（否则强杀重启后会话最长约 10 分钟仍显示「执行中」）
+    const { expireDeadOwnerLeases } = await import("./lease-takeover.js");
+    const { dataDirFor, projectStore } = await import("../../lib/projects.js");
+    for (const project of listProjects()) {
+      const taken = await expireDeadOwnerLeases(dataDirFor(project), projectStore(project.id) as never).catch(() => [] as string[]);
+      if (taken.length) console.error(`[host] 接管前任实例遗留租约 ${taken.length} 个（${project.name}）`);
+    }
     for (const project of listProjects()) {
       void runtimeFor(project.path);
     }

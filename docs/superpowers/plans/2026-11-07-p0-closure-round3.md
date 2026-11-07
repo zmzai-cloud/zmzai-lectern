@@ -116,3 +116,42 @@ Calculator（原用例向前台发 Escape，可能落到用户正在用的窗口
 - 浏览器验证进行中 Next/Host 进程真实重启：只验证了结果持久化可由新连接读回。
 - Windows：未运行；能力代码路径返回 unavailable，工具不注册。
 - 安装包内（packaged）的浏览器/CUA 流程：待发行物验收阶段。
+
+## 阶段 5（先于 4 执行）：发行物验收
+
+### 已验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `NODE_OPTIONS=--max-old-space-size=6144 pnpm build` | 退出 0，real 486s（8.1 分钟）；日志 test-results/p0-release/build.log |
+| `node scripts/check-standalone-clean.mjs` | 退出 0：无 .secret/会话库/本机数据，追踪图无越界 |
+| `node scripts/native/armed-e2e.mjs`（打包 Host bundle + 生产构建 next start，隔离数据，relay 指向关闭端口） | **25/25**：会话建/列/改/删、窗口快照/用量/搜索/已读、全局搜索、fs 读写、git diff/检查点、预览字节、skills、plugins、repomap、交付概览、经网关 SSE 6ms 建立、事件 11ms 实时到达、优雅收尾在 Host 中止 1 个运行中会话并 checkpoint 2 库、Host 停止后 503 HOST_UNAVAILABLE 且命令带回 requestId |
+
+### 端到端发现并修复（提交 5e9a533）
+
+- **Host 崩溃**：`/api/repomap` 迁入 Host 后，框架 `resolveFrameworkVendorDirs` 拼出的嵌套
+  wasm 路径不存在（pnpm 同级 / npm 去重扁平布局都不成立），emscripten 加载失败直接
+  结束 Host 进程（exit 1）；该目录写入框架进程级全局，模型的 repo_map 工具同样受害。
+  修复：`lib/repomap-vendor.ts` 按 Node 解析规则定位并核对 wasm 存在，不可用时面板 503、
+  runtime 关闭 repo_map 能力。回归：`lib/repomap-vendor.test.ts`、生产装配 repomap 用例（Host 存活）。
+- **SSE 延迟 15s**：Next/Node 等首个 body 块才发响应头，空闲会话首块是 15s 心跳
+  （经网关实测 15008ms）。修复：开流即发注释帧（6ms）。进程内旧路径同样受益。
+
+### 未验证 / 限制
+
+- 安装包形态：standalone 依赖实体化（build-mac 的 `npm install`，需联网）与 asar 补丁未执行，
+  端到端用 `next start` 运行同一生产构建产物；未生成 DMG、未启动安装后的桌面应用。
+- Electron 主进程支持 `LECTERN_USER_DATA_DIR` 隔离 userData，可用于后续隔离启动桌面应用验收。
+- 全量测试有一次运行在并发负载下 6 个计时敏感用例失败（实时推送 <600ms、SSE 重放、git
+  序列），单独运行与再次全量运行均通过（78 文件 716 通过）。记为负载敏感，未改阈值。
+
+## 阶段 4：PC22 真实模型评测（准备完成，待凭据）
+
+- 已实施：`evals/harness/pc22-host-runner.mjs`（提交 373dc40），驱动打包 Host 进程走真实 runtime；
+  before 版 Host bundle 由 c4febfb 构建（临时 worktree，未入库）用于前后对照。
+- 已验证（dry-run，不调模型）：after 与 before 两版管线的会话创建、隔离副本、权限设置、
+  浏览器驱动就绪；worktree 空改动合并被 `.lectern/verification.json` 组合验证拦下且目标未推进
+  （PC13 语义在真实仓库可见）。
+- 受阻：本机无可复用模型凭据（已安装 Lectern 的 settings.json 仅有 memoryInstallNonce，
+  无个人 key；环境变量未设；登录 cookie 在 Chromium 加密库中，不读取）。需用户提供。
+- 项目记忆类：无授权测试 bank，按规格不向真实记忆库写测试数据，记 blocked。

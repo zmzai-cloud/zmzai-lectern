@@ -213,3 +213,40 @@ LECTERN_EVAL_COOKIE="…" node evals/harness/pc22-host-runner.mjs --samples 3 --
 
 e685612 Host 迁移与读族修正 · 21a89db CUA · aa74dc3 浏览器 · b3d481b 记录 · 5e9a533 wasm/SSE/端到端 ·
 373dc40 PC22 执行器 · d0141eb 记录 · 3a2d7e1 租约接管
+
+## 第四批：收尾与发行物链路（2026-11-09）
+
+用户确认“直接干”。闸门不变：npm 发布 / 发版 / 推送需另行授权；PC22 等凭据（复核时
+`~/.config/lectern-eval/cookie` 仍不存在）。
+
+### 已实施
+
+| 提交 | 内容 |
+| --- | --- |
+| 4d04552 | 只读模式拒绝清单补 `computer_use`、`browser_verify`（第三轮加工具时遗漏，readonly 会话可控制桌面/启动开发服务）；状态行动词补新工具。主题包 PermissionCard 对所有权限键本就显示英文裸键（仅 bash 有专属文案），非回归，未改主题包 |
+| 框架 3227ee86（分支 fix/repomap-wasm-resolution） | 框架 **0.18.1**：`resolveFrameworkVendorDirs` 按 嵌套→scope 同级（pnpm）→祖先（npm 提升）逐候选并核对 wasm 存在，找不到仍抛错（签名不变）；新增导出 `resolveVendorDirsFrom`；加载失败统一 `WasmUnavailableError`，`renderRepoMap` 不再伪装成空地图；fs 工作区默认注册 repo_map 前探测资源 |
+| 0247f99 | Lectern vendor 换 0.18.1 tarball（本地构建，**未发 npm**） |
+| b17dd7a | 打包应用内 repo_map：主进程 fork Host 时注入 `LECTERN_REPOMAP_VENDOR`（指向 app.asar 内 standalone node_modules，照 node-pty 注入先例）；packaged 冒烟新增“写入代码文件后地图须解析出其符号” |
+| 84e87e3 | 冒烟中 repo_map 步骤移到更新器小节之后（见下方发现） |
+
+### 已验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 框架 `pnpm test` / `pnpm build` / `pnpm typecheck` | 62 文件 612 通过；构建、类型检查通过；新增布局测试 6 项（嵌套/pnpm/npm 提升/半残布局/全缺失/仓内真实布局） |
+| Lectern typecheck / arch / test / test:release / host:build | 0 / 违规 0 / 81 文件 731 通过 5 跳过 / 111 / 通过 |
+| 生产构建（vendor 0.18.1） + `armed-e2e.mjs` | 构建退出 0；**28/28** |
+| `bash scripts/build-mac.sh`（两次，第二次含注入修复） | 退出 0：DMG/zip 各 217MB；standalone 清洁、asar 原生解包 5 个、ad-hoc 签名完整性、发布清单校验通过 |
+| `pnpm test:packaged`（打包后的 Lectern.app，隔离 profile） | **15/15**：启动与原生桥、Host 握手、带空格项目建会话、文件读写、真实 PTY+git、更新器（本地假源：自动下载/SHA-512/更新日志 hover/延迟安装）、**app.asar 内 repo_map 解析出夹具符号**、强杀后租约与运行中任务落盘、重启恢复、中断任务收敛为 waiting_input / blocked(unsafe_replay)、恢复卡片文案 |
+
+### 发现
+
+- **安装包内 repo_map 此前不可用**：首个安装包实测 `/api/repomap` 诚实 503（第三轮修复后不再崩溃，但定位不到资源）。wasm 在 `app.asar/.next/standalone/node_modules`，Host bundle 在 `app.asar/host/dist`，框架被 esbuild 打卷、cwd 是 hostData，任何自然解析都无从命中——已由 b17dd7a 修复并进冒烟回归。
+- **界面小问题（未修，记录）**：工作区文件变更唤醒的文件监视器重渲染会打断正在显示的更新日志 hover 弹层（同构建 A/B 实测：去掉写文件步骤即通过）。真实场景：Agent 写文件时用户悬停更新图标，弹层可能被打断。
+- 产物文件名仍为 0.18.0（版本号提升属于发版步骤），这批 DMG/zip **只用于本地验收，不可发布**。
+
+### 仍在闸门内
+
+- framework 0.18.1 发 npm、Lectern 0.19.0 版本号/更新日志/发版全链、推送 main：需用户授权。
+- PC22 六类 ×3 + 前后对照：等凭据。
+- 安装包内的浏览器验收与桌面控制：未在打包应用内实测（桌面控制需对该 ad-hoc 签名的应用单独授予辅助功能权限，不在验收里替用户授权）。

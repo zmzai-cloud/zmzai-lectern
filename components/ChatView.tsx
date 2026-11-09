@@ -670,6 +670,9 @@ const TOOL_ACTIVITY_PHRASE: Record<string, string> = {
   webfetch: "正在抓取网页",
   web_fetch: "正在抓取网页",
   task: "正在执行子任务",
+  computer_use: "正在控制桌面应用",
+  browser_verify: "正在浏览器验收",
+  repo_map: "正在生成项目地图",
 };
 
 export default function ChatView({ data, status, pending, sessionId, connState, selectedModel, onSelectModel, onSend, onReply, taskView, onTaskAction, stalled, onAbort, onOpenFile, onOpenPreview, onOpenArtifact, historyState, onLoadMore, onLoadNewer, onLoadLatest, onReadingHistory, echo, wtNotice, memoryTrace, onRewind, permissionMode, onCyclePermissionMode, recoveryBlocked, onResolveRecovery, onOpenChildSession }: Props) {

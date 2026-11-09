@@ -21,8 +21,10 @@ export const PERMISSION_MODES: PermissionMode[] = ["default", "full", "ask", "re
 
 const MODE_MARKER = "lectern_mode";
 
-/** 只读模式下 deny 的写类权限键（与 framework PERMISSIONS 对齐）。 */
-const WRITE_KEYS = ["edit", "bash", "terminal", "git_write", "connector", "mcp", "task"] as const;
+/** 只读模式下 deny 的写类权限键（与 framework PERMISSIONS 对齐；P0 2026-11-09
+ *  补 computer_use/browser_verify——桌面控制与启动开发服务做浏览器验收都是
+ *  写类副作用，只读会话必须拦）。 */
+const WRITE_KEYS = ["edit", "bash", "terminal", "git_write", "connector", "mcp", "task", "computer_use", "browser_verify"] as const;
 
 type RuleLike = { permission: string; pattern: string; action?: string };
 

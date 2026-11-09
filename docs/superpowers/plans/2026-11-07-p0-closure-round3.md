@@ -237,7 +237,7 @@ e685612 Host 迁移与读族修正 · 21a89db CUA · aa74dc3 浏览器 · b3d481
 | Lectern typecheck / arch / test / test:release / host:build | 0 / 违规 0 / 81 文件 731 通过 5 跳过 / 111 / 通过 |
 | 生产构建（vendor 0.18.1） + `armed-e2e.mjs` | 构建退出 0；**28/28** |
 | `bash scripts/build-mac.sh`（两次，第二次含注入修复） | 退出 0：DMG/zip 各 217MB；standalone 清洁、asar 原生解包 5 个、ad-hoc 签名完整性、发布清单校验通过 |
-| `pnpm test:packaged`（打包后的 Lectern.app，隔离 profile） | **15/15**：启动与原生桥、Host 握手、带空格项目建会话、文件读写、真实 PTY+git、更新器（本地假源：自动下载/SHA-512/更新日志 hover/延迟安装）、**app.asar 内 repo_map 解析出夹具符号**、强杀后租约与运行中任务落盘、重启恢复、中断任务收敛为 waiting_input / blocked(unsafe_replay)、恢复卡片文案 |
+| `pnpm test:packaged`（打包后的 Lectern.app，隔离 profile） | **14/14**（更正：此处原误写 15/15，提交 84e87e3 的说明同误）：启动与原生桥、Host 握手、带空格项目建会话、文件读写、真实 PTY+git、更新器（本地假源：自动下载/SHA-512/更新日志 hover/延迟安装）、**app.asar 内 repo_map 解析出夹具符号**、强杀后租约与运行中任务落盘、重启恢复、中断任务收敛为 waiting_input / blocked(unsafe_replay)、恢复卡片文案 |
 
 ### 发现
 
@@ -250,3 +250,39 @@ e685612 Host 迁移与读族修正 · 21a89db CUA · aa74dc3 浏览器 · b3d481
 - framework 0.18.1 发 npm、Lectern 0.19.0 版本号/更新日志/发版全链、推送 main：需用户授权。
 - PC22 六类 ×3 + 前后对照：等凭据。
 - 安装包内的浏览器验收与桌面控制：未在打包应用内实测（桌面控制需对该 ad-hoc 签名的应用单独授予辅助功能权限，不在验收里替用户授权）。
+
+## 第五批：PI 运行时升级 0.84.1 → 1.5.0（2026-11-09）
+
+依据：同日 PI 升级调研（上游 22 个版本、跨 1.0；框架 PI 用法面小）。闸门不变：
+framework npm 发布与 Lectern 发版需授权。
+
+### 已实施
+
+| 提交 | 内容 |
+| --- | --- |
+| 框架 33d78c66（分支 feat/pi-1.5.0，基于 0.18.1 修复） | pi-agent-core / pi-ai 升 1.5.0，版本 **0.19.0**。迁移：`shouldStopAfterTurn` → `finishTurn`（先挡 error/aborted，保持旧钩子仅正常响应计数的语义）；自定义 streamFn 入参 `Context` → `TranscriptContext`；测试经 `getCurrentSystemPrompt` 读系统提示 |
+| 同上 | **升级引入的回归 1**：pi ≥0.86 把系统提示+工具声明 unshift 成前导系统消息，run 收尾 `slice(baseline)` 整体左移一条，**记忆注入段混进 onRunEnd 的 newMessages 与总结素材**（框架测试 2 项抓到）。收尾按实际前导 system 数补偿 |
+| 框架 6ec229d1 | **升级引入的回归 2**：`streamOneText` 给流函数传 `{systemPrompt, messages}` 并在调用方 `as never` 硬转——pi 1.x 只读前导系统消息，**会话总结与标题生成静默丢失系统提示**（类型检查只在 Lectern 侧暴露）。改经 `normalizeContext` 构造 transcript，签名对齐 pi `StreamFn`，加回归测试 |
+| Lectern 9519e80 | vendor 0.19.0；**Lectern 直接依赖的 pi-ai 0.84.1 顶掉框架带的 1.5.0**（agent-core 1.5.0 配 pi-ai 0.84.1 版本劈叉，fixture faux 序列化崩溃、Host 路由测试 5 项挂起）——同步到 1.5.0；去掉 session-title 的过时强转 |
+
+### 已验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 框架 typecheck / test / build | 0 / 62 文件 **613** 通过 / 通过 |
+| Lectern typecheck / arch / test / test:release / host:build | 0 / 违规 0 / 81 文件 731 通过 5 跳过 / 111 / 通过 |
+| 生产构建（PI 1.5.0） + `armed-e2e.mjs` | 退出 0（real 615s）；**28/28** |
+| 安装包链路（build-mac + test:packaged） | 打包退出 0（依赖实体化从 npm 拉取 pi 1.5.0 与新增的 pi-schema，签名/asar/清单校验通过）；packaged 冒烟 **14/14**（含 app.asar 内 repo_map） |
+
+### 升级带来、未单独验证的上游收益
+
+流式工具参数 O(n²)→线性、网关瞬时错误重试扩充（含 Zhipu 1308 不再重试）、`durationMs`、
+`Usage.cost.totalFromProvider`、输出预算 15% 预留、MCP 工具参数统一 coerce——均为上游行为，
+本批只验证了“升级不破坏现有链路”，未做针对性压测（如 200KB 工具参数内存对比），
+真实模型收益需 PC22 凭据到位后随评测观察。
+
+### 尚未接入（需小开发，后续批次）
+
+`thinkingLevel` 落消息、`onProviderStreamEvent` 观测、复用上游 `isRetryableAssistantError`/
+`isContextOverflow` 替换框架自写的字符串匹配、`finishTurn`/`prepareRequest` 替换 drain/steering 链路、
+会话中工具变更走 transcript（保 prompt cache）。

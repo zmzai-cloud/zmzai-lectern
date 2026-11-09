@@ -434,6 +434,11 @@ function spawnHost(hostEntry, hostDataDir, hostLog) {
       // V1-S3：浏览器 verifier bootstrap（文件由 ensureVerifierServer 异步写；
       // Host 侧惰性读取，时序天然解耦）
       ...(verifierJsonPath && fs.existsSync(verifierJsonPath) ? { LECTERN_VERIFIER_BOOTSTRAP: verifierJsonPath } : {}),
+      // repo_map wasm 资源锚点（0.18.1 配套）：Host bundle 内框架已打卷、cwd 是
+      // hostData，自然解析失效——指向 standalone 的 node_modules（asar 内 fs 可读）
+      ...(fs.existsSync(path.join(app.getAppPath(), ".next", "standalone", "node_modules", "web-tree-sitter"))
+        ? { LECTERN_REPOMAP_VENDOR: path.join(app.getAppPath(), ".next", "standalone", "node_modules") }
+        : {}),
     },
     stdio: "pipe",
   });

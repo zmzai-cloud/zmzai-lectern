@@ -289,6 +289,18 @@ try {
   await api("/api/fs/file", "PUT", { path: "README.md", sessionId: session.id, content: "# Changed\n" });
   assert.equal(readFileSync(join(workspace, "README.md"), "utf8"), "# Changed\n");
   results.push("workspace file read/write");
+
+  // repo_map wasm 链路（framework 0.18.1 + 打包布局注入）：经 armed 网关到 Host，
+  // 包内解析必须给出真实地图而不是 503/空文本
+  {
+    // 夹具只有 README.md（无代码文件时地图文本本来为空）：先放一个代码文件，
+    // 断言地图里出现其中的符号——证明 tree-sitter 真的在包内解析过
+    await api("/api/fs/file", "PUT", { path: "src/smoke-map.mjs", sessionId: session.id, content: "export function packagedSmokeSymbol() { return 1; }\n" });
+    const repomap = await api("/api/repomap");
+    assert.equal(repomap.ok, true, `packaged repomap unavailable: ${JSON.stringify(repomap).slice(0, 200)}`);
+    assert.match(String(repomap.text), /packagedSmokeSymbol/, "packaged repomap did not parse the fixture symbol");
+    results.push("packaged repo_map resolves wasm inside app.asar and parses fixture symbols");
+  }
   const terminal = await api("/api/terminal", "POST", { sessionId: session.id, command: "git status --short" });
   assert.equal(terminal.backend, "pty", "Native terminal silently fell back to pipes");
   let output = "";

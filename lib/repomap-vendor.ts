@@ -16,7 +16,12 @@ export type RepoMapVendorDirs = { runtime: string; grammar: string };
  *  这里从框架包真实位置按 Node 解析规则找依赖，并核对 wasm 文件确实存在；
  *  都找不到返回 null，调用方据此关闭能力，不去尝试加载。 */
 export function repoMapVendorDirs(): RepoMapVendorDirs | null {
+  // 打包布局（app.asar）：Host bundle 里的框架代码已被 esbuild 打卷、cwd 是
+  // userData，两个自然锚点都失效——Electron 主进程用 LECTERN_REPOMAP_VENDOR
+  // 显式注入 standalone 的 node_modules（asar 内的 fs 经 Electron 补丁可读）
+  const injected = process.env.LECTERN_REPOMAP_VENDOR;
   const anchors: string[] = [];
+  if (injected) anchors.push(path.join(injected, "package.json"));
   try {
     const nested = resolveFrameworkVendorDirs();
     // nested.runtime = <frameworkRoot>/node_modules/web-tree-sitter

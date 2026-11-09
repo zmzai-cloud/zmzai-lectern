@@ -28,8 +28,8 @@ export async function generateSessionTitle(
     const ref = model ?? session.model;
     if (!ref) return null;
     const out = await streamOneText(
-      // StreamFn 的 context 是宽类型（Context），这里断言到 streamOneText 的窄参数
-      runtime.streamFor(session) as Parameters<typeof streamOneText>[0],
+      // framework 0.19.0 起 streamOneText 收 pi StreamFn（TranscriptContext），无需强转
+      runtime.streamFor(session),
       runtime.modelFor(ref),
       TITLE_SYSTEM_PROMPT,
       // 只带首条消息（截断防长文），一次性补全不追求上下文完整

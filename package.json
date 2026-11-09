@@ -60,7 +60,7 @@
     "@tanstack/react-virtual": "^3.14.11",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "@zmzai/agent-framework": "file:vendor/zmzai-agent-framework-0.18.1.tgz",
+    "@zmzai/agent-framework": "file:vendor/zmzai-agent-framework-0.19.0.tgz",
     "@zmzai/theme": "^0.9.16",
     "electron-updater": "6.6.2",
     "exceljs": "^4.4.0",
@@ -77,7 +77,7 @@
     "web-tree-sitter": "0.25.8"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-ai": "1.5.0",
     "@electron/asar": "3.4.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "22.20.1",

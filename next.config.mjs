@@ -35,6 +35,10 @@ const nextConfig = {
       // 依赖，但路由里的目录扫描会被 Next 追踪进 standalone，禁止随包发布。
       ".qoder/**",
       "**/.qoder/**",
+      // Git worktree 工作副本（.worktrees/）：主 checkout 的 next build 会追踪
+      // 泄入 standalone（每次构建 ~500MB）；worktree 内部自身无此目录不受影响
+      ".worktrees/**",
+      "**/.worktrees/**",
     ],
   },
   // 私有 TS 包，需显式转译

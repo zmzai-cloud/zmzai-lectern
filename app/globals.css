@@ -191,7 +191,7 @@ html[data-theme="dark"] {
    + §7.2「会话内容列使用统一的 --conversation-content-max，建议 760–840px」。
    改这一个值，整条阅读轴一起移动。 */
 :root {
-  --conversation-content-max: 800px;
+  --conversation-content-max: 800px; /* 已试 760/800/840，与 Codex 对比 800 最优 */
 }
 
 .chat-user-bubble {
@@ -283,16 +283,28 @@ html[data-theme="dark"] {
 .task-sidebar { container-type: inline-size; }
 @container (max-width: 240px) { .task-new-shortcut { display: none; } }
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
+/* ── 过程组对齐 Codex（2026-11-10 用户参照对比图）：去分割线/外距，
+   过程行与正文同流；单行字号 0.75→0.6875rem、行高 1.5→1.35rem 更紧凑；
+   muted 色进一步降一档到 ink-4（过程信息比 Codex 的标签行更弱）── */
+.chat-workflow-group { margin-block: 6px; border-block: 0; padding-block: 2px; }
+.chat-workflow-group.running { border-block: 0; }
+.chat-workflow-group.running .chat-workflow-toggle { color: var(--color-ink-2); }
+.tool-card-trigger { min-height: 1.35rem; gap: 0.4rem; color: var(--color-ink-3); }
+.tool-card-label { font-size: 0.6875rem; }
+.tool-card-summary { font-size: 0.6875rem; }
+.tool-card-sep { font-size: 0.6875rem; }
+.chat-workflow-toggle { min-height: 1.35rem; font-size: 0.6875rem; color: var(--color-ink-3); }
+
 /* ── 错误行降刺（2026-11-10 用户反馈"错误行刺眼"）──
    ToolCard 失败行：不再整行 danger——图标 danger + 文字 ink-3（可读性优先），
    hover 或展开才转 danger。同理修 chat-error-toggle（运行中断行）。 */
-.tool-card.failed .tool-card-trigger { color: var(--color-ink-3); }
+.tool-card.failed .tool-card-trigger { color: var(--color-ink-2); }
 .tool-card.failed .tool-card-glyph { color: var(--color-danger); }
 .tool-card.failed .tool-card-trigger:hover,
 .tool-card.failed.open .tool-card-trigger { color: var(--color-danger); }
 .tool-card.failed .tool-card-trigger:hover { filter: none; }
 .tool-card-flag { color: var(--color-danger); opacity: 0.8; font-weight: 400; }
-.chat-error-toggle { color: var(--color-ink-3); }
+.chat-error-toggle { color: var(--color-ink-2); }
 .chat-error-toggle > svg:first-child { color: var(--color-danger); }
 .chat-error-toggle:hover { color: var(--color-danger); filter: none; }
 .chat-error-card.open .chat-error-toggle { color: var(--color-danger); }

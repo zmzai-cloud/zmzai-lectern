@@ -381,13 +381,13 @@ function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenCh
       // 叙述长一个样，扫一眼分不清；结论段加一档字重与行距，仅靠排版分层。
       return markdown ? (
         <TextBlock text={part.text}>
-          <div className={cn("text-[0.875rem] leading-[1.65] text-ink", emphasis && "chat-final-answer")}>
+          <div className={cn("text-[0.9375rem] leading-[1.7] text-ink", emphasis && "chat-final-answer")}>
             <MessageText text={part.text} markdown />
           </div>
         </TextBlock>
       ) : (
         <TextBlock text={part.text}>
-          <div className={cn("whitespace-pre-wrap text-[0.875rem] leading-[1.65] text-ink", emphasis && "chat-final-answer")}><MessageText text={part.text} /></div>
+          <div className={cn("whitespace-pre-wrap text-[0.9375rem] leading-[1.7] text-ink", emphasis && "chat-final-answer")}><MessageText text={part.text} /></div>
         </TextBlock>
       );
     case "reasoning":
@@ -972,7 +972,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                         else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveEdit();
                       }}
                       rows={Math.min(12, Math.max(2, editing.text.split("\n").length))}
-                      className="w-full resize-y rounded-lg border border-accent bg-surface px-3 py-2 text-[0.875rem] leading-[1.65] text-ink outline-none"
+                      className="w-full resize-y rounded-lg border border-accent bg-surface px-3 py-2 text-[0.9375rem] leading-[1.7] text-ink outline-none"
                     />
                     <div className="mt-1.5 flex justify-end gap-1.5">
                       <button
@@ -1000,7 +1000,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                 {m.id === lastUserMessageId && memoryTrace && memoryTrace.hitCount > 0 && <MemoryTraceRow trace={memoryTrace} />}
                 <div className="flex justify-end">
                 <div className="chat-user-message relative">
-                  <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.875rem] leading-[1.65] text-ink">
+                  <div className="chat-user-bubble whitespace-pre-wrap px-4 py-3 text-[0.9375rem] leading-[1.7] text-ink">
                     {m.skill && (
                       <div className="mb-1.5 flex items-center gap-1.5 text-[0.8125rem] leading-5">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" className="shrink-0 text-accent">

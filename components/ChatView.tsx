@@ -231,7 +231,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiP
       <div className="chat-workflow-body-wrap" inert={!open}>
         <div className="chat-workflow-body">
           {parts.map((p) => (
-            <PartView key={p.part.id} part={p.part} diff={p.diff} markdown onOpenFile={onOpenFile} subagent={p.subagent} onOpenChild={onOpenChild} />
+            <PartView key={p.part.id} part={p.part} diff={p.diff} markdown onOpenFile={onOpenFile} subagent={p.subagent} onOpenChild={onOpenChild} passthrough={p.part.type === "text"} />
           ))}
         </div>
       </div>

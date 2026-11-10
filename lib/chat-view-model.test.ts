@@ -12,7 +12,10 @@ function tool(id: string): UiPart {
 }
 
 describe("buildMessageSlots", () => {
-  it("keeps narrative order and only merges adjacent process parts", () => {
+  // 2026-11-10 语义变更（对齐 dsh/Codex 连续过程块）：工具间还有后续工具的
+  // text 叙述并入过程块——过程是连续一块，不再切成 [过程组][text][过程组] 碎片；
+  // 末尾结论（后面没有工具）保持独立正文段。
+  it("工具间的叙述并入过程块，末尾结论保持独立", () => {
     const slots = buildMessageSlots([
       text("intro"),
       tool("read-1"),
@@ -23,12 +26,17 @@ describe("buildMessageSlots", () => {
     ]);
 
     expect(slots.map((slot) => slot.kind === "flow" ? `flow:${slot.items.map((item) => item.part.id).join(",")}` : `part:${slot.id}`)).toEqual([
-      "part:intro",
-      "flow:read-1,reason-1",
-      "part:middle",
-      "flow:read-2",
+      "flow:intro,read-1,reason-1,middle,read-2",
       "part:answer",
     ]);
+  });
+
+  it("没有后续工具的正文不被并入（开头叙述+结论都保持正文）", () => {
+    const slots = buildMessageSlots([
+      text("opening"),
+      text("answer"),
+    ]);
+    expect(slots.every((slot) => slot.kind === "part")).toBe(true);
   });
 });
 

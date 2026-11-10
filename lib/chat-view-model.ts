@@ -9,11 +9,21 @@ function isFlowPart(item: UiPart): boolean {
   return item.part.type === "reasoning" || item.part.type === "subtask" || (item.part.type === "tool" && !item.diff);
 }
 
+/** 工具间的短叙述（模型边做边写的过场文字）也归过程块（2026-11-10 对齐 dsh/Codex）：
+ *  规则与 ChatView 的 passthrough 一致——text 段之后仍有工具调用。归组后不再
+ *  把消息切成 [过程组][text][过程组][text] 的碎片流，过程是连续一块。 */
+function isPassthroughText(parts: UiPart[], index: number): boolean {
+  const item = parts[index]!;
+  if (item.part.type !== "text" || !item.part.text.trim()) return false;
+  return parts.slice(index + 1).some((later) => later.part.type === "tool");
+}
+
 export function buildMessageSlots(parts: UiPart[]): MessageSlot[] {
   const slots: MessageSlot[] = [];
-  for (const item of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const item = parts[i]!;
     const previous = slots[slots.length - 1];
-    if (isFlowPart(item)) {
+    if (isFlowPart(item) || isPassthroughText(parts, i)) {
       if (previous?.kind === "flow") previous.items.push(item);
       else slots.push({ kind: "flow", id: item.part.id, items: [item] });
     } else {

@@ -675,6 +675,40 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     return ids;
   }, [visible, taskView?.completed]);
 
+  /** 跨消息过程归并（2026-11-10 "不是呀"轮）：一个任务的执行是 N 条 assistant
+   *  消息（pi 每个 turn 一条），逐条渲染就是 N 个碎片过程组。这里把"中间消息
+   *  （后面还有 assistant 消息）的 flow 块"合并成一个跨消息大过程组索引：
+   *  flowOwner[partId] = 第一个过程块的消息 id——渲染时同组 parts 一起给
+   *  WorkflowGroup。末条消息的 flow 块与正文保持原样。 */
+  const mergedFlow = useMemo(() => {
+    const lastAssistantIdx = (() => { for (let i = visible.length - 1; i >= 0; i--) if (visible[i]!.role === "assistant") return i; return -1; })();
+    const owner = new Map<string, string>(); // slotKey → 消息 id（组锚点）
+    const collected = new Map<string, UiPart[]>(); // 消息 id → 合并后的全部 flow parts
+    let anchorId: string | null = null;
+    visible.forEach((m, idx) => {
+      if (m.role !== "assistant") { anchorId = null; return; }
+      const slots = buildMessageSlots(m.parts);
+      const flowParts: UiPart[] = [];
+      for (const slot of slots) {
+        if (slot.kind === "flow") flowParts.push(...slot.items);
+        else if (idx < lastAssistantIdx && slot.item.part.type !== "tool") {
+          // 中间消息的正文段也是过程；带 diff 的 tool（编辑卡）保持独立——
+          // diff 渲染需要 PartView 的 diff 参数，并入组会丢
+          flowParts.push(slot.item);
+        }
+      }
+      if (idx < lastAssistantIdx) {
+        if (anchorId) { const prev = collected.get(anchorId)!; prev.push(...flowParts); }
+        else { anchorId = m.id; collected.set(anchorId, flowParts); owner.set(`merged-${m.id}`, m.id); }
+      } else {
+        // 末条消息：独立渲染（可含自己的 flow + 正文）
+        owner.set(`tail-${m.id}`, m.id);
+        collected.set(`tail-${m.id}`, flowParts);
+      }
+    });
+    return { owner, collected, lastAssistantIdx };
+  }, [visible]);
+
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
     for (let i = visible.length - 1; i >= 0; i--) {
@@ -1076,14 +1110,29 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               </div>
             );
           }
-          const slots = buildMessageSlots(m.parts);
-          const blocks: React.ReactNode[] = slots.map((slot) =>
-            slot.kind === "flow" ? (
-              <WorkflowGroup key={`${m.id}-${slot.id}`} parts={slot.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
-            ) : (
-              <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} passthrough={passthroughTextIds.has(slot.item.part.id)} />
-            ),
-          );
+          // 跨消息归并：中间 assistant 消息的过程并入锚点大组（见 mergedFlow 注释）——
+          // 一个任务一个过程块；锚点消息渲染合并后的大组，非锚点中间消息渲染 null
+          const isMergedAnchor = mergedFlow.owner.has(`merged-${m.id}`);
+          const isMergedTail = mergedFlow.owner.has(`tail-${m.id}`);
+          if (!isMergedAnchor && !isMergedTail && idx < mergedFlow.lastAssistantIdx) {
+            return null;
+          }
+          const blocks: React.ReactNode[] = [];
+          if (isMergedAnchor) {
+            const mergedParts = mergedFlow.collected.get(`merged-${m.id}`) ?? [];
+            blocks.push(
+              <WorkflowGroup key={`${m.id}-merged`} parts={mergedParts} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />,
+            );
+          } else {
+            const slots = buildMessageSlots(m.parts);
+            blocks.push(...slots.map((slot) =>
+              slot.kind === "flow" ? (
+                <WorkflowGroup key={`${m.id}-${slot.id}`} parts={slot.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
+              ) : (
+                <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} passthrough={passthroughTextIds.has(slot.item.part.id)} />
+              ),
+            ));
+          }
           return (
             <div key={m.id} data-message-id={m.id} className="chat-assistant-message">
               <div className="min-w-0 flex-1 space-y-1.5">
@@ -1110,6 +1159,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             </div>
           );
           };
+          // 归并掉的过程消息整行不渲染（返回 null 会让虚拟行只剩空容器占 ~52px）
+          if (renderMessage() === null) return null;
           return <div key={m.id} data-index={idx} data-virtual-message={m.id} ref={virtual.measureElement}
             className="absolute left-0 top-0 min-h-8 w-full pb-5" style={{ transform: `translateY(${item.start - scrollMargin}px)` }}>
             {m.id === firstUnreadId && <div className="mb-4 flex items-center gap-3 text-[0.6875rem] text-ink-3"><span className="h-px flex-1 bg-line" />未读消息<span className="h-px flex-1 bg-line" /></div>}

@@ -339,3 +339,30 @@ framework npm 发布与 Lectern 发版需授权。
 
 - 弹层修复的验证 = hover 断言通过 + CSS :hover 对重渲染免疫的结构保证；「写入文件与 hover 交错」的原始时序（第五批 A/B 复现场景）未单独重测——冒烟里该步已被移到更新器之后（84e87e3）。
 - 字体观感（子集覆盖、字重渲染）属主观项，未做视觉截图评审；CJK 统一表意全保留，理论上无缺字，生僻扩展区按字形回退。
+
+## 第八批：停止卡死修复（2026-11-10，用户实测暴露）
+
+用户装新构建实测："停也停不了"。活体取证（运行实例的事件库）定位两层根因：
+
+1. **ToolContext.abort 是永不触发的占位信号**（attempt-executor defaultToolContext 挂
+   `new AbortController().signal`，run 的真实 AbortController 从未接入）——停止请求
+   根本到不了工具层；
+2. **grep 无界扫描**：逐文件全文读取，零中止检查、零预算（实测 15GB/20 万文件工作区
+   `grep spec/**` 挂死 20+ 分钟）。
+
+### 修复（框架 0.19.1 = be504f93；Lectern = 8d3a09f）
+
+- runLoop 建立的 AbortController 直接回填 `toolContext.abort`（adaptTool 持引用，运行期生效）
+- grep：逐文件 `throwIfAborted()` + 2000 文件/单文件 1MB 预算，触顶如实报 truncated（metadata 带 scanned/skippedLarge/total）
+- **abort 强制收尾兜底**：`agent.prompt/continue` 与「abort + 5s 宽限」竞速；宽限耗尽按 cancelled 走完收尾（租约/事件/onRunEnd 照常），在飞工具部件标 `error(outcome=unknown)`；晚到结果只追加审计，不卡会话
+
+### 已验证
+
+- 框架 624 测试（+4：中止即停 AbortError、预算触顶、大文件跳过、**挂死工具 5s 强制收尾**——断言 task=cancelled、耗时≥4.5s、工具态 error/unknown）
+- Lectern 731 / typecheck 0；重新打包 + packaged 冒烟通过
+- 用户卡死实例已退出（其任务仅执行记忆检索与 grep，均为只读，无副作用损失）
+
+### 用户实测其余暴露项（本批未收口）
+
+- 首帧延迟/成批出现：系旧构建（10/26）SSE 轮询退化，新构建已修（第六批前实测 6ms/10ms）——待用户在新包复测确认体感
+- 大工作区上 list() 全量遍历成本仍在（glob/list 未加预算，只挡了 grep 读取侧）

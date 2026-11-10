@@ -37,6 +37,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        {/* 本地字体预加载（latin 片 ~33KB）：数字/ASCII 界面文本零回退闪烁；
+            CJK 片走 unicode-range 懒加载（见 app/fonts.css） */}
+        <link rel="preload" href="/fonts/misans-regular-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/misans-medium-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body>
         <ElectronShellMarker />

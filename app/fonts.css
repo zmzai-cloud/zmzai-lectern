@@ -1,0 +1,75 @@
+/* Lectern 本地字体（2026-11-10 自托管）
+ *
+ * 此前经 @zmzai/theme/fonts 从 jsDelivr CDN 加载——桌面应用离线时字体直接失效、
+ * 弱网首帧闪烁（font-display:swap 的回退字体跳动）。现全部自托管：
+ *
+ * - MiSans（--font-sans 主字体）四字重，每字重切两片：
+ *   latin 片 ~33KB 预加载（数字/ASCII 界面文本零闪烁），CJK 片按 unicode-range
+ *   懒生效（web 端首屏不必拉全量中文；桌面本地文件无网络成本）。
+ *   子集覆盖：Latin-1 + 通用标点 + 货币 + 箭头/几何 + CJK 标点 + 假名 +
+ *   CJK 统一表意（U+4E00-9FFF 全保留，生僻字未裁）+ 全角形式。区间外字符
+ *   按字形回退 PingFang/雅黑（逐字回退，观感无断裂）。
+ * - JetBrains Mono 400/700（@fontsource latin，21KB）。
+ * - Noto Serif SC 不再加载：Lectern 全站无 font-serif 使用（砍掉两份大字）。
+ *
+ * 字族名与 theme 的 --font-sans/--font-mono 栈保持一致，令牌无需改动。 */
+
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-regular-latin.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+017F, U+0192, U+01CD-01DC, U+2000-206F, U+2070-209F, U+20A0-20BF, U+2100-214F, U+2190-21BB, U+21D0-21D5, U+2200-22BF, U+2400-243F, U+2460-24FF, U+2500-25FF, U+2600-26FF, U+2700-27BF, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-regular-cjk.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-2EF3, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+3200-33FF, U+4DC0-4DFF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE19, U+FE30-FE4F, U+FF00-FFEF, U+FFFD;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-medium-latin.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+017F, U+0192, U+01CD-01DC, U+2000-206F, U+2070-209F, U+20A0-20BF, U+2100-214F, U+2190-21BB, U+21D0-21D5, U+2200-22BF, U+2400-243F, U+2460-24FF, U+2500-25FF, U+2600-26FF, U+2700-27BF, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-medium-cjk.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-2EF3, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+3200-33FF, U+4DC0-4DFF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE19, U+FE30-FE4F, U+FF00-FFEF, U+FFFD;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-semibold-latin.woff2') format('woff2');
+  font-weight: 600; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+017F, U+0192, U+01CD-01DC, U+2000-206F, U+2070-209F, U+20A0-20BF, U+2100-214F, U+2190-21BB, U+21D0-21D5, U+2200-22BF, U+2400-243F, U+2460-24FF, U+2500-25FF, U+2600-26FF, U+2700-27BF, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-semibold-cjk.woff2') format('woff2');
+  font-weight: 600; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-2EF3, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+3200-33FF, U+4DC0-4DFF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE19, U+FE30-FE4F, U+FF00-FFEF, U+FFFD;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-bold-latin.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+017F, U+0192, U+01CD-01DC, U+2000-206F, U+2070-209F, U+20A0-20BF, U+2100-214F, U+2190-21BB, U+21D0-21D5, U+2200-22BF, U+2400-243F, U+2460-24FF, U+2500-25FF, U+2600-26FF, U+2700-27BF, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/misans-bold-cjk.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-2EF3, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+3200-33FF, U+4DC0-4DFF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE19, U+FE30-FE4F, U+FF00-FFEF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-400.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-700.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}

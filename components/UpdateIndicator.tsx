@@ -74,13 +74,16 @@ export function UpdateIndicator({ update, taskRunning, onDownload, onPause, onCo
   };
 
   return (
-    <div className="relative mr-0.5 shrink-0" onMouseEnter={hover} onMouseLeave={close}>
-      {hovered && (
-        <div
-          id="update-changelog"
-          role="tooltip"
-          className="absolute bottom-full left-0 z-40 mb-2 w-[19rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-bg shadow-lg"
-        >
+    // 弹层可见性双通道：CSS group-hover 保活 + hovered state（focus 键盘路径）。
+    // 纯 state 在工作区文件变更触发重渲染时会丢 hover 态（弹层被打断，
+    // packaged-smoke 实测）；CSS :hover 跟踪真实指针位置，对重渲染免疫。
+    <div className="group relative mr-0.5 shrink-0" onMouseEnter={hover} onMouseLeave={close}>
+      <div
+        id="update-changelog"
+        role="tooltip"
+        data-open={hovered ? "true" : undefined}
+        className="absolute bottom-full left-0 z-40 mb-2 hidden w-[19rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-bg shadow-lg group-hover:block data-[open=true]:block"
+      >
           <div className="border-b border-line px-3.5 py-2.5">
             <div className="text-xs font-medium text-ink">v{update.version} 更新日志</div>
             {notes && <div className="mt-0.5 text-[0.6875rem] text-ink-3">{formatReleaseDate(notes.date)}</div>}
@@ -103,8 +106,7 @@ export function UpdateIndicator({ update, taskRunning, onDownload, onPause, onCo
             )}
           </div>
           <div className="border-t border-line bg-surface px-3.5 py-2 text-[0.625rem] text-ink-3">{statusText}</div>
-        </div>
-      )}
+      </div>
       <button
         type="button"
         data-testid="update-indicator"

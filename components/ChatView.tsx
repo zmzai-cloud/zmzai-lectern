@@ -560,7 +560,7 @@ type TimelineItem = { tool: string; title?: string; status: string; durationMs: 
 
 function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?: TimelineItem[] }) {
   const kind = summary.kind;
-  const label = kind === "completed" ? "本轮已结束" : kind === "aborted" ? "本轮被中断" : "本轮出错";
+  const label = kind === "completed" ? "已完成" : kind === "aborted" ? "已中断" : "出错";
   const dot = kind === "completed" ? "bg-success" : kind === "aborted" ? "bg-warning" : "bg-danger";
   const meta = summary.meta;
   const parts: string[] = [];
@@ -574,11 +574,9 @@ function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?
     <details className="chat-task-summary" open={kind !== "completed"} data-attempt-summary>
       <summary className="cursor-pointer py-2 text-xs text-ink-2">{label}{parts.length ? ` · ${parts.join(" · ")}` : ""}</summary>
       <div>
-      <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
+      <div className="flex items-center gap-2 px-3 pt-2 pb-1">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-2">{label}</span>
-        <span className="flex-1" />
-        {parts.length > 0 && <span className="font-mono text-[0.625rem] text-ink-3">{parts.join(" · ")}</span>}
+        <span className="text-[0.6875rem] font-medium text-ink-2">{label}{parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}</span>
       </div>
       <div className="px-3 py-2.5 text-[0.8125rem] leading-[1.6] text-ink">{summary.text}</div>
       {timeline && timeline.length > 0 ? (
@@ -600,11 +598,11 @@ function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?
       {showTimeline && timeline && timeline.length > 0 && (
         <div className="space-y-0.5 border-t border-line px-3 py-2">
           {timeline.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 font-mono text-[0.625rem] leading-5">
+            <div key={i} className="flex items-center gap-2 font-mono text-[0.625rem] leading-5 tabular-nums">
               <span className={cn("h-1 w-1 shrink-0 rounded-full", t.status === "error" ? "bg-danger" : t.status === "running" ? "bg-live" : "bg-success")} />
-              <span className="shrink-0 text-ink-2">{t.tool}</span>
-              {t.title && <span className="min-w-0 truncate text-ink-3" title={t.title}>{t.title}</span>}
-              {typeof t.durationMs === "number" && <span className="ml-auto shrink-0 text-ink-3">{(t.durationMs / 1000).toFixed(1)}s</span>}
+              <span className="w-16 shrink-0 truncate text-ink-2" title={t.tool}>{t.tool}</span>
+              {t.title && <span className="min-w-0 flex-1 truncate text-ink-3" title={t.title}>{t.title}</span>}
+              {typeof t.durationMs === "number" && <span className="ml-auto w-12 shrink-0 text-right text-ink-3">{(t.durationMs / 1000).toFixed(1)}s</span>}
             </div>
           ))}
         </div>
@@ -1219,13 +1217,13 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           同一层级——都是「现在做不了某件事 + 出路在这」的事，不是 4s 提示的事。 */}
       {recoveryBlocked && (
         <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-tint px-4 py-1.5 text-[0.6875rem] text-warning">
-          <span className="min-w-0 flex-1">上次任务中断，外部改动未确认——新消息暂时发不出</span>
+          <span className="min-w-0 flex-1">上次任务被中断，点击确认后可在同一会话继续</span>
           <button
             type="button"
             onClick={() => onResolveRecovery?.()}
             className="shrink-0 rounded-pill bg-warning/15 px-2.5 py-1 font-medium text-warning transition-colors hover:bg-warning/25"
           >
-            核对并继续上次任务
+            继续上次任务
           </button>
         </div>
       )}

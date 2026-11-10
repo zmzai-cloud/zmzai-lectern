@@ -283,6 +283,20 @@ html[data-theme="dark"] {
 .task-sidebar { container-type: inline-size; }
 @container (max-width: 240px) { .task-new-shortcut { display: none; } }
 .chat-view .markdown-body { font-size: 15px; line-height: 1.8; }
+/* ── 错误行降刺（2026-11-10 用户反馈"错误行刺眼"）──
+   ToolCard 失败行：不再整行 danger——图标 danger + 文字 ink-3（可读性优先），
+   hover 或展开才转 danger。同理修 chat-error-toggle（运行中断行）。 */
+.tool-card.failed .tool-card-trigger { color: var(--color-ink-3); }
+.tool-card.failed .tool-card-glyph { color: var(--color-danger); }
+.tool-card.failed .tool-card-trigger:hover,
+.tool-card.failed.open .tool-card-trigger { color: var(--color-danger); }
+.tool-card.failed .tool-card-trigger:hover { filter: none; }
+.tool-card-flag { color: var(--color-danger); opacity: 0.8; font-weight: 400; }
+.chat-error-toggle { color: var(--color-ink-3); }
+.chat-error-toggle > svg:first-child { color: var(--color-danger); }
+.chat-error-toggle:hover { color: var(--color-danger); filter: none; }
+.chat-error-card.open .chat-error-toggle { color: var(--color-danger); }
+
 .chat-workflow-group { margin-block: 12px; border-block: 1px solid var(--color-line); padding-block: 5px; }
 .chat-workflow-group.running { border-block-color: color-mix(in oklab, var(--color-live) 24%, var(--color-line)); }
 .chat-turn-closure { margin-top: 16px; border-top: 1px solid var(--color-line); }
@@ -290,7 +304,7 @@ html[data-theme="dark"] {
 .chat-turn-closure .chat-task-delivery { border-radius: 0; background: transparent; padding: 14px 0; }
 .chat-turn-closure .chat-task-summary { border-block: 0; padding: 0; }
 .chat-turn-artifacts { display: grid; gap: 6px; padding-bottom: 14px; }
-.chat-dock-todos { width: 100%; max-width: calc(var(--conversation-content-max) + 3rem); max-height: 180px; margin-inline: auto; padding-inline: 24px; overflow-y: auto; }
+.chat-dock-todos { width: 100%; max-width: calc(var(--conversation-content-max) + 3rem); max-height: 140px; margin-inline: auto; padding-inline: 24px; overflow-y: auto; }
 .chat-dock-todos .chat-task-plan { padding: 8px 0 0; border-bottom: 0; }
 /* 乐观回显（走查 F2）：发送瞬间的气泡半透明，真实 message.updated 落地后
    换成实体消息转实——“到底发没发出去”的不确定感靠这一档透明度表达。 */
@@ -298,7 +312,7 @@ html[data-theme="dark"] {
 /* 交付后结论段（走查 F4）：答案与过场叙述同为正文，扫一眼分不清——结论段
    加一档字号/行距/字重，仅排版分层，不引线框。 */
 .chat-final-answer { font-size: 0.9375rem; line-height: 1.75; font-weight: 500; }
-.chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.7rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
+.chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.5rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
 .chat-workflow-toggle:hover { color: var(--color-ink); }
 .chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }
 .chat-workflow-failed { flex: 0 0 auto; color: var(--color-danger); }
@@ -312,7 +326,7 @@ html[data-theme="dark"] {
    内容常驻 DOM（收起时 0fr + overflow hidden + 透明），高度动画因此可逆。 */
 .chat-workflow-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
 .chat-workflow-group.open .chat-workflow-body-wrap { grid-template-rows: 1fr; }
-.chat-workflow-body { display: grid; gap: 0.25rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-workflow-body { display: grid; gap: 0.125rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
 .chat-workflow-group.open .chat-workflow-body { opacity: 1; }
 /* 运行中断折叠行：与工作流程组同款形态，但整行 danger（与失败工具行同层级）。
    展开才看原始错误 / 原因建议 / 断点统计——历史错误不再摊成大红框。 */
@@ -342,7 +356,7 @@ html[data-theme="dark"] {
 .chat-subtask-chevron.open { opacity: 1; transform: rotate(180deg); }
 .chat-subtask-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
 .chat-subtask.open .chat-subtask-body-wrap { grid-template-rows: 1fr; }
-.chat-subtask-body { display: grid; gap: 0.25rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-subtask-body { display: grid; gap: 0.125rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
 .chat-subtask.open .chat-subtask-body { opacity: 1; }
 .chat-view .markdown-body :not(pre) > code { border: 0; border-radius: 4px; }
 .chat-view .markdown-body table { display: block; max-width: 100%; overflow-x: auto; }

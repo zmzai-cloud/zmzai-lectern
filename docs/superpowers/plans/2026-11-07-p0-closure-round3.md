@@ -286,3 +286,27 @@ framework npm 发布与 Lectern 发版需授权。
 `thinkingLevel` 落消息、`onProviderStreamEvent` 观测、复用上游 `isRetryableAssistantError`/
 `isContextOverflow` 替换框架自写的字符串匹配、`finishTurn`/`prepareRequest` 替换 drain/steering 链路、
 会话中工具变更走 transcript（保 prompt cache）。
+
+## 第六批：PI 1.5 能力接入·第一/二档（2026-11-10）
+
+用户确认一二档全做。闸门不变（framework npm 发布 / Lectern 发版 / 推送 / PC22 凭据）。
+
+### 已实施
+
+| 提交 | 内容 |
+| --- | --- |
+| 框架 196c3a54（0.19.0，未发 npm） | ①投影：assistant 消息 info 与 step-finish 落 `durationMs`/`thinkingLevel`/`cost{total,totalFromProvider}`，工具完成/错误态落单调时钟执行耗时；②F6 重试判定新增 `upstreamRetryable`（pi-ai `isRetryableAssistantError` 优先，本地字符串列表兜底）；③`RunnerDeps`/`createServer` 新增 `onProviderStreamEvent` 透传（经 Agent 进流函数 options；`createAgentRuntime` 经既有 `runnerOptions` 全量透传自动获得） |
+| Lectern 541eb57 | usage 端点聚合会话累计费用（providerReported 口径）+ Composer 费用展示；轮次时间线优先单调耗时；收尾区回显实际推理档位；provider 错误类原始流事件环形日志（50 条）随 `/api/settings/failover` 透出；PC22 执行器记 `cost`/`cost_provider_reported` |
+
+**第二档迁移评估（决策=不迁）**：排队/steering 不迁 pi 内存队列——框架排队经 WorkflowStore 持久化（spec §4.2「内存队列仅缓存」），pi steering/followUp 是进程内 PendingMessageQueue 且语义为 run 中注入（框架为 run 间 drain）；迁移丢持久化契约。已采纳官方钩子：finishTurn（第五批）。
+
+### 已验证
+
+- 框架：typecheck 0；**620** 测试通过（+7：投影 3、上游重试分类 3、事件透传 1）；build 通过。
+- Lectern：typecheck/arch(违规 0)/**731** 测试/test:release 111/host:build；生产构建退出 0（490s）；**armed 28/28**。
+- 测试钉住的上游精度收益：`server_busy` 上游判可重试而本地列表不认；Zhipu `1308` 用量超限判不可重试。
+
+### 待真实模型验证
+
+费用/耗时/档位三者的**真实数值**需模型调用才会产生——armed 端到端用挂起假 relay（零模型调用），
+只能验证字段链路不破坏既有契约。PC22 凭据到位后随评测一并观察（cost 从 null 变真值即为本批生效证据）。

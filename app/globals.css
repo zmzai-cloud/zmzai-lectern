@@ -322,6 +322,8 @@ html[data-theme="dark"] {
 /* 交付后结论段（走查 F4）：答案与过场叙述同为正文，扫一眼分不清——结论段
    加一档字号/行距/字重，仅排版分层，不引线框。 */
 .chat-final-answer { font-size: 0.9375rem; line-height: 1.75; font-weight: 500; }
+/* 中途叙述（工具间的短文字）：与过程行同层——小一号、灰一档 */
+.chat-passthrough-text { font-size: 0.8125rem; line-height: 1.6; color: var(--color-ink-2); }
 .chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.5rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
 .chat-workflow-toggle:hover { color: var(--color-ink); }
 .chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }

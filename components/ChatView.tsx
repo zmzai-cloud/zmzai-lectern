@@ -372,22 +372,24 @@ function MessageText({ text, markdown = false }: { text: string; markdown?: bool
   </>;
 }
 
-function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenChild, emphasis = false }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void; emphasis?: boolean }) {
+function PartView({ part, diff, markdown = false, onOpenFile, subagent, onOpenChild, emphasis = false, passthrough = false }: { part: Part; diff?: string; markdown?: boolean; onOpenFile?: (path: string, line?: number) => void; subagent?: SubagentActivity; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void; emphasis?: boolean; passthrough?: boolean }) {
   switch (part.type) {
     case "text":
       // assistant 正文用 Markdown（流式稳定、代码高亮）；用户消息保持纯文本。
       // 两种形态都包 per-block 悬停工具条（复制全文）。
       // emphasis（走查 F4）：交付后的结论段——同字号的正文流里「答案」和过场
       // 叙述长一个样，扫一眼分不清；结论段加一档字重与行距，仅靠排版分层。
+      // passthrough：运行中跟在工具前的短叙述——过程级弱化（小一号、灰一档），
+      // 与工具行同一视觉层；轮次末尾正文/最终结论保持原排版
       return markdown ? (
         <TextBlock text={part.text}>
-          <div className={cn("text-[0.9375rem] leading-[1.7] text-ink", emphasis && "chat-final-answer")}>
+          <div className={cn("text-[0.9375rem] leading-[1.7] text-ink", passthrough && "chat-passthrough-text", emphasis && "chat-final-answer")}>
             <MessageText text={part.text} markdown />
           </div>
         </TextBlock>
       ) : (
         <TextBlock text={part.text}>
-          <div className={cn("whitespace-pre-wrap text-[0.9375rem] leading-[1.7] text-ink", emphasis && "chat-final-answer")}><MessageText text={part.text} /></div>
+          <div className={cn("whitespace-pre-wrap text-[0.9375rem] leading-[1.7] text-ink", passthrough && "chat-passthrough-text", emphasis && "chat-final-answer")}><MessageText text={part.text} /></div>
         </TextBlock>
       );
     case "reasoning":
@@ -653,6 +655,26 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   // 交付后的结论段（走查 F4）：任务完成时，最新一条 assistant 消息里最后一段
   // 非空正文即「答案」。过场叙述（“接下来我派两个子代理…”）与结论同为正文，
   // 扫一眼分不清主次——结论段加一档排版分量（chat-final-answer）。
+  /** 中途叙述降级（2026-11-10，Codex 对照）：模型边做边写的短段落（"我来查…"）
+   *  与工具行交错时是过程信息，不是答案。规则：任务运行中、该 text 段之后仍
+   *  跟着工具调用（后面还有动作）→ 渲染为弱化过程文字；轮次末尾的长段（后面
+   *  没有工具了）保持正文。交付后的最终结论段仍由 emphasis 强调。 */
+  const passthroughTextIds = useMemo(() => {
+    if (taskView?.completed) return new Set<string>();
+    const ids = new Set<string>();
+    for (const m of visible) {
+      if (m.role !== "assistant") continue;
+      const parts = m.parts.map((x) => x.part);
+      for (let j = 0; j < parts.length; j++) {
+        const part = parts[j]!;
+        if (part.type !== "text" || !part.text.trim()) continue;
+        const hasToolAfter = parts.slice(j + 1).some((later) => later.type === "tool" && (later.state.status === "running" || later.state.status === "completed" || later.state.status === "error"));
+        if (hasToolAfter) ids.add(part.id);
+      }
+    }
+    return ids;
+  }, [visible, taskView?.completed]);
+
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
     for (let i = visible.length - 1; i >= 0; i--) {
@@ -1059,7 +1081,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             slot.kind === "flow" ? (
               <WorkflowGroup key={`${m.id}-${slot.id}`} parts={slot.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
             ) : (
-              <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} />
+              <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} passthrough={passthroughTextIds.has(slot.item.part.id)} />
             ),
           );
           return (

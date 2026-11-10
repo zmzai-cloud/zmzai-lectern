@@ -310,3 +310,32 @@ framework npm 发布与 Lectern 发版需授权。
 
 费用/耗时/档位三者的**真实数值**需模型调用才会产生——armed 端到端用挂起假 relay（零模型调用），
 只能验证字段链路不破坏既有契约。PC22 凭据到位后随评测一并观察（cost 从 null 变真值即为本批生效证据）。
+
+## 第七批：界面与字体（2026-11-10）
+
+用户要求「整体界面和字体优化一波」。约束沿用：@zmzai/theme 组件与视觉系统不动（纯白/墨黑/洋红点睛、IDE 密度），只做应用层。
+
+### 已实施（0510f49）
+
+- **字体自托管**（此前经 theme/fonts 从 jsDelivr CDN 加载——桌面离线字体失效、弱网首帧回退闪烁，且是全应用唯一外部资源依赖）：
+  - MiSans 四字重 pyftsubset 子集化（Latin-1+通用标点+货币+箭头/几何+CJK 标点+假名+CJK 统一表意 U+4E00-9FFF 全保留+全角形式；区间外字符逐字回退 PingFang/雅黑），每字重切 **latin(~33KB)/CJK(3.5MB)** 两片，CJK 走 unicode-range 懒生效；
+  - JetBrains Mono 400/700 本地（各 21KB）；**Noto Serif SC 停载**（全站无 font-serif 使用）；
+  - 字族名与 theme `--font-sans/--font-mono` 栈一致，令牌零改动；layout 预加载 regular/medium latin 片。
+  - 代价：仓库与安装包 +约 14MB（DMG 217→231MB）。
+- **排版**：body `tabular-nums`（时间戳/token/费用数字纵向对齐，CJK 无影响）。
+- **更新日志弹层修复**（第六批记录在案的界面缺陷）：可见性改 CSS `group-hover` 保活 + `data-open`（focus 键盘路径保留 state）——纯 state 在工作区文件变更触发重渲染时丢 hover 态。
+
+### 已验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 全量回归 | typecheck 0；test 731；test:release 111；arch 违规 0 |
+| 生产构建 | 退出 0（503s）；**构建产物 CSS 零 CDN/字体外链** |
+| next start 实测 | /fonts/*.woff2 200；HTML 含两个 preload link |
+| armed-e2e | 28/28 |
+| DMG 打包 + packaged 冒烟 | 退出 0；standalone public/fonts 10 文件；**14/14**（含 changelog hover 断言） |
+
+### 诚实口径
+
+- 弹层修复的验证 = hover 断言通过 + CSS :hover 对重渲染免疫的结构保证；「写入文件与 hover 交错」的原始时序（第五批 A/B 复现场景）未单独重测——冒烟里该步已被移到更新器之后（84e87e3）。
+- 字体观感（子集覆盖、字重渲染）属主观项，未做视觉截图评审；CJK 统一表意全保留，理论上无缺字，生僻扩展区按字形回退。

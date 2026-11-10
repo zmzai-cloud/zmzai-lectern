@@ -132,6 +132,8 @@ export type UsageInfo = {
   output: number;
   cacheRead: number;
   steps: number;
+  /** 会话累计费用（pi 1.5+ 消息级 cost 求和）；providerReported=全部为计费真值 */
+  cost?: { total: number; providerReported: boolean };
 };
 
 type TokenShape = { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
@@ -174,11 +176,17 @@ async function handleUsage(id: string): Promise<Response> {
         steps += 1;
       }
     }
-    if (!last) return Response.json(empty);
+    // 会话累计费用：pi 1.5+ 在 assistant 消息 info.cost 上给出每请求费用
+    const messages = await runtime.store.getMessages(id).catch(() => []);
+    const costs = messages.flatMap((m) => (m.info as { cost?: { total: number; totalFromProvider?: boolean } }).cost ? [(m.info as { cost: { total: number; totalFromProvider?: boolean } }).cost] : []);
+    const cost = costs.length
+      ? { total: costs.reduce((sum, c) => sum + (Number.isFinite(c.total) ? c.total : 0), 0), providerReported: costs.every((c) => c.totalFromProvider === true) }
+      : undefined;
+    if (!last) return Response.json({ ...empty, ...(cost ? { cost } : {}) });
     const input = last.input ?? 0;
     const output = last.output ?? 0;
     const cacheRead = last.cacheRead ?? 0;
-    return Response.json({ used: input + output + cacheRead, contextWindow, input, output, cacheRead, steps } satisfies UsageInfo);
+    return Response.json({ used: input + output + cacheRead, contextWindow, input, output, cacheRead, steps, ...(cost ? { cost } : {}) } satisfies UsageInfo);
   } catch {
     return Response.json(empty);
   }

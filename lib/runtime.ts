@@ -80,6 +80,7 @@ declare global {
   var __lecternMcp: Map<string, McpRuntimeState> | undefined;
   // eslint-disable-next-line no-var
   var __lecternFailoverLog: FailoverEvent[] | undefined;
+  var __lecternProviderEvents: ProviderStreamEventRecord[] | undefined;
   // eslint-disable-next-line no-var
   var __lecternLeaseTargets: Set<{ store: SqliteSessionStore; log: EventLog }> | undefined;
   // eslint-disable-next-line no-var
@@ -145,6 +146,24 @@ function failoverEndpoints(): FailoverEndpoint[] {
 /** 路由降级环形日志（P0 可观测）：最近 20 次端点切换，/api/models 透出。 */
 export function failoverLog(): FailoverEvent[] {
   return (globalThis.__lecternFailoverLog ??= []);
+}
+
+/** provider 原始流事件观测（pi 0.99+ onProviderStreamEvent）：只留错误类事件
+ *  的有界环形日志——正常 delta 流量太大，全部记录只会淹没真正要找的东西。
+ *  relay/上游流式问题排查用（配合 failoverLog）。 */
+export type ProviderStreamEventRecord = { at: string; type: string; detail: string };
+export function providerEventLog(): ProviderStreamEventRecord[] {
+  return (globalThis.__lecternProviderEvents ??= []);
+}
+function recordProviderEvent(data: unknown): void {
+  const record = data as { type?: unknown; error?: unknown; message?: unknown } | null;
+  const text = JSON.stringify(data);
+  // 只记错误类（type 或内容含 error）；上限 50 条防膨胀
+  const isError = /error|abort|fail/i.test(String(record?.type ?? "")) || /error|abort|fail/i.test(text.slice(0, 400));
+  if (!isError) return;
+  const log = providerEventLog();
+  log.unshift({ at: new Date().toISOString(), type: String(record?.type ?? "unknown"), detail: text.slice(0, 300) });
+  if (log.length > 50) log.length = 50;
 }
 
 /** 租约恢复注册（会话稳定性 P0-③）：每项目一个 SQLite store，全进程共用一条
@@ -427,6 +446,8 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
       }),
     // 自动上下文压缩（spec §8.3）：摘要模型沿用主模型，接近窗口时折叠
     runnerOptions: {
+      // provider 原始流事件观测（pi 0.99+，透传到流函数 options；只记错误类环形日志）
+      onProviderStreamEvent: (data: unknown) => recordProviderEvent(data),
       // K1 候选管线（T19a）：task_deliver 打标 → onRunEnd 异步提炼候选（fire-and-forget，
       // 不阻塞交付回执）。syncPolicy=off/纯问答不提炼；manual=待审、auto=直通 approved
       // （T19b outbox 消费 approved）。提炼走 relay chat/completions 直调（flash 级），

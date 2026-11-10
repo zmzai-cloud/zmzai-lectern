@@ -991,6 +991,11 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
                 <span className={cn("block h-full rounded-pill transition-all", pctColor)} style={{ width: `${pct}%` }} />
               </span>
               <span className="font-mono text-[0.625rem] text-ink-3 group-hover:text-ink-2">{pct}%</span>
+              {usage.cost && usage.cost.total > 0 && (
+                <span className="font-mono text-[0.625rem] text-ink-4" title={usage.cost.providerReported ? "provider 计费真值（会话累计）" : "目录估算费用（会话累计；provider 未上报计费）"}>
+                  ${(usage.cost.total < 0.01 ? usage.cost.total.toFixed(4) : usage.cost.total.toFixed(2))}
+                </span>
+              )}
             </button>
           )}
 

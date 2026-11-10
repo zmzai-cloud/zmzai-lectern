@@ -295,6 +295,9 @@ try {
       const toolCounts = {};
       for (const p of tools) toolCounts[p.tool] = (toolCounts[p.tool] ?? 0) + 1;
       const tokens = transcript.reduce((acc, m) => ({ input: acc.input + (m.info?.tokens?.input ?? 0), output: acc.output + (m.info?.tokens?.output ?? 0) }), { input: 0, output: 0 });
+      // pi 1.5+ 消息级费用：total 求和；providerReported=全部为 provider 计费真值
+      const costs = transcript.flatMap((m) => (m.info?.cost ? [m.info.cost] : []));
+      const cost = costs.length ? costs.reduce((sum, c) => sum + (Number.isFinite(c.total) ? c.total : 0), 0) : null;
       const toolsOk = Object.entries(fixture.needTools ?? {}).every(([id, n]) => (toolCounts[id] ?? 0) >= n);
       const blockOk = !fixture.reply || (record.blocked_correctly && record.resumed_same_task);
       const delivered = task?.status === "delivered";
@@ -310,7 +313,8 @@ try {
         task_status: task?.status ?? null, task_blocker: task?.blocker ? { kind: task.blocker.kind, message: String(task.blocker.message ?? "").slice(0, 160) } : null,
         verification, verification_detail: verificationDetail || undefined, protected_files_unchanged: protectedOk, unexpected_paths: unexpected,
         tool_counts: toolCounts, delivery_calls: tools.filter((p) => p.tool === "task_deliver").map((p) => ({ status: p.state?.status, ...(p.state?.status === "error" ? { error: String(p.state?.error ?? "").slice(0, 200) } : {}) })),
-        tokens_input: tokens.input || null, tokens_output: tokens.output || null, cost: null,
+        tokens_input: tokens.input || null, tokens_output: tokens.output || null,
+        cost, cost_provider_reported: costs.length ? costs.every((c) => c.totalFromProvider === true) : null,
         duration_ms: Date.now() - started, manual_interventions: 0,
       });
     } catch (error) {

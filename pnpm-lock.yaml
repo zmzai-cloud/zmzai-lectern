@@ -1693,7 +1693,7 @@ packages:
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
   '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.19.0.tgz':
-    resolution: {integrity: sha512-Qvfv7vRrY5jowDjjygazqNIAs1ba7DxYOveBMki59Bi4cdGCjETPOKJG+I4tWYQIgBgeXa4Ov3AUvV7023MhPg==, tarball: file:vendor/zmzai-agent-framework-0.19.0.tgz}
+    resolution: {integrity: sha512-GE9lAVcCces7HoYlhryoYV85PzD7XkMm/Z2x8dWNhxbkjxuF+M6XkU8XyOSMILaKBoNzKi7wp+XHiE+fDN0ATA==, tarball: file:vendor/zmzai-agent-framework-0.19.0.tgz}
     version: 0.19.0
     hasBin: true
 

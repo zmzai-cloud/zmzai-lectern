@@ -1149,6 +1149,15 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           <TaskProgressCard task={task} view={taskView} attempts={taskAttempts} onAction={(action) => onTaskAction?.(action)} />
         )}
         <div className="chat-turn-closure">
+        {(() => {
+          // pi 0.99+ 在 assistant 消息上记录实际生效档位；与所选不同（上游钳制）时更值得展示
+          let level: string | null = null;
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const info = (messages[i] as { info?: { role?: string; thinkingLevel?: string } }).info;
+            if (info?.role === "assistant") { level = info.thinkingLevel ?? null; break; }
+          }
+          return level ? <div className="px-0.5 pb-1 text-[0.625rem] text-ink-4">推理档位 {level}</div> : null;
+        })()}
         {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
         {summary && !running && !taskView?.completed && (
           <SummaryCard
@@ -1161,11 +1170,13 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
                   const st = p.part.state;
                   const start = "time" in st && st.time?.start ? Date.parse(st.time.start) : null;
                   const end = st.status === "completed" || st.status === "error" ? ("time" in st && st.time?.end ? Date.parse(st.time.end) : null) : null;
+                  // pi 1.5 的单调时钟执行耗时优先（不受时钟回拨/挂起影响），缺省回落时间戳差
+                  const precise = st.status === "completed" && typeof st.durationMs === "number" ? st.durationMs : null;
                   items.push({
                     tool: p.part.tool,
                     title: "title" in st && st.title ? st.title : undefined,
                     status: st.status,
-                    durationMs: start && end ? end - start : null,
+                    durationMs: precise ?? (start && end ? end - start : null),
                   });
                 }
               }

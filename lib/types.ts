@@ -75,7 +75,7 @@ export type SessionIsolation = {
 export type ToolState =
   | { status: "pending"; input: unknown }
   | { status: "running"; input: unknown; title?: string; time: { start: string } }
-  | { status: "completed"; input: unknown; output: string; title: string; time: { start: string; end: string }; metadata?: Record<string, unknown> }
+  | { status: "completed"; input: unknown; output: string; title: string; time: { start: string; end: string }; metadata?: Record<string, unknown>; /** pi 1.5 单调时钟执行耗时（不含钩子） */ durationMs?: number }
   | { status: "error"; input: unknown; error: string; time: { start: string; end: string }; metadata?: Record<string, unknown> };
 
 /** 文件 part（规格 2 §11）。新链路只写 `attachmentId` 等描述符，**不再写 data URL**；
@@ -218,7 +218,7 @@ export type PromptDisposition =
 
 /** 会话已持久化的转录（来自引擎 getMessages）。info 取 id/role/error，parts 即完整片段。 */
 export type SelectedSkill = { id: string; name: string; digest: string };
-export type TranscriptMessage = { info: { id: string; role: string; error?: { name: string; message: string }; skill?: SelectedSkill; references?: string[] }; parts: Part[]; messageSeq?: number };
+export type TranscriptMessage = { info: { id: string; role: string; error?: { name: string; message: string }; skill?: SelectedSkill; references?: string[]; /** pi 1.5 度量（assistant 消息）：响应耗时 / 实际生效档位 / 费用 */ durationMs?: number; thinkingLevel?: string; cost?: { total: number; totalFromProvider: boolean } }; parts: Part[]; messageSeq?: number };
 
 export type MessageSearchHit = {
   projectId: string; sessionId: string; messageId: string; partId: string;
@@ -346,6 +346,8 @@ export type UsageInfo = {
   input: number;
   output: number;
   cacheRead: number;
+  /** 会话累计费用（pi 1.5+）：providerReported=true 表示全部为 provider 计费真值 */
+  cost?: { total: number; providerReported: boolean };
   steps: number;
 };
 

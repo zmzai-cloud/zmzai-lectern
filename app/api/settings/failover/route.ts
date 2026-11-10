@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getFailoverEndpoints, saveFailoverEndpoints, type FailoverEndpointInput } from "@/lib/settings";
-import { failoverLog } from "@/lib/runtime";
+import { failoverLog, providerEventLog } from "@/lib/runtime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,7 +13,8 @@ export async function GET() {
     modelId: ep.modelId ?? null,
     apiKeyMasked: ep.apiKey ? `${ep.apiKey.slice(0, 4)}****${ep.apiKey.slice(-4)}` : null,
   }));
-  return NextResponse.json({ endpoints, failover: failoverLog() });
+  // provider 原始流事件（错误类，有界）：排查 relay/上游流式问题
+  return NextResponse.json({ endpoints, failover: failoverLog(), providerEvents: providerEventLog() });
 }
 
 /** 保存降级端点（整体替换）。apiKey 留空/缺省 = 不更新该端点的既有 key。 */

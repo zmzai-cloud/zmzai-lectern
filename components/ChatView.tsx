@@ -499,53 +499,6 @@ type Props = {
   onOpenChildSession?: (child: { sessionId: string; agent: string; description: string }) => void;
 };
 
-/** 任务计划卡：todo.updated 投影（Agent 拆解步骤的实时进度）。 */
-function TodoCard({ todos }: { todos: TodoItem[] }) {
-  const done = todos.filter((t) => t.status === "completed").length;
-  const icon = (status: TodoItem["status"]) => {
-    if (status === "completed")
-      return <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-success text-[8px] font-bold text-bg">✓</span>;
-    if (status === "in_progress")
-      return <span className="h-3.5 w-3.5 animate-pulse rounded-full border-2 border-live" />;
-    if (status === "cancelled")
-      return <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-surface-2 text-[8px] text-ink-3">—</span>;
-    return <span className="h-3.5 w-3.5 rounded-full border border-ink-3" />;
-  };
-  return (
-    <details className="chat-task-plan" open={todos.some((t) => t.status === "in_progress")}>
-      <summary className="cursor-pointer text-xs text-ink-2">任务计划 · {done}/{todos.length} 已完成</summary>
-      <div className="pt-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-[0.6875rem] font-semibold tracking-wide text-ink-3">任务计划</span>
-        <span className="font-mono text-[0.625rem] text-ink-3">{done}/{todos.length}</span>
-        <span className="h-1 flex-1 overflow-hidden rounded-pill bg-surface-2">
-          <span
-            className="block h-full rounded-pill bg-live transition-all"
-            style={{ width: `${todos.length ? Math.round((done / todos.length) * 100) : 0}%` }}
-          />
-        </span>
-      </div>
-      <div className="space-y-1.5">
-        {todos.map((t, i) => (
-          <div key={i} className="flex items-center gap-2">
-            {icon(t.status)}
-            <span
-              className={cn(
-                "text-xs leading-5",
-                t.status === "completed" ? "text-ink-3 line-through" : t.status === "in_progress" ? "font-medium text-ink" : "text-ink-2",
-              )}
-            >
-              {t.content}
-            </span>
-          </div>
-        ))}
-      </div>
-      </div>
-    </details>
-  );
-}
-
-
 /** 本轮小结卡（N5）：**一次 Attempt 运行**收尾的 AI 一句总结 + 结构化统计。
  *
  *  【它现在说的是「本轮」而不是「任务」】旧实现把 `kind: "completed"` 渲染成
@@ -1227,7 +1180,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           </button>
         </div>
       )}
-      {todos && todos.length > 0 && <div className="chat-dock-todos"><TodoCard todos={todos} /></div>}
+      {/* 任务计划卡已砍（2026-11-10 用户反馈"多此一举"）：ZCode/Codex 均无此层，
+           Agent 拆解步骤对用户价值不大，进度信息由过程行+轮次摘要覆盖。
+           todo 工具数据仍在（Agent 自己用它做计划），只是不渲染 dock 卡片。 */}
       {/* 状态与输入器共享同一个 grid row，避免隐式第三行挤压消息区。 */}
       <div className="flex h-7 shrink-0 items-center justify-center">
         {(whisper || running) && (

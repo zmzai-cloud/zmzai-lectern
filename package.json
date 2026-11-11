@@ -1,185 +1,38 @@
 {
-  "name": "zmzai-lectern",
-  "version": "0.18.0",
-  "private": true,
-  "description": "Lectern — Web / Desktop 同构的 Agent 工作台（Next.js 单页 + Electron 壳）",
-  "main": "electron/main.cjs",
-  "license": "Apache-2.0",
+  "name": "@zmzai/agent-framework",
+  "version": "0.19.3",
+  "packageManager": "pnpm@10.34.5",
+  "description": "PI-based agent framework — sessions, permissions, tools, runner, events (OpenCode-style).",
   "type": "module",
-  "scripts": {
-    "eval:contracts": "node scripts/task-contract-audit.mjs",
-    "eval:coding": "esbuild evals/harness/coding-baseline.ts --bundle --platform=node --format=esm --packages=external --outfile=test-results/p0-evals/coding-baseline.mjs && node test-results/p0-evals/coding-baseline.mjs",
-    "port:free": "lsof -nP -tiTCP:3100 -sTCP:LISTEN | xargs kill -9 2>/dev/null; true",
-    "dev": "pnpm run port:free && concurrently -k -n web,app -c cyan,magenta \"next dev -p 3100\" \"wait-on http://127.0.0.1:3100 && electron electron/main.cjs\"",
-    "dev:web": "pnpm run port:free && next dev -p 3100",
-    "dev:app": "wait-on http://127.0.0.1:3100 && electron electron/main.cjs",
-    "framework:build": "pnpm --dir ../zmzai-framework build",
-    "dev:fresh": "pnpm run framework:build && rm -rf .next && pnpm run dev",
-    "dev:fresh:web": "pnpm run framework:build && rm -rf .next && pnpm run dev:web",
-    "build": "node scripts/check-dependency-layout.mjs && next build",
-    "start": "next start -p 3100",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:release": "node --test scripts/runtime-path-tracing.test.mjs scripts/check-dependency-layout.test.mjs scripts/release-validation.test.mjs scripts/signing-preflight.test.mjs scripts/upload-oss.source-test.mjs scripts/strip-standalone-source.source-test.mjs scripts/check-standalone-clean.source-test.mjs scripts/ui-e2e-gate.source-test.mjs scripts/platform-artifacts.source-test.mjs scripts/release-plan.source-test.mjs scripts/release-pipeline.source-test.mjs electron/updater.source-test.cjs electron/web-server.source-test.cjs",
-    "test:packaged": "node e2e/packaged-smoke.mjs",
-    "test:task-groups-ui": "node e2e/task-groups-ui.mjs",
-    "test:task-delivery-ui": "node e2e/task-delivery-ui.mjs",
-    "test:conversation-ui": "node e2e/conversation-first-ui.mjs",
-    "test:attachments-ui": "node e2e/attachments-ui.mjs",
-    "test:clipboard-native": "node e2e/clipboard-native-ui.mjs",
-    "test:workbench-ui": "node e2e/workbench-resize-ui.mjs",
-    "test:touch-ui": "node e2e/touch-drag-ui.mjs",
-    "test:message-search-ui": "node e2e/message-search-ui.mjs",
-    "test:subagent-pane-follow": "node e2e/subagent-pane-follow.mjs",
-    "test:optimistic-send": "node e2e/optimistic-send.mjs",
-    "test:message-recovery-ui": "node e2e/message-recovery-ui.mjs",
-    "test:pdf-preview-ui": "node e2e/pdf-preview-ui.mjs",
-    "verify:release": "node scripts/release-validation.mjs release dist",
-    "verify:public": "node scripts/verify-public-release.mjs",
-    "verify:update-path": "node scripts/verify-update-path.mjs",
-    "release": "node scripts/release-desktop.mjs",
-    "build:mac": "bash scripts/build-mac.sh",
-    "build:web": "bash scripts/build-web.sh",
-    "build:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",
-    "build:win:cross": "bash scripts/build-win-cross.sh",
-    "build:win:cross:upload": "bash scripts/build-win-cross.sh --upload",
-    "host:build": "node scripts/build-host.mjs",
-    "arch:check": "node scripts/arch-check.mjs"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "bin": {
+    "zmzai-agent": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "openapi.yaml"
+  ],
   "dependencies": {
-    "@codemirror/commands": "^6.11.0",
-    "@codemirror/lang-css": "^6.3.1",
-    "@codemirror/lang-html": "^6.4.12",
-    "@codemirror/lang-javascript": "^6.2.5",
-    "@codemirror/lang-json": "^6.0.2",
-    "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/lang-yaml": "^6.1.3",
-    "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "^6.7.2",
-    "@codemirror/view": "^6.43.10",
-    "@tanstack/react-virtual": "^3.14.11",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "@zmzai/agent-framework": "file:vendor/zmzai-agent-framework-0.19.3.tgz",
-    "@zmzai/theme": "^0.9.16",
-    "electron-updater": "6.6.2",
-    "exceljs": "^4.4.0",
-    "fflate": "^0.8.3",
-    "lucide-react": "^1.39.0",
-    "mammoth": "^1.12.3",
-    "next": "15.5.21",
-    "node-pty": "1.1.0",
-    "pdfjs-dist": "^6.3.289",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "shiki": "^4.4.3",
-    "tailwindcss": "4.3.3",
-    "web-tree-sitter": "0.25.8"
-  },
-  "devDependencies": {
+    "@earendil-works/pi-agent-core": "1.5.0",
     "@earendil-works/pi-ai": "1.5.0",
-    "@electron/asar": "3.4.1",
-    "@tailwindcss/postcss": "4.3.3",
-    "@types/node": "22.20.1",
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
-    "ali-oss": "^6.23.0",
-    "concurrently": "^9.2.1",
-    "electron": "^44.0.0",
-    "electron-builder": "^26.0.12",
-    "electron-updater": "6.6.2",
-    "esbuild": "0.21.5",
-    "playwright": "1.58.2",
-    "typescript": "5.9.3",
-    "vitest": "^2.1.9",
-    "wait-on": "^8.0.4",
-    "yaml": "2.8.2",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "0.25.8",
     "zod": "4.4.3"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron"
-    ]
+  "devDependencies": {
+    "@changesets/cli": "^3.0.1",
+    "@types/node": "^26.4.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
   },
-  "packageManager": "pnpm@10.34.5+sha512.a4ee05f2f73658255bd6a89859c065a45c28a57daefae2c893a168ee2b73168c37b91e83e57ea67654ad03f03031746430e8bce38e362e042605fb8abc80192e",
-  "build": {
-    "appId": "cloud.zmzai.lectern",
-    "productName": "Lectern",
-    "publish": {
-      "provider": "generic",
-      "url": "https://zmzai.oss-cn-beijing.aliyuncs.com/releases/harness/"
-    },
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "files": [
-      "electron/**",
-      ".next/standalone/**",
-      "host/dist/**",
-      "!host/dist/**/*.md",
-      "!host/dist/**/README*",
-      "!**/.env",
-      "!**/.env.*",
-      "!.next/standalone/.next/cache/**",
-      "!node_modules/**",
-      "!**/*.map",
-      "!**/*.d.ts",
-      "!**/*.d.mts",
-      "!**/*.d.cts",
-      "!**/*.ts",
-      "!**/*.mts",
-      "!**/*.cts",
-      "!**/*.md",
-      "!**/LICENSE*",
-      "!**/*.scss",
-      "!**/*.h",
-      "!**/*.c",
-      "!**/__tests__/**",
-      "!**/*.test.js",
-      "!**/*.spec.js"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "electron/assets/**",
-      "**/node-pty/prebuilds/**",
-      "**/*.node",
-      "**/*.dll"
-    ],
-    "afterPack": "scripts/after-pack.mjs",
-    "npmRebuild": false,
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon-mac.png",
-      "category": "public.app-category.developer-tools",
-      "darkModeSupport": true
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "zip"
-      ],
-      "icon": "build/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "Lectern",
-      "artifactName": "Lectern-Setup-${version}.${ext}"
-    }
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
   }
 }

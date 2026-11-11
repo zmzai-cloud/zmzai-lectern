@@ -170,13 +170,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
   const tools = parts.flatMap((p) => (p.part.type === "tool" ? [p.part] : []));
   const failed = tools.filter((t) => t.state.status === "error").length
     + parts.filter((p) => p.part.type === "subtask" && p.subagent?.finished?.state === "error").length;
-  // DSH 分类摘要（"读取文件、运行命令"——前三分类），替代数字概览
-  const overview = summary ?? summarizeFlowTools(tools.map((t) => t.tool));
-  // 运行态标题：最新运行中工具的分类（"正在运行命令"）
-  const runningLabel = useMemo(() => {
-    const live = [...tools].reverse().find((t) => t.state.status === "running" || t.state.status === "pending");
-    return live ? `正在${CATEGORY_LABELS[categoryOfTool(live.tool)]}` : null;
-  }, [tools]);
+
   const duration = useMemo(() => {
     let start = Infinity;
     let end = -Infinity;
@@ -199,29 +193,13 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
   return (
     <div className={cn("chat-workflow-group", open && "open", running && "running")}>
       <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
-        <span className="chat-workflow-leading" aria-hidden>
-          <span className="chat-workflow-activity" data-step-process-icon>
-            <Icon name={running ? "activity" : "terminal"} size={13} strokeWidth={1.4} className={cn(running && "animate-pulse")} />
-          </span>
-          <span className="chat-workflow-chevwrap" data-step-process-chevron>
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" className={cn("transition-transform", open && "rotate-180")} />
-            </svg>
-          </span>
-        </span>
-        <span className="min-w-0 truncate">{running ? (runningLabel ?? "正在分析请求") : `已${overview}`}</span>
-        {failed > 0 && (
-          <>
-            <span className="chat-workflow-sep" aria-hidden>·</span>
-            <span className="chat-workflow-failed">{failed} 个失败</span>
-          </>
-        )}
-        {duration && (
-          <>
-            <span className="chat-workflow-sep" aria-hidden>·</span>
-            <span>{duration}</span>
-          </>
-        )}
+        <span className="min-w-0 truncate">{running ? "正在工作" : "已工作"}{duration ? ` ${duration}` : ""}{failed > 0 ? `（${failed} 个失败）` : ""}</span>
+        <svg
+          width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+          className={cn("chat-workflow-chevron", open && "open")}
+        >
+          <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
       <div className="chat-workflow-body-wrap" inert={!open}>
         <div className="chat-workflow-body">

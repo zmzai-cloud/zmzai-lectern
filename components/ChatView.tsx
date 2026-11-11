@@ -13,7 +13,8 @@ import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
 import { summarizeFlowTools, type ChatViewData, type TodoItem } from "@/lib/chat-projector";
-import { buildMessageSlots, mergeOptimisticMessage, type OptimisticEcho } from "@/lib/chat-view-model";
+import { mergeOptimisticMessage, type OptimisticEcho } from "@/lib/chat-view-model";
+import { buildRounds, categoryOfTool, CATEGORY_LABELS } from "@/lib/chat-rounds";
 type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
 import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
@@ -163,17 +164,19 @@ function SubtaskCard({ part, activity, onOpen }: { part: Extract<Part, { type: "
   );
 }
 
-function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiPart[]; running: boolean; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void }) {
+function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { parts: UiPart[]; running: boolean; onOpenFile: (path: string, line?: number) => void; onOpenChild?: (child: { sessionId: string; agent: string; description: string }) => void; summary?: string }) {
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const open = openOverride ?? running;
   const tools = parts.flatMap((p) => (p.part.type === "tool" ? [p.part] : []));
-  // 失败计数含失败子代理（ZCode 式：收起态就能看到这轮有没有出事）
   const failed = tools.filter((t) => t.state.status === "error").length
     + parts.filter((p) => p.part.type === "subtask" && p.subagent?.finished?.state === "error").length;
-  // 收起态概览：真实工具记录归类的短语（读取 3 · 编辑 2），不是 AI 摘要——
-  // 多轮长会话回看时各组不再长得一模一样。
-  const overview = useMemo(() => summarizeFlowTools(tools.map((t) => t.tool)), [tools]);
-  // 组时长 = 工具时间戳的首尾跨度（思考块无时间戳，不参与；拿不到就不显示）
+  // DSH 分类摘要（"读取文件、运行命令"——前三分类），替代数字概览
+  const overview = summary ?? summarizeFlowTools(tools.map((t) => t.tool));
+  // 运行态标题：最新运行中工具的分类（"正在运行命令"）
+  const runningLabel = useMemo(() => {
+    const live = [...tools].reverse().find((t) => t.state.status === "running" || t.state.status === "pending");
+    return live ? `正在${CATEGORY_LABELS[categoryOfTool(live.tool)]}` : null;
+  }, [tools]);
   const duration = useMemo(() => {
     let start = Infinity;
     let end = -Infinity;
@@ -183,7 +186,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiP
       const startMs = Date.parse(state.time.start);
       if (Number.isFinite(startMs)) start = Math.min(start, startMs);
       const endMs = "end" in state.time ? Date.parse(state.time.end) : Number.NaN;
-      if (Number.isFinite(endMs)) end = Math.max(end, endMs);
+      if (Number.isFinite(endMs)) end = Math.max(endMs, endMs);
     }
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
     const ms = end - start;
@@ -196,16 +199,17 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiP
   return (
     <div className={cn("chat-workflow-group", open && "open", running && "running")}>
       <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
-        <Icon name="settings" size={13} strokeWidth={1.4} className={cn(running && "animate-pulse")} />
-        <span>执行过程</span>
-        <span className="chat-workflow-sep" aria-hidden>·</span>
-        <span>{parts.length} 个步骤</span>
-        {overview && (
-          <>
-            <span className="chat-workflow-sep" aria-hidden>·</span>
-            <span className="min-w-0 truncate">{overview}</span>
-          </>
-        )}
+        <span className="chat-workflow-leading" aria-hidden>
+          <span className="chat-workflow-activity" data-step-process-icon>
+            <Icon name={running ? "activity" : "terminal"} size={13} strokeWidth={1.4} className={cn(running && "animate-pulse")} />
+          </span>
+          <span className="chat-workflow-chevwrap" data-step-process-chevron>
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" className={cn("transition-transform", open && "rotate-180")} />
+            </svg>
+          </span>
+        </span>
+        <span className="min-w-0 truncate">{running ? (runningLabel ?? "正在分析请求") : `已${overview}`}</span>
         {failed > 0 && (
           <>
             <span className="chat-workflow-sep" aria-hidden>·</span>
@@ -218,16 +222,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild }: { parts: UiP
             <span>{duration}</span>
           </>
         )}
-        <svg
-          width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
-          className={cn("chat-workflow-chevron", open && "open")}
-        >
-          <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
       </button>
-      {/* 展开动画走 CSS grid 0fr→1fr（globals.css），与 theme 工具行/思考行的
-          framer 高度动画同参数（0.2s + 同一缓动），三种展开一个手感。
-          内容常驻 DOM（收起时 0fr + inert），动画因此可逆且可访问性正确。 */}
       <div className="chat-workflow-body-wrap" inert={!open}>
         <div className="chat-workflow-body">
           {parts.map((p) => (
@@ -655,59 +650,16 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   // 交付后的结论段（走查 F4）：任务完成时，最新一条 assistant 消息里最后一段
   // 非空正文即「答案」。过场叙述（“接下来我派两个子代理…”）与结论同为正文，
   // 扫一眼分不清主次——结论段加一档排版分量（chat-final-answer）。
-  /** 中途叙述降级（2026-11-10，Codex 对照）：模型边做边写的短段落（"我来查…"）
-   *  与工具行交错时是过程信息，不是答案。规则：任务运行中、该 text 段之后仍
-   *  跟着工具调用（后面还有动作）→ 渲染为弱化过程文字；轮次末尾的长段（后面
-   *  没有工具了）保持正文。交付后的最终结论段仍由 emphasis 强调。 */
+  /** DSH 式轮次树（docs/dsh-ui-reference/RULES.md）：全会话一次分组——
+   *  过程按相邻聚组、回复（后面无工具的正文）终结组并独立成段、用户消息开新轮。
+   *  取代此前逐消息 slots + 跨消息归并补丁的两层逻辑。 */
+  const rounds = useMemo(() => buildRounds(visible.map((m) => ({ id: m.id, role: m.role, parts: m.parts }))), [visible]);
   const passthroughTextIds = useMemo(() => {
-    if (taskView?.completed) return new Set<string>();
+    // 过程组内 text 一律弱化（组内即过程）
     const ids = new Set<string>();
-    for (const m of visible) {
-      if (m.role !== "assistant") continue;
-      const parts = m.parts.map((x) => x.part);
-      for (let j = 0; j < parts.length; j++) {
-        const part = parts[j]!;
-        if (part.type !== "text" || !part.text.trim()) continue;
-        const hasToolAfter = parts.slice(j + 1).some((later) => later.type === "tool" && (later.state.status === "running" || later.state.status === "completed" || later.state.status === "error"));
-        if (hasToolAfter) ids.add(part.id);
-      }
-    }
+    for (const round of rounds) for (const node of round.nodes) if (node.kind === "process") for (const item of node.items) if (item.part.type === "text") ids.add(item.part.id);
     return ids;
-  }, [visible, taskView?.completed]);
-
-  /** 跨消息过程归并（2026-11-10 "不是呀"轮）：一个任务的执行是 N 条 assistant
-   *  消息（pi 每个 turn 一条），逐条渲染就是 N 个碎片过程组。这里把"中间消息
-   *  （后面还有 assistant 消息）的 flow 块"合并成一个跨消息大过程组索引：
-   *  flowOwner[partId] = 第一个过程块的消息 id——渲染时同组 parts 一起给
-   *  WorkflowGroup。末条消息的 flow 块与正文保持原样。 */
-  const mergedFlow = useMemo(() => {
-    const lastAssistantIdx = (() => { for (let i = visible.length - 1; i >= 0; i--) if (visible[i]!.role === "assistant") return i; return -1; })();
-    const owner = new Map<string, string>(); // slotKey → 消息 id（组锚点）
-    const collected = new Map<string, UiPart[]>(); // 消息 id → 合并后的全部 flow parts
-    let anchorId: string | null = null;
-    visible.forEach((m, idx) => {
-      if (m.role !== "assistant") { anchorId = null; return; }
-      const slots = buildMessageSlots(m.parts);
-      const flowParts: UiPart[] = [];
-      for (const slot of slots) {
-        if (slot.kind === "flow") flowParts.push(...slot.items);
-        else if (idx < lastAssistantIdx && slot.item.part.type !== "tool") {
-          // 中间消息的正文段也是过程；带 diff 的 tool（编辑卡）保持独立——
-          // diff 渲染需要 PartView 的 diff 参数，并入组会丢
-          flowParts.push(slot.item);
-        }
-      }
-      if (idx < lastAssistantIdx) {
-        if (anchorId) { const prev = collected.get(anchorId)!; prev.push(...flowParts); }
-        else { anchorId = m.id; collected.set(anchorId, flowParts); owner.set(`merged-${m.id}`, m.id); }
-      } else {
-        // 末条消息：独立渲染（可含自己的 flow + 正文）
-        owner.set(`tail-${m.id}`, m.id);
-        collected.set(`tail-${m.id}`, flowParts);
-      }
-    });
-    return { owner, collected, lastAssistantIdx };
-  }, [visible]);
+  }, [rounds]);
 
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
@@ -1110,29 +1062,19 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               </div>
             );
           }
-          // 跨消息归并：中间 assistant 消息的过程并入锚点大组（见 mergedFlow 注释）——
-          // 一个任务一个过程块；锚点消息渲染合并后的大组，非锚点中间消息渲染 null
-          const isMergedAnchor = mergedFlow.owner.has(`merged-${m.id}`);
-          const isMergedTail = mergedFlow.owner.has(`tail-${m.id}`);
-          if (!isMergedAnchor && !isMergedTail && idx < mergedFlow.lastAssistantIdx) {
+          // DSH 式：assistant 消息从 rounds 树找自己的节点（过程组/回复）渲染
+          const roundOfMessage = rounds.find((r) => r.nodes.some((n) => n.id === m.id || (n.kind === "process" && n.items.some((i) => i.part.messageId === m.id)))) ?? null;
+          const myNodes = (roundOfMessage?.nodes ?? []).filter((n) =>
+            n.kind === "process" ? n.items.some((i) => i.part.messageId === m.id) : n.kind === "reply" && n.item.part.messageId === m.id);
+          const blocks: React.ReactNode[] = myNodes.map((node) => {
+            if (node.kind === "process") {
+              return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive && node.running} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
+            }
+            if (node.kind === "reply") {
+              return <PartView key={`${m.id}-${node.id}`} part={node.item.part} diff={node.item.diff} markdown onOpenFile={onOpenFile} subagent={node.item.subagent} onOpenChild={onOpenChildSession} emphasis={node.item.part.id === finalAnswerPartId} passthrough={false} />;
+            }
             return null;
-          }
-          const blocks: React.ReactNode[] = [];
-          if (isMergedAnchor) {
-            const mergedParts = mergedFlow.collected.get(`merged-${m.id}`) ?? [];
-            blocks.push(
-              <WorkflowGroup key={`${m.id}-merged`} parts={mergedParts} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />,
-            );
-          } else {
-            const slots = buildMessageSlots(m.parts);
-            blocks.push(...slots.map((slot) =>
-              slot.kind === "flow" ? (
-                <WorkflowGroup key={`${m.id}-${slot.id}`} parts={slot.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} />
-              ) : (
-                <PartView key={`${m.id}-${slot.id}`} part={slot.item.part} diff={slot.item.diff} markdown onOpenFile={onOpenFile} subagent={slot.item.subagent} onOpenChild={onOpenChildSession} emphasis={slot.item.part.id === finalAnswerPartId} passthrough={passthroughTextIds.has(slot.item.part.id)} />
-              ),
-            ));
-          }
+          });
           return (
             <div key={m.id} data-message-id={m.id} className="chat-assistant-message">
               <div className="min-w-0 flex-1 space-y-1.5">

@@ -324,7 +324,13 @@ html[data-theme="dark"] {
 .chat-final-answer { font-size: 0.9375rem; line-height: 1.75; font-weight: 500; }
 /* 中途叙述（工具间的短文字）：与过程行同层——小一号、灰一档 */
 .chat-passthrough-text { font-size: 0.8125rem; line-height: 1.6; color: var(--color-ink-2); }
+/* DSH 式组头：16px 图标位内图标/箭头互换（hover/展开显箭头） */
 .chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 1.5rem; align-items: center; gap: 0.45rem; border: 0; background: transparent; color: var(--color-muted); padding: 0.12rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s var(--ease-spring); }
+.chat-workflow-leading { position: relative; flex: none; display: inline-flex; width: 1rem; height: 1rem; align-items: center; justify-content: center; }
+.chat-workflow-activity, .chat-workflow-chevwrap { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.1s ease; }
+.chat-workflow-chevwrap { opacity: 0; }
+.chat-workflow-toggle:hover .chat-workflow-activity, .chat-workflow-toggle:focus-visible .chat-workflow-activity, .chat-workflow-toggle[aria-expanded="true"] .chat-workflow-activity { opacity: 0; }
+.chat-workflow-toggle:hover .chat-workflow-chevwrap, .chat-workflow-toggle:focus-visible .chat-workflow-chevwrap, .chat-workflow-toggle[aria-expanded="true"] .chat-workflow-chevwrap { opacity: 1; }
 .chat-workflow-toggle:hover { color: var(--color-ink); }
 .chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }
 .chat-workflow-failed { flex: 0 0 auto; color: var(--color-danger); }
@@ -338,7 +344,8 @@ html[data-theme="dark"] {
    内容常驻 DOM（收起时 0fr + overflow hidden + 透明），高度动画因此可逆。 */
 .chat-workflow-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s var(--ease-spring); }
 .chat-workflow-group.open .chat-workflow-body-wrap { grid-template-rows: 1fr; }
-.chat-workflow-body { display: grid; gap: 0.125rem; padding-left: 1.05rem; min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.15s var(--ease-spring); }
+.chat-workflow-body { display: grid; gap: 4px; padding-left: 1.05rem; min-height: 0; overflow: hidden auto; opacity: 0; transition: opacity 0.15s var(--ease-spring); max-height: min(400px, 50vh); scrollbar-gutter: stable; }
+.chat-workflow-group.open .chat-workflow-body { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); }
 .chat-workflow-group.open .chat-workflow-body { opacity: 1; }
 /* 运行中断折叠行：与工作流程组同款形态，但整行 danger（与失败工具行同层级）。
    展开才看原始错误 / 原因建议 / 断点统计——历史错误不再摊成大红框。 */

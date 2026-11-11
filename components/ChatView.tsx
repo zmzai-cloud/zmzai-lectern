@@ -1046,6 +1046,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           // 各自渲染整组会出现 N 个重复组头（实测 8 条消息 8 个"已运行命令"）
           const myNodes = (roundOfMessage?.nodes ?? []).filter((n) =>
             n.kind === "process" ? n.anchorMessageId === m.id : n.kind === "reply" && n.item.part.messageId === m.id);
+          if (myNodes.length === 0 && !m.error) return null; // 被归并的成员消息：零内容不渲染
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
               return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive && node.running} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
@@ -1081,12 +1082,15 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             </div>
           );
           };
-          // 归并掉的过程消息整行不渲染（返回 null 会让虚拟行只剩空容器占 ~52px）
-          if (renderMessage() === null) return null;
+          // 归并掉的过程消息整行不渲染：直接返回 null 让虚拟列表跳过这一行
+          // （此前先 renderMessage() 判断一次再渲染一次=调了两遍，且 min-h-8+pb-5
+          // 的容器在 blocks 为空时仍占 52px 空白——用户截图大空白即此）
+          const rendered = renderMessage();
+          if (rendered === null) return null;
           return <div key={m.id} data-index={idx} data-virtual-message={m.id} ref={virtual.measureElement}
             className="absolute left-0 top-0 min-h-8 w-full pb-5" style={{ transform: `translateY(${item.start - scrollMargin}px)` }}>
             {m.id === firstUnreadId && <div className="mb-4 flex items-center gap-3 text-[0.6875rem] text-ink-3"><span className="h-px flex-1 bg-line" />未读消息<span className="h-px flex-1 bg-line" /></div>}
-            {renderMessage()}
+            {rendered}
           </div>;
         })}
         </div>

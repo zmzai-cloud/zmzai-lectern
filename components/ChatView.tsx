@@ -639,6 +639,22 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     return ids;
   }, [rounds]);
 
+
+  /** 只把会实际渲染的消息传给虚拟列表：被归并的成员消息在 rounds 阶段就过滤——
+   *  返回 null 只是不画 DOM，virtualizer 仍按 estimateSize(140px) 预留空间，
+   *  7 条跳过=980px 空白（用户实测"空白更大了"） */
+  const renderVisible = useMemo(() => {
+    const anchorIds = new Set<string>();
+    const replyMsgIds = new Set<string>();
+    for (const round of rounds) {
+      for (const node of round.nodes) {
+        if (node.kind === "process") anchorIds.add(node.anchorMessageId);
+        else if (node.kind === "reply") replyMsgIds.add(node.item.part.messageId);
+      }
+    }
+    return visible.filter((m) => m.role !== "assistant" || anchorIds.has(m.id) || replyMsgIds.has(m.id) || !!m.error);
+  }, [visible, rounds]);
+
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
     for (let i = visible.length - 1; i >= 0; i--) {
@@ -723,7 +739,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
-  const virtual = useVirtualizer({ count: visible.length, getScrollElement: () => messagesRef.current, estimateSize: () => 140,
+  const virtual = useVirtualizer({ count: renderVisible.length, getScrollElement: () => messagesRef.current, estimateSize: () => 140,
     getItemKey: index => visible[index]!.id, overscan: 8, scrollMargin,
   });
   useLayoutEffect(() => {
@@ -931,10 +947,10 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
         <div ref={listRef} className="relative w-full" style={{ height: virtual.getTotalSize(), overflowAnchor: "none" }}>
         {virtual.getVirtualItems().map(item => {
           const idx = item.index;
-          const m = visible[idx]!;
+          const m = renderVisible[idx]!;
           const renderMessage = () => {
           const isAssistant = m.role === "assistant";
-          const lastActive = isAssistant && idx === visible.length - 1 && running;
+          const lastActive = isAssistant && idx === renderVisible.length - 1 && running;
           if (!isAssistant) {
             // IDE 式用户消息：右侧浅色圆角气泡（含图片附件内联展示） + hover 操作（复制/编辑重发）
             const text = m.parts
@@ -1063,7 +1079,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               {m.error && (
                 <ErrorCard
                   error={m.error}
-                  isTail={idx === visible.length - 1 && !running}
+                  isTail={idx === renderVisible.length - 1 && !running}
                   todos={todos}
                   checkpoint={checkpoint}
                   lastTool={m.parts

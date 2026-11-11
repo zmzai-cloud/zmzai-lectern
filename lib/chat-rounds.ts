@@ -68,7 +68,7 @@ export function summarizeGroups(tools: string[]): { label: string; counts: { kin
 
 export type RoundNode =
   | { kind: "user"; id: string; item: UiPart[] }
-  | { kind: "process"; id: string; items: UiPart[]; tools: string[]; running: boolean; summary: string }
+  | { kind: "process"; id: string; anchorMessageId: string; items: UiPart[]; tools: string[]; running: boolean; summary: string }
   | { kind: "reply"; id: string; item: UiPart; final: boolean };
 
 export type Round = {
@@ -121,7 +121,7 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
       const part = item.part;
       if (part.type === "tool" || part.type === "reasoning") {
         if (!openProcess) {
-          openProcess = { kind: "process", id: part.id, items: [], tools: [], running: false, summary: "" };
+          openProcess = { kind: "process", id: part.id, anchorMessageId: message.id, items: [], tools: [], running: false, summary: "" };
           round.nodes.push(openProcess);
         }
         openProcess.items.push(item);
@@ -132,7 +132,7 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
       } else if (part.type === "text" && part.text.trim()) {
         if (hasToolAfterAnywhere(i)) {
           if (!openProcess) {
-            openProcess = { kind: "process", id: part.id, items: [], tools: [], running: false, summary: "" };
+            openProcess = { kind: "process", id: part.id, anchorMessageId: message.id, items: [], tools: [], running: false, summary: "" };
             round.nodes.push(openProcess);
           }
           openProcess.items.push(item);

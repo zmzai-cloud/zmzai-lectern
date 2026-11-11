@@ -1063,9 +1063,11 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             );
           }
           // DSH 式：assistant 消息从 rounds 树找自己的节点（过程组/回复）渲染
-          const roundOfMessage = rounds.find((r) => r.nodes.some((n) => n.id === m.id || (n.kind === "process" && n.items.some((i) => i.part.messageId === m.id)))) ?? null;
+          const roundOfMessage = rounds.find((r) => r.nodes.some((n) => n.kind === "process" && n.anchorMessageId === m.id || n.kind === "reply" && n.item.part.messageId === m.id)) ?? null;
+          // 跨消息过程组只由锚点消息渲染一次——成员消息（anchorMessageId 不同）
+          // 各自渲染整组会出现 N 个重复组头（实测 8 条消息 8 个"已运行命令"）
           const myNodes = (roundOfMessage?.nodes ?? []).filter((n) =>
-            n.kind === "process" ? n.items.some((i) => i.part.messageId === m.id) : n.kind === "reply" && n.item.part.messageId === m.id);
+            n.kind === "process" ? n.anchorMessageId === m.id : n.kind === "reply" && n.item.part.messageId === m.id);
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
               return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive && node.running} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;

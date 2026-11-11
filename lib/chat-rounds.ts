@@ -112,14 +112,18 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
     // 叙述判定在**全会话后续**上做（不只本消息）：跨消息的后续工具同样使
     // 该 text 成为中途叙述（pi 每 turn 一条消息，下一条消息的工具很常见）
     const laterMessages = messages.slice(messageIndex + 1);
+    // 信号工具不算"后续工作"——task_deliver 标记交付完成、todo 更新计划，
+    // 结论 text 后面跟它们不构成"中途叙述"，照常显示为正文
+    const isWorkTool = (p: { type: string; tool?: string }): boolean =>
+      p.type === "tool" && p.tool !== "task_deliver" && p.tool !== "todo";
     const hasToolAfterAnywhere = (index: number): boolean => {
-      if (parts.slice(index + 1).some((later) => later.part.type === "tool")) return true;
-      return laterMessages.some((later) => later.parts.some((p2) => p2.part.type === "tool"));
+      if (parts.slice(index + 1).some((later) => isWorkTool(later.part))) return true;
+      return laterMessages.some((later) => later.parts.some((p2) => isWorkTool(p2.part)));
     };
     for (let i = 0; i < parts.length; i++) {
       const item = parts[i]!;
       const part = item.part;
-      if (part.type === "tool" || part.type === "reasoning") {
+      if (part.type === "reasoning" || (part.type === "tool" && isWorkTool(part))) {
         if (!openProcess) {
           openProcess = { kind: "process", id: part.id, anchorMessageId: message.id, items: [], tools: [], running: false, summary: "" };
           round.nodes.push(openProcess);
@@ -129,6 +133,10 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
           openProcess.tools.push(part.tool);
           if (toolRunning(part)) openProcess.running = true;
         }
+      } else if (part.type === "tool") {
+        // 信号工具（task_deliver/todo）：如有过程组则收入展示，不参与分组判定
+        if (openProcess) openProcess.items.push(item);
+        else round.nodes.push({ kind: "reply", id: part.id, item, final: false });
       } else if (part.type === "text" && part.text.trim()) {
         if (hasToolAfterAnywhere(i)) {
           if (!openProcess) {

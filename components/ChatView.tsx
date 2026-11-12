@@ -193,7 +193,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
   return (
     <div className={cn("chat-workflow-group", open && "open", running && "running")}>
       <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
-        <span className="min-w-0 truncate">{running ? "正在工作" : "已工作"}{duration ? ` ${duration}` : ""}{failed > 0 ? `（${failed} 个失败）` : ""}</span>
+        <span className="min-w-0 truncate">{running ? <><span className="loading-dots"><i></i><i></i><i></i></span>正在工作</> : "已工作"}{duration ? ` ${duration}` : ""}{failed > 0 ? `（${failed} 个失败）` : ""}</span>
         <svg
           width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
           className={cn("chat-workflow-chevron", open && "open")}
@@ -1073,7 +1073,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
             return null;
           });
           return (
-            <div key={m.id} data-message-id={m.id} className="chat-assistant-message">
+            <div key={m.id} data-message-id={m.id} className="chat-assistant-message chat-answer">
               <div className="min-w-0 flex-1 space-y-1.5">
               {blocks}
               {m.error && (
@@ -1204,7 +1204,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           <div className="flex items-center text-[0.6875rem] tracking-wide text-ink-3">
             {running ? (
               <span className="flex items-center gap-2 px-3">
-                <span className="streaming-caret" />
+                <span className="loading-dots"><i></i><i></i><i></i></span>
                 <span>{currentTool ? TOOL_ACTIVITY_PHRASE[currentTool] ?? `正在使用 ${toolLabel(currentTool)}` : "正在思考"}</span>
                 {runSeconds > 0 && (
                   <span className="font-mono">{runSeconds < 60 ? `${runSeconds}s` : `${Math.floor(runSeconds / 60)} 分 ${runSeconds % 60} 秒`}</span>

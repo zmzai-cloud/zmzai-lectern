@@ -1079,7 +1079,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           if (myNodes.length === 0 && !m.error) return null; // 被归并的成员消息：零内容不渲染
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
-              return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive && node.running} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
+              return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
             }
             if (node.kind === "reply") {
               return <PartView key={`${m.id}-${node.id}`} part={node.item.part} diff={node.item.diff} markdown onOpenFile={onOpenFile} subagent={node.item.subagent} onOpenChild={onOpenChildSession} emphasis={node.item.part.id === finalAnswerPartId} passthrough={false} />;

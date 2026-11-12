@@ -48,8 +48,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       '@zmzai/agent-framework':
-        specifier: file:vendor/zmzai-agent-framework-0.19.3.tgz
-        version: file:vendor/zmzai-agent-framework-0.19.3.tgz(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)
+        specifier: file:vendor/zmzai-agent-framework-0.19.4.tgz
+        version: file:vendor/zmzai-agent-framework-0.19.4.tgz(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)
       '@zmzai/theme':
         specifier: ^0.9.16
         version: 0.9.16(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
@@ -1682,9 +1682,9 @@ packages:
   '@xterm/xterm@6.0.0':
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
-  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.19.3.tgz':
-    resolution: {integrity: sha512-evEo1x/57yMqxyvwIA/mqXGHj6faWbmbffOLxVQXK1ZQFl7CfpxHfxdWKW1HCoMaAr1SzUv9TX7Qm8ywtFnxjg==, tarball: file:vendor/zmzai-agent-framework-0.19.3.tgz}
-    version: 0.19.3
+  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.19.4.tgz':
+    resolution: {integrity: sha512-c1MYHiKQxPMiN5MPOsRZR+o8oerRq6nXNdSLC3DV7um5ZGx3iMCnODoJPu46H6BloWdM85SrvnVFZ+VDDLJmRA==, tarball: file:vendor/zmzai-agent-framework-0.19.4.tgz}
+    version: 0.19.4
     hasBin: true
 
   '@zmzai/theme@0.9.16':
@@ -5864,7 +5864,7 @@ snapshots:
 
   '@xterm/xterm@6.0.0': {}
 
-  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.19.3.tgz(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)':
+  '@zmzai/agent-framework@file:vendor/zmzai-agent-framework-0.19.4.tgz(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 1.5.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)(zod@4.4.3)
       '@earendil-works/pi-ai': 1.5.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.0)(ws@8.21.3)(zod@4.4.3)

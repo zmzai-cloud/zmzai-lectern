@@ -1077,9 +1077,19 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           const myNodes = (roundOfMessage?.nodes ?? []).filter((n) =>
             n.kind === "process" ? n.anchorMessageId === m.id : n.kind === "reply" && n.item.part.messageId === m.id);
           if (myNodes.length === 0 && !m.error) return null; // 被归并的成员消息：零内容不渲染
+          // 运行态判定改基于 rounds 而非消息索引——流式过程中新消息不断追加，
+          // 锚点消息不再是 renderVisible 最后一条，lastActive 闪变导致组反复展开收起。
+          // 正确语义：session running 时，最后一轮的最新过程组保持展开
+          const isLiveProcessGroup = useMemo(() => {
+            if (!running) return false;
+            const lastRound = rounds[rounds.length - 1];
+            if (!lastRound) return false;
+            const lastProcess = [...lastRound.nodes].reverse().find((n) => n.kind === "process");
+            return lastProcess?.kind === "process" && lastProcess.anchorMessageId === m.id;
+          }, [rounds, running, m.id]);
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
-              return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={lastActive} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
+              return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={isLiveProcessGroup} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
             }
             if (node.kind === "reply") {
               return <PartView key={`${m.id}-${node.id}`} part={node.item.part} diff={node.item.diff} markdown onOpenFile={onOpenFile} subagent={node.item.subagent} onOpenChild={onOpenChildSession} emphasis={node.item.part.id === finalAnswerPartId} passthrough={false} />;

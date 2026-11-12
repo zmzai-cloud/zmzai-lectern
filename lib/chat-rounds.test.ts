@@ -117,6 +117,36 @@ describe("buildRounds：DSH 分组规则", () => {
     ], { running: false });
     expect(idle[0]!.nodes[0]).toMatchObject({ kind: "reply", id: "ans", final: true });
   });
+
+  it("信号工具（task_deliver/todo）不渲染：不进组也不做独立节点", () => {
+    // 2026-11-12 用户截图圈出「✔ 交付 · 提交交付信息」——task_deliver 是框架
+    // 簿记，渲染成工具卡对纯问答是纯仪式。todo（更新计划）同理。
+    const rounds = buildRounds([
+      msgs("user", "u1", [text("t0", "u1")]),
+      msgs("assistant", "a1", [
+        text("intro", "a1", "开头"),
+        tool("c1", "a1", "read"),
+        tool("d1", "a1", "task_deliver"),
+        text("ans", "a1", "结论"),
+      ]),
+      msgs("assistant", "a2", [
+        tool("todo1", "a2", "todo"),
+        text("ans2", "a2", "答2"),
+      ]),
+    ]);
+    const r = rounds[0]!;
+    const group = r.nodes[0]!;
+    expect(group.kind).toBe("process");
+    if (group.kind !== "process") throw new Error("unreachable");
+    // d1（task_deliver）不在组 items；组仍是工作工具组
+    expect(group.items.map((i) => i.part.id)).toEqual(["intro", "c1"]);
+    expect(group.tools).toEqual(["read"]);
+    // 结论照常独立回复（信号工具不构成"后续工作"边界依旧成立）
+    expect(r.nodes[1]).toMatchObject({ kind: "reply", id: "ans", final: true });
+    // 第二条消息：todo 被丢弃，只有回复——无游离工具卡节点
+    expect(r.nodes[2]).toMatchObject({ kind: "reply", id: "ans2", final: true });
+    expect(r.nodes).toHaveLength(3);
+  });
 });
 
 describe("分类与摘要", () => {

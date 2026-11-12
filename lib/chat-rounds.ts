@@ -155,9 +155,10 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
           if (toolRunning(part)) openProcess.running = true;
         }
       } else if (part.type === "tool") {
-        // 信号工具（task_deliver/todo）：如有过程组则收入展示，不参与分组判定
-        if (openProcess) openProcess.items.push(item);
-        else round.nodes.push({ kind: "reply", id: part.id, item, final: false });
+        // 信号工具（task_deliver/todo）：框架簿记，不参与分组判定也不渲染——
+        // 「✔ 交付 · 提交交付信息」对纯问答是纯仪式（用户实测圈出），工作轮的
+        // 交付表达由 TaskDeliveryCard（turnWorkToolCount 门控）承担
+        continue;
       } else if (part.type === "text" && part.text.trim()) {
         const hasToolAfter = suffixInMessage[messageIndex]![i] || suffixAfterMessage[messageIndex]!;
         if (hasToolAfter) {

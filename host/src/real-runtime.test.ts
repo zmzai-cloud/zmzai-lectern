@@ -126,4 +126,44 @@ describe("T08/PC12：Host 真实 runtime 面归属解析（F05——不捕获默
       await cleanup(b.dir);
     }
   }, 60_000);
+
+  it("prompt parity：首条 prompt 落占位标题（不叫「新会话」）；手动改名不被覆盖", async () => {
+    // 2026-11-12 标题事故回归：armed 网关下 UI 的 prompt 全走 Host 面——
+    // 自动标题逻辑若只在 Next 路由里（打包应用成死代码），侧栏会话永远停留
+    // 「新会话」（用户实测 15 个会话全部无名）。AI 摘要标题②在本测试环境无
+    // 凭据必然失败（保留占位），正好覆盖「生成失败不碰标题」分支。
+    const b = await boot();
+    try {
+      const storeA = b.framework.createSqliteSessionStore({ dataDir: path.join(b.dir, "data", "projects", "p_a") });
+      const s = await b.framework.createFrameworkSession({
+        store: storeA as never,
+        userId: "u1",
+        workspaceId: "ws",
+        model: { providerId: "openai", modelId: "m" },
+      });
+      expect((await storeA.getSession(s.id))?.title).toBe("新会话");
+
+      await b.face.prompt!(s.id, { text: "帮我优化登录页的首屏加载性能", requestId: "t_title_0001" });
+      expect((await storeA.getSession(s.id))?.title).toBe("帮我优化登录页的首屏加载性能");
+
+      // 超长消息截断到 30 字
+      const s2 = await b.framework.createFrameworkSession({
+        store: storeA as never,
+        userId: "u1",
+        workspaceId: "ws",
+        model: { providerId: "openai", modelId: "m" },
+      });
+      const long = "这是一个非常非常非常非常非常非常非常非常非常长的开头消息，后面还有内容".repeat(3);
+      await b.face.prompt!(s2.id, { text: long, requestId: "t_title_0002" });
+      expect((await storeA.getSession(s2.id))?.title).toHaveLength(30);
+      expect((await storeA.getSession(s2.id))?.title).toBe(long.replace(/\s+/g, " ").slice(0, 30));
+
+      // 手动改名后，后续消息不覆盖用户起的名（种子只在「新会话」/空标题时种下）
+      await storeA.updateSession(s.id, { title: "用户手动起的名" });
+      await b.face.prompt!(s.id, { text: "继续刚才的任务", requestId: "t_title_0003" });
+      expect((await storeA.getSession(s.id))?.title).toBe("用户手动起的名");
+    } finally {
+      await cleanup(b.dir);
+    }
+  }, 120_000);
 });

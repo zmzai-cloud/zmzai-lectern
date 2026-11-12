@@ -103,7 +103,81 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
   },
   // T08：prompt 走真实 runtime（此前命令面是 M2a fixture 假模型——F05 的
   // 隐藏缺口：生产 prompt 经 Host 会拿到脚本假响应）
-  prompt: (sessionId: string, input: Record<string, unknown>) => rtOf(sessionId).runner.prompt(sessionId, input as never),
+  // 2026-11-12 标题事故：armed 网关下 UI 的 prompt 全部经这里受理，Next 路由
+  // （app/api/sessions/[id]/prompt）在打包应用里是死代码——路由里的自动标题
+  // /附件解析/skill 解析三块 parity 逻辑从未跑过（侧栏会话永远停留「新会话」）。
+  // 这里补齐同套语义；错误用大写码抛出，server 层正则映射回 workflow 契约。
+  prompt: async (sessionId: string, input: Record<string, unknown>) => {
+    const rt = rtOf(sessionId);
+    const text = typeof input.text === "string" ? input.text.trim() : "";
+
+    // 附件 id → 描述符（Next 路由同规则：归属校验 + 就绪检查；失败不进 runner）
+    const { attachmentScopeFor, resolveAttachmentRefs } = await import("../../lib/attachments/scope.js");
+    const { MAX_ATTACHMENT_REFS } = await import("@zmzai/agent-framework");
+    const rawIds = Array.isArray(input.attachmentIds) ? input.attachmentIds.filter((v): v is string => typeof v === "string" && v.length > 0) : [];
+    const attachmentIds = [...new Set(rawIds)].slice(0, MAX_ATTACHMENT_REFS);
+    const scope = attachmentScopeFor(sessionId);
+    const resolved = resolveAttachmentRefs(scope, attachmentIds);
+    if (resolved.missing.length > 0) throw new Error("ATTACHMENT_NOT_FOUND");
+    if (resolved.notReady.length > 0) throw new Error("ATTACHMENT_NOT_READY");
+
+    // skillId → 描述符（不存在的 skill 明确报错，而非静默忽略）
+    let selected: { id: string; name: string; digest: string } | null = null;
+    if (typeof input.skillId === "string" && input.skillId) {
+      const { loadSkill } = await import("../../lib/skills.js");
+      selected = loadSkill(workspaceRootForSession(sessionId), input.skillId);
+      if (!selected) throw new Error("SKILL_NOT_FOUND");
+    }
+
+    // 自动标题 ①占位：首条消息摘要立即生效（不再叫「新会话」）；②AI 摘要标题
+    // 在 prompt 受理后异步覆盖（仅当标题仍是占位——用户手动改名则不覆盖）
+    let autoTitleSeed: string | null = null;
+    try {
+      const ses = await rt.store.getSession(sessionId);
+      if (ses && (!ses.title || ses.title === "新会话")) {
+        const images = Array.isArray(input.images) ? (input.images as unknown[]) : [];
+        const seed = text
+          || (resolved.refs.length ? String((resolved.refs[0] as { name?: string }).name ?? "") : "")
+          || (images.length ? "[图片消息]" : "");
+        if (seed) {
+          autoTitleSeed = seed.replace(/\s+/g, " ").slice(0, 30);
+          await rt.store.updateSession(sessionId, { title: autoTitleSeed });
+        }
+      }
+    } catch {
+      /* 占位标题失败不阻塞发送 */
+    }
+
+    const runnerInput: Record<string, unknown> = { ...input };
+    delete runnerInput.attachmentIds;
+    delete runnerInput.skillId;
+    if (resolved.refs.length > 0) runnerInput.attachmentRefs = resolved.refs;
+    if (selected) runnerInput.skill = { id: selected.id, name: selected.name, digest: selected.digest };
+    const receipt = (await rt.runner.prompt(sessionId, runnerInput as never)) as { userMessageId?: string } | null;
+
+    // 附件从「草稿」绑定成「已发送历史」（失败不阻塞——消息已落地）
+    if (receipt?.userMessageId) {
+      for (const ref of resolved.refs) {
+        try { scope.store.bind((ref as { id: string }).id, receipt.userMessageId, sessionId); } catch { /* 绑定失败走草稿 TTL */ }
+      }
+    }
+
+    // AI 摘要标题②：后台 one-shot 补全不阻塞回执。Host 进程没有请求级 ALS，
+    // 凭据经 credentialRef 包 withSessionCredential（provider 请求时动态读
+    // currentCookieHeader，ALS 随 async 链路跨 await 存活）。
+    if (autoTitleSeed && text) {
+      const { generateSessionTitle } = await import("../../lib/session-title.js");
+      const { withSessionCredential } = await import("../../lib/request-cookie.js");
+      const { credentialFor } = await import("./server.js");
+      const model = input.model && typeof input.model === "object" ? (input.model as never) : undefined;
+      void withSessionCredential(credentialFor(sessionId), () => generateSessionTitle(rt as never, sessionId, text, model))
+        .then((title) => (title
+          ? rt.store.getSession(sessionId).then((ses) => (ses && ses.title === autoTitleSeed ? rt.store.updateSession(sessionId, { title }) : undefined))
+          : undefined))
+        .catch(() => undefined);
+    }
+    return receipt;
+  },
   // T08：会话列表全项目聚合（轻量 projectStore，不起 runtime/MCP）；
   // 显式 projectId 时只查该项目，未知 projectId 抛错（不静默空列表）
   // T08/T09：会话列表——显式 projectId 只查该项目（未知抛错不空成功）；

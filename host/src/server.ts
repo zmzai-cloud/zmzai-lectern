@@ -677,8 +677,10 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
           // UI 的完整 prompt 输入透传（gateway 只并入 sessionId，其余字段原样可达）。
           // 旧实现只转 text+requestId：Host 模式永远落 OPENAI_MODEL 兜底模型
           // （0.11.0 表现为 deepseek-chat），用户在 UI 选的模型/档位全被丢弃。
-          // skillId 不在此列——需 loadSkill 解析成 {id,name,digest} 再传 runner。
-          for (const key of ["model", "agent", "effort", "references", "images"] as const) {
+          // attachmentIds/skillId（2026-11-12 prompt parity）原样带给
+          // realRuntime.prompt——归属/存在性校验和 loadSkill 解析在那里做，
+          // 与 Next 路由同一套语义。
+          for (const key of ["model", "agent", "effort", "references", "images", "attachmentIds", "skillId"] as const) {
             const value = body[key];
             if (value !== undefined && value !== null) input[key] = value;
           }
@@ -697,6 +699,10 @@ export async function startHostServer(options: HostServerOptions): Promise<HostH
             if (/REQUEST_ID_REUSED/.test(message)) workflow(409, "REQUEST_ID_REUSED", "requestId 已用于不同的消息内容");
             else if (/SESSION_NOT_FOUND/.test(message)) workflow(404, "SESSION_NOT_FOUND", "会话不存在");
             else if (/RECOVERY_REQUIRED/.test(message)) workflow(409, "RECOVERY_REQUIRED", "上一任务的外部副作用尚未确认，请先核对后再继续");
+            // 2026-11-12 prompt parity（real-runtime.prompt 抛出，文案与 Next 路由逐字一致）
+            else if (/ATTACHMENT_NOT_FOUND/.test(message)) workflow(422, "ATTACHMENT_NOT_FOUND", "附件不存在、不属于该会话或已被清理，请重新添加");
+            else if (/ATTACHMENT_NOT_READY/.test(message)) workflow(409, "ATTACHMENT_NOT_READY", "还有附件未就绪，请等待解析完成或重试失败的附件");
+            else if (/SKILL_NOT_FOUND/.test(message)) workflow(422, "SKILL_NOT_FOUND", "选中的 Skill 不存在、不可读取或超过大小限制");
             else send(res, 500, { error: "INTERNAL", message });
           }
           return;

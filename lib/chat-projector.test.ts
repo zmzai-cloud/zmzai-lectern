@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ChatProjector, EMPTY_CHAT_VIEW, MESSAGE_CACHE_LIMIT, summarizeFlowTools, transcriptToEvents } from "./chat-projector.js";
+import { ChatProjector, EMPTY_CHAT_VIEW, MESSAGE_CACHE_LIMIT, transcriptToEvents } from "./chat-projector.js";
 import type { Artifact } from "./types.js";
 
 it("bounds 10,000 streamed messages without evicting independent task snapshots", () => {
@@ -245,18 +245,5 @@ describe("ChatProjector 交付卡的数据来源", () => {
   });
 });
 
-describe("summarizeFlowTools（工作流程收起行概览）", () => {
-  it("同类合并计数、保持首次出现顺序", () => {
-    expect(summarizeFlowTools(["read", "read", "read", "edit", "edit", "bash"])).toBe("读取 3 · 编辑 2 · 执行");
-  });
-
-  it("超过 3 类截断为「等」，未知工具用原始名", () => {
-    expect(summarizeFlowTools(["read", "grep", "bash", "edit", "write"])).toBe("读取 · 搜索 · 执行 · 等");
-    expect(summarizeFlowTools(["mcp_scan", "mcp_scan"])).toBe("mcp_scan 2");
-  });
-
-  it("空序列与单条", () => {
-    expect(summarizeFlowTools([])).toBe("");
-    expect(summarizeFlowTools(["websearch"])).toBe("联网");
-  });
-});
+// 旧 summarizeFlowTools 概览测试已随实现删除（2026-11-12 统一重构）：
+// 组摘要语义由 lib/chat-rounds.test.ts 的 summarizeGroups 用例覆盖。

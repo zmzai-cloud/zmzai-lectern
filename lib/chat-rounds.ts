@@ -8,7 +8,9 @@ import type { Part } from "./types.js";
  *  - 过程内容（reasoning / tool / 中途叙述）按相邻性聚成组；
  *  - **回复（后面没有工具的正文）终结前一个组**，自己是独立 response；
  *  - 换工具类型不分组、step 序号变化不分组；
- *  - 用户消息开启新轮（新过程段）。
+ *  - 用户消息开启新轮（新过程段）；
+ *  - run 进行中，最后一条消息的尾部 text 是「流式回复」：不终结过程组，
+ *    后续工具到达时被吸收回同一组（避免组分裂重挂载引发的展开/收起震荡）。
  *
  *  输出是一棵轮次树：每轮 = { groups: 过程组[], reply: 回复 | null }，
  *  渲染层不再需要跨消息归并的补丁逻辑。 */
@@ -69,7 +71,7 @@ export function summarizeGroups(tools: string[]): { label: string; counts: { kin
 export type RoundNode =
   | { kind: "user"; id: string; item: UiPart[] }
   | { kind: "process"; id: string; anchorMessageId: string; items: UiPart[]; tools: string[]; running: boolean; summary: string }
-  | { kind: "reply"; id: string; item: UiPart; final: boolean };
+  | { kind: "reply"; id: string; item: UiPart; final: boolean; /** 流式尾部（run 进行中、无法预知后续是否还有工具） */ streaming?: boolean };
 
 export type Round = {
   id: string;
@@ -82,8 +84,16 @@ function toolRunning(part: Part): boolean {
   return part.type === "tool" && (part.state.status === "running" || part.state.status === "pending");
 }
 
-/** 全会话分组主入口：visible 消息序列 → 轮次树。 */
-export function buildRounds(messages: { id: string; role: string; parts: UiPart[] }[]): Round[] {
+/** 全会话分组主入口：visible 消息序列 → 轮次树。
+ *
+ *  `running`（session 运行中）改变**尾部 text** 的归类：流式过程中无法预知
+ *  后面还会不会有工具——若按静止规则判成 reply 并 closeProcess，后续工具一到
+ *  text 又被重新归类进组，组节点 id 变化导致 WorkflowGroup 重挂载（用户手动
+ *  收起状态丢失、组反复展开收起）。故 running 时最后一条消息的尾部 text 以
+ *  streaming reply 形态渲染且**不终结过程组**：后续真来工具，text 被吸收进
+ *  同一个组（组 id 不变，无重挂载）；run 结束后重算，text 落为最终回复。 */
+export function buildRounds(messages: { id: string; role: string; parts: UiPart[] }[], opts?: { running?: boolean }): Round[] {
+  const running = opts?.running ?? false;
   const rounds: Round[] = [];
   let current: Round | null = null;
   let openProcess: RoundNode & { kind: "process" } | null = null;
@@ -98,6 +108,27 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
     return current;
   };
 
+  // 信号工具不算"后续工作"——task_deliver 标记交付完成、todo 更新计划，
+  // 结论 text 后面跟它们不构成"中途叙述"，照常显示为正文
+  const isWorkTool = (p: { type: string; tool?: string }): boolean =>
+    p.type === "tool" && p.tool !== "task_deliver" && p.tool !== "todo";
+
+  // 「后面还有没有工作工具」判定在**全会话后续**上做（不只本消息）：跨消息的
+  // 后续工具同样使 text 成为中途叙述（pi 每 turn 一条消息，下一条消息的工具
+  // 很常见）。逐 text 切片扫描是 O(P²) 且流式每帧重算——一次反向扫描预计算：
+  // 每消息内部的 part 后缀标志 + 每消息之后的消息级标志，合并即 O(1) 查询。
+  const suffixInMessage: boolean[][] = messages.map((message) => {
+    const flags = new Array<boolean>(message.parts.length).fill(false);
+    for (let i = message.parts.length - 2; i >= 0; i -= 1) {
+      flags[i] = flags[i + 1]! || isWorkTool(message.parts[i + 1]!.part);
+    }
+    return flags;
+  });
+  const suffixAfterMessage: boolean[] = new Array<boolean>(messages.length).fill(false);
+  for (let i = messages.length - 2; i >= 0; i -= 1) {
+    suffixAfterMessage[i] = suffixAfterMessage[i + 1]! || messages[i + 1]!.parts.some((p) => isWorkTool(p.part));
+  }
+
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = messages[messageIndex]!;
     if (message.role !== "assistant") {
@@ -109,17 +140,7 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
     }
     const round = ensureRound(message.id);
     const parts = message.parts;
-    // 叙述判定在**全会话后续**上做（不只本消息）：跨消息的后续工具同样使
-    // 该 text 成为中途叙述（pi 每 turn 一条消息，下一条消息的工具很常见）
-    const laterMessages = messages.slice(messageIndex + 1);
-    // 信号工具不算"后续工作"——task_deliver 标记交付完成、todo 更新计划，
-    // 结论 text 后面跟它们不构成"中途叙述"，照常显示为正文
-    const isWorkTool = (p: { type: string; tool?: string }): boolean =>
-      p.type === "tool" && p.tool !== "task_deliver" && p.tool !== "todo";
-    const hasToolAfterAnywhere = (index: number): boolean => {
-      if (parts.slice(index + 1).some((later) => isWorkTool(later.part))) return true;
-      return laterMessages.some((later) => later.parts.some((p2) => isWorkTool(p2.part)));
-    };
+    const isStreamingTailMessage = running && messageIndex === messages.length - 1;
     for (let i = 0; i < parts.length; i++) {
       const item = parts[i]!;
       const part = item.part;
@@ -138,12 +159,17 @@ export function buildRounds(messages: { id: string; role: string; parts: UiPart[
         if (openProcess) openProcess.items.push(item);
         else round.nodes.push({ kind: "reply", id: part.id, item, final: false });
       } else if (part.type === "text" && part.text.trim()) {
-        if (hasToolAfterAnywhere(i)) {
+        const hasToolAfter = suffixInMessage[messageIndex]![i] || suffixAfterMessage[messageIndex]!;
+        if (hasToolAfter) {
           if (!openProcess) {
             openProcess = { kind: "process", id: part.id, anchorMessageId: message.id, items: [], tools: [], running: false, summary: "" };
             round.nodes.push(openProcess);
           }
           openProcess.items.push(item);
+        } else if (isStreamingTailMessage) {
+          // 流式尾部：不终结过程组（保持组开着、text 在组下方流式渲染）。
+          // 后续工具到达 → 重算时 text 因 hasToolAfter 被吸收进**同一个**组。
+          round.nodes.push({ kind: "reply", id: part.id, item, final: false, streaming: true });
         } else {
           closeProcess();
           round.nodes.push({ kind: "reply", id: part.id, item, final: true });

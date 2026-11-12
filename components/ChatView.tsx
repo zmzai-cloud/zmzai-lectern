@@ -12,9 +12,9 @@ import type { ConnectionState } from "@/lib/client";
 import { canvasKindOf } from "@/lib/canvas-kind";
 import type { HistoryState } from "@/lib/session-history";
 import type { PermissionMode } from "@/lib/permission-mode";
-import { summarizeFlowTools, type ChatViewData, type TodoItem } from "@/lib/chat-projector";
+import { type ChatViewData, type TodoItem } from "@/lib/chat-projector";
 import { mergeOptimisticMessage, type OptimisticEcho } from "@/lib/chat-view-model";
-import { buildRounds, categoryOfTool, CATEGORY_LABELS } from "@/lib/chat-rounds";
+import { buildRounds, type RoundNode } from "@/lib/chat-rounds";
 type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
 import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
@@ -171,7 +171,9 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
   const failed = tools.filter((t) => t.state.status === "error").length
     + parts.filter((p) => p.part.type === "subtask" && p.subagent?.finished?.state === "error").length;
 
-  const duration = useMemo(() => {
+  // 组耗时 = 组内工具最早 start → 最晚 end。直接算：tools 是每次渲染的新数组，
+  // useMemo 永不命中，包一层只是假缓存。
+  const duration = (() => {
     let start = Infinity;
     let end = -Infinity;
     for (const t of tools) {
@@ -180,7 +182,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
       const startMs = Date.parse(state.time.start);
       if (Number.isFinite(startMs)) start = Math.min(start, startMs);
       const endMs = "end" in state.time ? Date.parse(state.time.end) : Number.NaN;
-      if (Number.isFinite(endMs)) end = Math.max(endMs, endMs);
+      if (Number.isFinite(endMs)) end = Math.max(end, endMs);
     }
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
     const ms = end - start;
@@ -189,7 +191,7 @@ function WorkflowGroup({ parts, running, onOpenFile, onOpenChild, summary }: { p
     if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
     const m = Math.floor(s / 60);
     return `${m}m${Math.round(s % 60)}s`;
-  }, [tools]);
+  })();
   return (
     <div className={cn("chat-workflow-group", open && "open", running && "running")}>
       <button type="button" className="chat-workflow-toggle" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
@@ -644,30 +646,51 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   // 扫一眼分不清主次——结论段加一档排版分量（chat-final-answer）。
   /** DSH 式轮次树（docs/dsh-ui-reference/RULES.md）：全会话一次分组——
    *  过程按相邻聚组、回复（后面无工具的正文）终结组并独立成段、用户消息开新轮。
-   *  取代此前逐消息 slots + 跨消息归并补丁的两层逻辑。 */
-  const rounds = useMemo(() => buildRounds(visible.map((m) => ({ id: m.id, role: m.role, parts: m.parts }))), [visible]);
-  const passthroughTextIds = useMemo(() => {
-    // 过程组内 text 一律弱化（组内即过程）
-    const ids = new Set<string>();
-    for (const round of rounds) for (const node of round.nodes) if (node.kind === "process") for (const item of node.items) if (item.part.type === "text") ids.add(item.part.id);
-    return ids;
+   *  取代此前逐消息 slots + 跨消息归并补丁的两层逻辑。
+   *  running 传入分组器：流式尾部 text 不终结过程组（防组分裂重挂载震荡）。 */
+  const rounds = useMemo(() => buildRounds(visible.map((m) => ({ id: m.id, role: m.role, parts: m.parts })), { running }), [visible, running]);
+
+  /** messageId → 该消息要渲染的节点（过程组锚点 / 回复），一次预计算。
+   *  此前渲染循环里每条消息 rounds.find（O(轮×节点)×消息数，流式每帧重跑），
+   *  且 renderVisible 又独立遍历一遍 rounds 收集锚点/回复 id——现在都吃这张表。 */
+  const nodesByMessage = useMemo(() => {
+    const map = new Map<string, RoundNode[]>();
+    for (const round of rounds) {
+      for (const node of round.nodes) {
+        // user 节点不进 nodes（用户 parts 挂在 round.user），这里只需 process/reply
+        const key = node.kind === "process" ? node.anchorMessageId : node.kind === "reply" ? node.item.part.messageId : null;
+        if (!key) continue;
+        const list = map.get(key);
+        if (list) list.push(node);
+        else map.set(key, [node]);
+      }
+    }
+    return map;
   }, [rounds]);
 
+  /** 运行态：最后一轮的最后一个过程组锚点。session running 期间该组保持展开
+   *  （工具间隙/尾部正文流式时也不收起，run 结束才收）。
+   *  ⚠️ 必须在组件顶层算——此前写在渲染循环里调 useMemo 是 Hooks 规则违规：
+   *  流式时消息数变化使 hook 槽位错位，isLiveProcessGroup 拿到别的消息的缓存
+   *  值，组展开态随机闪变（「展开收起又展开」的直接根因）。 */
+  const liveAnchorId = useMemo(() => {
+    if (!running) return null;
+    const lastRound = rounds[rounds.length - 1];
+    if (!lastRound) return null;
+    for (let i = lastRound.nodes.length - 1; i >= 0; i -= 1) {
+      const node = lastRound.nodes[i]!;
+      if (node.kind === "process") return node.anchorMessageId;
+    }
+    return null;
+  }, [rounds, running]);
 
   /** 只把会实际渲染的消息传给虚拟列表：被归并的成员消息在 rounds 阶段就过滤——
    *  返回 null 只是不画 DOM，virtualizer 仍按 estimateSize(140px) 预留空间，
    *  7 条跳过=980px 空白（用户实测"空白更大了"） */
-  const renderVisible = useMemo(() => {
-    const anchorIds = new Set<string>();
-    const replyMsgIds = new Set<string>();
-    for (const round of rounds) {
-      for (const node of round.nodes) {
-        if (node.kind === "process") anchorIds.add(node.anchorMessageId);
-        else if (node.kind === "reply") replyMsgIds.add(node.item.part.messageId);
-      }
-    }
-    return visible.filter((m) => m.role !== "assistant" || anchorIds.has(m.id) || replyMsgIds.has(m.id) || !!m.error);
-  }, [visible, rounds]);
+  const renderVisible = useMemo(
+    () => visible.filter((m) => m.role !== "assistant" || !!m.error || (nodesByMessage.get(m.id)?.length ?? 0) > 0),
+    [visible, nodesByMessage],
+  );
 
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
@@ -754,7 +777,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
   const virtual = useVirtualizer({ count: renderVisible.length, getScrollElement: () => messagesRef.current, estimateSize: () => 140,
-    getItemKey: index => visible[index]!.id, overscan: 8, scrollMargin,
+    // ⚠️ key 必须取 renderVisible——count 是它，行 DOM 也是它。此前错取 visible，
+    // 归并消息被过滤后 key 整体错位，测量缓存串到别的行（滚动/流式跳动源）。
+    getItemKey: index => renderVisible[index]!.id, overscan: 8, scrollMargin,
   });
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -821,7 +846,8 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     if (visible.length === 0) { el.scrollTop = 0; return; }
     if (anchorRef.current) {
       const a = anchorRef.current;
-      const index = visible.findIndex(message => message.id === a.id);
+      // data-virtual-message 行只存在于 renderVisible——索引必须与 virtualizer 一致
+      const index = renderVisible.findIndex(message => message.id === a.id);
       if (index >= 0) {
         virtual.scrollToIndex(index, { align: "start" });
         requestAnimationFrame(() => {
@@ -833,7 +859,7 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     } else if (followTail.current && !historyState.hasNewer) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [visible, pending, virtual.getTotalSize()]);
+  }, [renderVisible, pending, virtual.getTotalSize()]);
   return (
     <div className="chat-view relative grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-bg">
       {/* 消息区与 Composer 是两个明确的 grid row：上面只能在自身内部滚动，
@@ -964,7 +990,6 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           const m = renderVisible[idx]!;
           const renderMessage = () => {
           const isAssistant = m.role === "assistant";
-          const lastActive = isAssistant && idx === renderVisible.length - 1 && running;
           if (!isAssistant) {
             // IDE 式用户消息：右侧浅色圆角气泡（含图片附件内联展示） + hover 操作（复制/编辑重发）
             const text = m.parts
@@ -1070,23 +1095,14 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
               </div>
             );
           }
-          // DSH 式：assistant 消息从 rounds 树找自己的节点（过程组/回复）渲染
-          const roundOfMessage = rounds.find((r) => r.nodes.some((n) => n.kind === "process" && n.anchorMessageId === m.id || n.kind === "reply" && n.item.part.messageId === m.id)) ?? null;
-          // 跨消息过程组只由锚点消息渲染一次——成员消息（anchorMessageId 不同）
-          // 各自渲染整组会出现 N 个重复组头（实测 8 条消息 8 个"已运行命令"）
-          const myNodes = (roundOfMessage?.nodes ?? []).filter((n) =>
-            n.kind === "process" ? n.anchorMessageId === m.id : n.kind === "reply" && n.item.part.messageId === m.id);
-          if (myNodes.length === 0 && !m.error) return null; // 被归并的成员消息：零内容不渲染
-          // 运行态判定改基于 rounds 而非消息索引——流式过程中新消息不断追加，
-          // 锚点消息不再是 renderVisible 最后一条，lastActive 闪变导致组反复展开收起。
-          // 正确语义：session running 时，最后一轮的最新过程组保持展开
-          const isLiveProcessGroup = useMemo(() => {
-            if (!running) return false;
-            const lastRound = rounds[rounds.length - 1];
-            if (!lastRound) return false;
-            const lastProcess = [...lastRound.nodes].reverse().find((n) => n.kind === "process");
-            return lastProcess?.kind === "process" && lastProcess.anchorMessageId === m.id;
-          }, [rounds, running, m.id]);
+          // DSH 式：assistant 消息从 nodesByMessage 查自己的节点（过程组/回复）渲染。
+          // 跨消息过程组只由锚点消息渲染一次——成员消息不在表里（零内容不渲染），
+          // 各自渲染整组会出现 N 个重复组头（实测 8 条消息 8 个"已运行命令"）。
+          const myNodes = nodesByMessage.get(m.id) ?? [];
+          if (myNodes.length === 0 && !m.error) return null;
+          // 运行态 = 该消息是 liveAnchorId（组件顶层预计算，见上）——session
+          // running 期间最后一轮的最新过程组保持展开，run 结束才收起
+          const isLiveProcessGroup = running && m.id === liveAnchorId;
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
               return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={isLiveProcessGroup} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;

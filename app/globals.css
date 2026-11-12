@@ -267,8 +267,7 @@ html[data-theme="dark"] {
 }
 .chat-input-dock { position: relative; min-width: 0; background: var(--color-bg); }
 .chat-latest { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 7px 14px; border: 1px solid var(--color-line); border-radius: 30px; background: var(--color-bg); font-size: 12px; box-shadow: var(--shadow-sm); z-index: 5; }
-.chat-task-plan, .chat-task-summary { padding: 12px 0; }
-.chat-task-summary { border-bottom: 0; }
+.chat-task-summary { padding: 12px 0; border-bottom: 0; }
 .chat-text-block { overflow-wrap: anywhere; }
 .chat-text-block > div:first-child { font-size: 15px; line-height: 1.8; }
 .chat-welcome { justify-content: center; min-height: 150px; padding: 24px 12px; }
@@ -328,24 +327,21 @@ html[data-theme="dark"] {
 @media (prefers-reduced-motion: reduce) { .loading-dots i { animation: none; } }
 /* 工具行运行态小圆点 */
 .tool-card.running .tool-card-glyph::after {
-  content: ; position: absolute; right: -2px; bottom: -1px;
+  /* content 空值 `content: ;` 会被浏览器当非法声明整条丢弃——伪元素从此
+     不生成，运行中小圆点其实一直没渲染出来过。必须是 `content: ""`。 */
+  content: ""; position: absolute; right: -2px; bottom: -1px;
   width: 4px; height: 4px; border-radius: 50%;
   background: var(--color-live);
   animation: dot-pulse 1.2s ease-in-out infinite;
 }
 @keyframes dot-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
 
-/* v3 原型：思考行 */
-.chat-think-row { padding: 0.25rem 0.375rem; font-size: 0.8125rem; color: var(--color-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.55; }
-.chat-think-row .think-label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.375rem; opacity: 0.6; }
 .chat-workflow-group { margin-block: 6px 10px; }
-.chat-workflow-group.running { border-block: 0; }
 .chat-workflow-group.running .chat-workflow-toggle { color: var(--color-ink-2); }
 .tool-card-trigger { min-height: 1.35rem; gap: 0.4rem; color: var(--color-ink-3); }
 .tool-card-label { font-size: 0.6875rem; }
 .tool-card-summary { font-size: 0.6875rem; }
 .tool-card-sep { font-size: 0.6875rem; }
-.chat-workflow-toggle { min-height: 1.35rem; font-size: 0.6875rem; color: var(--color-ink-3); }
 
 /* ── 错误行降刺（2026-11-10 用户反馈"错误行刺眼"）──
    ToolCard 失败行：不再整行 danger——图标 danger + 文字 ink-3（可读性优先），
@@ -380,7 +376,6 @@ html[data-theme="dark"] {
 .chat-workflow-toggle { display: flex; width: fit-content; max-width: 100%; min-height: 2rem; align-items: center; gap: 0.4rem; border: 0; background: transparent; color: var(--color-ink-3); padding: 0.25rem 0.25rem; margin-left: -0.25rem; cursor: pointer; font-size: 0.75rem; transition: color 0.15s; }
 .chat-workflow-toggle:hover { color: var(--color-ink-2); }
 .chat-workflow-sep { flex: 0 0 auto; opacity: 0.65; }
-.chat-workflow-failed { flex: 0 0 auto; color: var(--color-danger); }
 /* 箭头与工具行/思考行同规则：收起时隐藏（裸文字行不挂常亮三角），
    hover / 键盘聚焦浮现提示可点，展开时常亮并转向上（可收起）。 */
 .chat-workflow-chevron { flex: 0 0 auto; color: var(--color-ink-3); transition: transform 0.15s ease; }
@@ -458,7 +453,6 @@ html[data-theme="dark"] {
 }
 @media (hover: none) { .chat-copy-actions { opacity: 1; } }
 @media (max-width: 640px) {
-  .chat-assistant-avatar { display: none; }
   .chat-composer { margin-inline: 10px; width: auto; border-radius: 12px; }
 }
 /* 底部终端展开时，对话区会变成一条短而珍贵的阅读带；空态优先保留标题和说明，

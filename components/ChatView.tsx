@@ -16,7 +16,7 @@ import { type ChatViewData, type TodoItem } from "@/lib/chat-projector";
 import { mergeOptimisticMessage, type OptimisticEcho } from "@/lib/chat-view-model";
 import { buildRounds, type RoundNode } from "@/lib/chat-rounds";
 type SessionCheckpoint = import("@/lib/chat-projector").SessionCheckpoint;
-import type { ModelRef, Part, PermissionRequest, SessionSummary, Artifact } from "@/lib/types";
+import type { ModelRef, Part, PermissionRequest, Artifact } from "@/lib/types";
 import Composer, { type ComposerSendInput } from "./Composer";
 import { MessageAttachmentCard } from "./AttachmentCards";
 import DiffView, { diffStat } from "./DiffView";
@@ -476,71 +476,10 @@ type Props = {
   onOpenChildSession?: (child: { sessionId: string; agent: string; description: string }) => void;
 };
 
-/** 本轮小结卡（N5）：**一次 Attempt 运行**收尾的 AI 一句总结 + 结构化统计。
- *
- *  【它现在说的是「本轮」而不是「任务」】旧实现把 `kind: "completed"` 渲染成
- *  「任务完成」，可它只证明这一轮模型正常结束了——剩余步骤还在时，这句话就是
- *  在骗用户（规格 §3.2）。所以：① 文案改成「本轮已结束」，任务级的完成判定
- *  交给 `TaskDeliveryCard`（只认 task.delivered）；② 通用「继续下一步」按钮
- *  连同它发出的合成用户消息一起删除（§14.2 / §19）——任务由框架自己接着跑，
- *  轮次之间不再需要用户做任何事。
- *
- *  默认折叠：一轮结束不再是需要用户注意的事件，它只是轨迹上的一条记录。 */
-type TimelineItem = { tool: string; title?: string; status: string; durationMs: number | null };
-
-function SummaryCard({ summary, timeline }: { summary: SessionSummary; timeline?: TimelineItem[] }) {
-  const kind = summary.kind;
-  const label = kind === "completed" ? "已完成" : kind === "aborted" ? "已中断" : "出错";
-  const dot = kind === "completed" ? "bg-success" : kind === "aborted" ? "bg-warning" : "bg-danger";
-  const meta = summary.meta;
-  const parts: string[] = [];
-  if (meta) {
-    if (meta.filesEdited > 0) parts.push(`改动 ${meta.filesEdited} 个文件`);
-    parts.push(`${meta.toolCalls} 次工具调用`);
-    if (meta.durationMs > 0) parts.push(`${(meta.durationMs / 1000).toFixed(1)}s`);
-  }
-  const [showTimeline, setShowTimeline] = useState(false);
-  return (
-    <details className="chat-task-summary" open={kind !== "completed"} data-attempt-summary>
-      <summary className="cursor-pointer py-2 text-xs text-ink-2">{label}{parts.length ? ` · ${parts.join(" · ")}` : ""}</summary>
-      <div>
-      <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span className="text-[0.6875rem] font-medium text-ink-2">{label}{parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}</span>
-      </div>
-      <div className="px-3 py-2.5 text-[0.8125rem] leading-[1.6] text-ink">{summary.text}</div>
-      {timeline && timeline.length > 0 ? (
-        <div className="flex items-center gap-1 px-3 pb-2 pt-1">
-          {timeline && timeline.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowTimeline((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-pill px-2 py-1 text-[0.6875rem] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              执行轨迹
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className={cn("transition-transform", showTimeline && "rotate-180")}>
-                <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-          )}
-        </div>
-      ) : null}
-      {showTimeline && timeline && timeline.length > 0 && (
-        <div className="space-y-0.5 border-t border-line px-3 py-2">
-          {timeline.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 font-mono text-[0.625rem] leading-5 tabular-nums">
-              <span className={cn("h-1 w-1 shrink-0 rounded-full", t.status === "error" ? "bg-danger" : t.status === "running" ? "bg-live" : "bg-success")} />
-              <span className="w-16 shrink-0 truncate text-ink-2" title={t.tool}>{t.tool}</span>
-              {t.title && <span className="min-w-0 flex-1 truncate text-ink-3" title={t.title}>{t.title}</span>}
-              {typeof t.durationMs === "number" && <span className="ml-auto w-12 shrink-0 text-right text-ink-3">{(t.durationMs / 1000).toFixed(1)}s</span>}
-            </div>
-          ))}
-        </div>
-      )}
-      </div>
-    </details>
-  );
-}
+/** 本轮小结卡（SummaryCard）已删（2026-11-12 用户反馈「任务完成总结有价值吗」）：
+ *  纯问答轮它是纯噪音，工作轮的统计已由 Composer 上方 4s 淡出的 whisper
+ *  （任务完成 · N 次工具 · Xs）覆盖、执行轨迹与过程组工具行重复、错误场景
+ *  由 ErrorCard（含断点统计）覆盖——三层信息都有更安静的载体，不需要第四张卡。 */
 
 /** 产物卡片：一次可交付文件（HTML/截图/PDF/数据文件等）。轻量一行——图标（按
  *  contentType 选）、mono 路径、人类可读大小、「打开」按钮。只展示本轮 run 的
@@ -692,6 +631,23 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     [visible, nodesByMessage],
   );
 
+  /** 当前轮（最后一条用户消息之后）的工作工具调用数——0 = 纯问答轮。
+   *  仪式感与工作量匹配（2026-11-12 用户反馈「发个 hello 太墨迹」）：纯问答
+   *  不配任务交付仪式（交付卡/验收/证据对聊天纯属噪音，ZCode/Codex 基准=
+   *  回答本身就是交付）；真实工作轮保留交付卡。task_deliver/todo 是信号工具
+   *  不算工作（与 chat-rounds 的 isWorkTool 同口径）。 */
+  const turnWorkToolCount = useMemo(() => {
+    let count = 0;
+    for (let i = visible.length - 1; i >= 0; i -= 1) {
+      const message = visible[i]!;
+      if (message.role === "user") break;
+      for (const { part } of message.parts) {
+        if (part.type === "tool" && part.tool !== "task_deliver" && part.tool !== "todo") count += 1;
+      }
+    }
+    return count;
+  }, [visible]);
+
   const finalAnswerPartId = useMemo(() => {
     if (!taskView?.completed) return null;
     for (let i = visible.length - 1; i >= 0; i--) {
@@ -751,8 +707,9 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
     if (!prevRunning.current && running) showWhisper("已发送 · 正在装配上下文");
     if (prevRunning.current && !running && summary) {
       const parts: string[] = [];
+      // 纯问答轮（0 次工具）只说「任务完成」——「0 次工具调用」是给自己找的哑谜
       if (summary.meta && summary.meta.toolCalls > 0) parts.push(`${summary.meta.toolCalls} 次工具调用`);
-      if (summary.meta && summary.meta.durationMs > 0) parts.push(`${(summary.meta.durationMs / 1000).toFixed(1)}s`);
+      if (summary.meta && summary.meta.durationMs > 0 && (summary.meta.toolCalls ?? 0) > 0) parts.push(`${(summary.meta.durationMs / 1000).toFixed(1)}s`);
       showWhisper(parts.length > 0 ? `任务完成 · ${parts.join(" · ")}` : "任务完成");
     }
     prevRunning.current = running;
@@ -1105,6 +1062,19 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           const isLiveProcessGroup = running && m.id === liveAnchorId;
           const blocks: React.ReactNode[] = myNodes.map((node) => {
             if (node.kind === "process") {
+              // 纯思考组去壳：没有工作工具（也没有子任务）的组不套「已工作」头——
+              // 思考行直接平铺（ZCode 式：thinking 行 + 正文，hello 类问答零仪式）。
+              // 首个工作工具到达后自然成组（组头随工作出现，与吸收语义一致）。
+              const hasWork = node.tools.length > 0 || node.items.some((item) => item.part.type === "subtask");
+              if (!hasWork) {
+                return (
+                  <div key={`flow-${node.id}`} className="space-y-1">
+                    {node.items.map((item) => (
+                      <PartView key={item.part.id} part={item.part} diff={item.diff} markdown onOpenFile={onOpenFile} subagent={item.subagent} onOpenChild={onOpenChildSession} passthrough={item.part.type === "text"} />
+                    ))}
+                  </div>
+                );
+              }
               return <WorkflowGroup key={`flow-${node.id}`} parts={node.items} running={isLiveProcessGroup} onOpenFile={onOpenFile} onOpenChild={onOpenChildSession} summary={node.summary} />;
             }
             if (node.kind === "reply") {
@@ -1164,32 +1134,10 @@ export default function ChatView({ data, status, pending, sessionId, connState, 
           }
           return level ? <div className="px-0.5 pb-1 text-[0.625rem] text-ink-4">推理档位 {level}</div> : null;
         })()}
-        {task && taskView && taskView.completed && <TaskDeliveryCard task={task} />}
-        {summary && !running && !taskView?.completed && (
-          <SummaryCard
-            summary={summary}
-            timeline={(() => {
-              const items: TimelineItem[] = [];
-              for (const m of messages) {
-                for (const p of m.parts) {
-                  if (p.part.type !== "tool") continue;
-                  const st = p.part.state;
-                  const start = "time" in st && st.time?.start ? Date.parse(st.time.start) : null;
-                  const end = st.status === "completed" || st.status === "error" ? ("time" in st && st.time?.end ? Date.parse(st.time.end) : null) : null;
-                  // pi 1.5 的单调时钟执行耗时优先（不受时钟回拨/挂起影响），缺省回落时间戳差
-                  const precise = st.status === "completed" && typeof st.durationMs === "number" ? st.durationMs : null;
-                  items.push({
-                    tool: p.part.tool,
-                    title: "title" in st && st.title ? st.title : undefined,
-                    status: st.status,
-                    durationMs: precise ?? (start && end ? end - start : null),
-                  });
-                }
-              }
-              return items;
-            })()}
-          />
-        )}
+        {/* 交付卡只配真实工作轮（turnWorkToolCount>0）：纯问答（hello 类）的
+            「验收 1/1 · 证据 1 条」是模型硬凑的仪式——回答本身就是交付。
+            任务级完成反馈由 whisper（4s 淡出）承担，不占消息流。 */}
+        {task && taskView && taskView.completed && turnWorkToolCount > 0 && <TaskDeliveryCard task={task} />}
         {!running && summaryArtifacts.length > 0 && (
           <div className="chat-turn-artifacts">
             <div className="flex items-center gap-2 text-xs font-medium text-ink-3">

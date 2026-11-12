@@ -157,10 +157,13 @@ describe("§17.2-2 页面不存在通用「继续下一步」按钮和对应合�
     expect(chat).toContain("任务卡");
   });
 
-  it("Attempt 结束时画的是「本轮已结束」，不是「任务完成」", () => {
-    // 删掉按钮不等于改对了归因：小结卡还在，但它现在只能说这一轮。
+  it("Attempt 结束：消息流不再放小结卡（whisper 承担），审查页仍只说「本轮」", () => {
+    // 2026-11-12 契约变更（用户反馈「发个 hello 太墨迹」）：ChatView 的 attempt
+    // 小结卡整体删除——完成统计由 Composer 上方 4s 淡出的 whisper 覆盖，
+    // 交付仪式只留给真实工作轮的 TaskDeliveryCard。
     const chat = code("components/ChatView.tsx");
-    expect(chat).toContain("data-attempt-summary");
+    expect(chat, "消息流不得再出现小结卡").not.toContain("data-attempt-summary");
+    expect(chat, "交付卡只在真实工作轮出现（turnWorkToolCount 门控）").toContain("turnWorkToolCount > 0");
     const review = code("components/ReviewPane.tsx");
     expect(review).toContain("data-attempt-summary-label");
     expect(review).toContain("本轮已结束");

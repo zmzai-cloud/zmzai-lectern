@@ -189,10 +189,11 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
       const fireWhenIdle = async (): Promise<string | null> => {
         const deadline = Date.now() + 10 * 60_000;
         // 两段式（修竞态）：prompt 受理时 runLoop 可能尚未注册 active——直接等
-        // idle 会立刻通过，标题又与主对话并发。先等 active=true（最多 10s 兜底：
-        // runLoop 启动失败/极短命），再等 active=false。
+        // idle 会立刻通过，标题又与主对话并发。先等 active=true（独立 15s 上限：
+        // runLoop 若因异常从未启动，不该拖着标题空转 10 分钟），再等 active=false。
         let becameActive = false;
-        while (Date.now() < deadline) {
+        const activeDeadline = Date.now() + 15_000;
+        while (Date.now() < activeDeadline) {
           if (frameworkRef.isSessionActive(sessionId)) { becameActive = true; break; }
           await new Promise((resolve) => setTimeout(resolve, 100));
         }

@@ -165,12 +165,24 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
     // AI 摘要标题②：后台 one-shot 补全不阻塞回执。Host 进程没有请求级 ALS，
     // 凭据经 credentialRef 包 withSessionCredential（provider 请求时动态读
     // currentCookieHeader，ALS 随 async 链路跨 await 存活）。
+    // 【等主 run 结束再发】（2026-11-13 断流排查）：此前标题生成与主对话流
+    // 并发开两条 SSE 穿 CDN——实测互相干扰断流（02:23-02:25 时间线：标题调用
+    // 与主调用同刻各断 1-2 次）。isSessionActive 轮询等主 run 收尾，标题晚
+    // 10-30s 无感（侧栏本就 10s 轮询刷新）。
     if (autoTitleSeed && text) {
       const { generateSessionTitle } = await import("../../lib/session-title.js");
       const { withSessionCredential } = await import("../../lib/request-cookie.js");
       const { credentialFor } = await import("./server.js");
+      const frameworkRef = await import("@zmzai/agent-framework");
       const model = input.model && typeof input.model === "object" ? (input.model as never) : undefined;
-      void withSessionCredential(credentialFor(sessionId), () => generateSessionTitle(rt as never, sessionId, text, model))
+      const fireWhenIdle = async (): Promise<string | null> => {
+        const deadline = Date.now() + 10 * 60_000;
+        while (Date.now() < deadline && frameworkRef.isSessionActive(sessionId)) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+        return withSessionCredential(credentialFor(sessionId), () => generateSessionTitle(rt as never, sessionId, text, model));
+      };
+      void fireWhenIdle()
         .then((title) => (title
           ? rt.store.getSession(sessionId).then((ses) => (ses && ses.title === autoTitleSeed ? rt.store.updateSession(sessionId, { title }) : undefined))
           : undefined))

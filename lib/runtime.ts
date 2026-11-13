@@ -476,11 +476,19 @@ export function runtimeFor(projectPath: string, opts?: { workspaceRoot?: string 
         contextWindow: contextWindowFor(),
         summaryModel: provider.getModel(summaryModelRef),
       },
-      // 工作区 .zmzai/agents/*.md 自定义 Agent（与 legacy 引擎一致）
-      loadWorkspaceAgents: async () => {
-        const { agents } = await loadCustomAgents(createFsWorkspaceFiles({ root }));
-        return agents;
-      },
+      // 工作区 .zmzai/agents/*.md 自定义 Agent（与 legacy 引擎一致）。
+      // 【2026-11-13 pre 段优化】framework 的 registryFor 每条消息都会调用本钩子，
+      // 实测大工作区全量扫描 1.5-3s/条（[runloop-timing] pre 段）。定义几乎不变，
+      // 60s TTL 缓存足够——改定义最长一分钟生效，每条消息立省一个全量扫描。
+      loadWorkspaceAgents: (() => {
+        let cache: { at: number; agents: Awaited<ReturnType<typeof loadCustomAgents>>["agents"] } | null = null;
+        return async () => {
+          if (cache && Date.now() - cache.at < 60_000) return cache.agents;
+          const { agents } = await loadCustomAgents(createFsWorkspaceFiles({ root }));
+          cache = { at: Date.now(), agents };
+          return agents;
+        };
+      })(),
       resolveMandatorySkill: async (_session, selected) => {
         const skill = loadSkill(root, selected.id);
         if (!skill || skill.digest !== selected.digest) throw new Error("选中的 Skill 已变更、删除或不可读取；请重新选择后发送");

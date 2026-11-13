@@ -262,14 +262,15 @@ export default function Composer({ sessionId, running, selectedModel, onSelectMo
   }, [models]);
 
   // 默认推荐模型（需求：侧栏去代理后，底部选择器默认选一个稳定模型）：
-  // 优先 relay featured 的「推荐」标记（当前=glm-5.3），否则第一个可路由模型；
-  // 只在用户未手动选择时生效一次。
+  // 优先 relay featured 的「推荐」标记；同为推荐时优先 flash 档（2026-11-13
+  // 延迟实测：glm-5.3 对 hello 生成 3-8s，flash 只要 ~3s——日常对话默认快档，
+  // 重活用户手动上大模型），否则第一个可路由模型；只在用户未手动选择时生效一次。
   const defaultModelApplied = useRef(false);
   useEffect(() => {
     if (defaultModelApplied.current || selectedModel) return;
     const routable = modelChoices.filter((m) => m.routable);
     if (routable.length === 0) return;
-    const pick = routable.find((m) => m.tag === "推荐") ?? routable[0]!;
+    const pick = routable.find((m) => m.tag === "推荐" && m.id.includes("flash")) ?? routable.find((m) => m.tag === "推荐") ?? routable[0]!;
     defaultModelApplied.current = true;
     onSelectModel({ providerId: "openai", modelId: pick.id });
   }, [modelChoices, selectedModel, onSelectModel]);

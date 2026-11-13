@@ -148,6 +148,17 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
       /* 占位标题失败不阻塞发送 */
     }
 
+    // 记忆召回预取（2026-11-13 装配优化）：与 workflow/建档/工具装配并行发起，
+    // runLoop 的 memoryContextFor 直接触发 root-goal 缓存命中——冷会话的
+    // 1-2s 召回网络往返从装配关键路径上消失。失败无副作用（真实调用照常走）。
+    if (text) {
+      try {
+        const { resolveSessionOwner } = await import("../../lib/session-owner.js");
+        const { recallSection } = await import("../../lib/memory/service.js");
+        void recallSection(resolveSessionOwner(sessionId).project, sessionId, text).catch(() => undefined);
+      } catch { /* 预取失败不影响主链路 */ }
+    }
+
     const runnerInput: Record<string, unknown> = { ...input };
     delete runnerInput.attachmentIds;
     delete runnerInput.skillId;
@@ -177,8 +188,18 @@ export function buildRealRuntimeFace(opts: { credentialFor: (sessionId: string) 
       const model = input.model && typeof input.model === "object" ? (input.model as never) : undefined;
       const fireWhenIdle = async (): Promise<string | null> => {
         const deadline = Date.now() + 10 * 60_000;
-        while (Date.now() < deadline && frameworkRef.isSessionActive(sessionId)) {
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        // 两段式（修竞态）：prompt 受理时 runLoop 可能尚未注册 active——直接等
+        // idle 会立刻通过，标题又与主对话并发。先等 active=true（最多 10s 兜底：
+        // runLoop 启动失败/极短命），再等 active=false。
+        let becameActive = false;
+        while (Date.now() < deadline) {
+          if (frameworkRef.isSessionActive(sessionId)) { becameActive = true; break; }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (becameActive) {
+          while (Date.now() < deadline && frameworkRef.isSessionActive(sessionId)) {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+          }
         }
         return withSessionCredential(credentialFor(sessionId), () => generateSessionTitle(rt as never, sessionId, text, model));
       };

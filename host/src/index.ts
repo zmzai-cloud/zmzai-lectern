@@ -8,6 +8,15 @@ import type { RealRuntimeFace } from "./server.js";
  *  env: LECTERN_HOST_DATA=<数据目录>（M2a 为 fixture 目录，绝不允许指向生产数据）。
  *  stdout 只输出不含 token 的启动信息——token 只经 host.json 文件通道交给 Next。 */
 
+// 连接复用（2026-11-13 装配/TTFT 优化）：Node 全局 fetch 的内置 undici 默认
+// keepAliveTimeout 只有 4s——两次消息间隔一过连接即关，每次模型调用/记忆召回
+// 都重付 TLS 握手（memory.zmzai.cloud 实测 1.2-1.7s）。全局 Agent 拉长保活，
+// relay/记忆等所有出站 HTTPS 全部受益。
+{
+  const undici = await import("undici");
+  undici.setGlobalDispatcher(new undici.Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 600_000, connections: 16 }));
+}
+
 const dataDir = process.env.LECTERN_HOST_DATA;
 if (!dataDir) {
   console.error("[host] LECTERN_HOST_DATA 未设置；M2a 需指向 fixture 数据目录");
